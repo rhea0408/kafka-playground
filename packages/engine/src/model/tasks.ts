@@ -27,9 +27,11 @@ export interface FetchRequestTask {
   readonly maxWaitMs: number;
 }
 
-/** Per-partition result in a fetch response. */
-export type FetchPartitionResult = FetchPartition &
-  (
+/**
+ * Per-partition result in a fetch response. `topicId` is the ID of the topic the broker read
+ * from (Fetch v13+ responses carry topic IDs, KIP-516); null when the topic does not exist.
+ */
+export type FetchPartitionResult = FetchPartition & { readonly topicId: number | null } & (
     | { readonly error: null; readonly records: readonly LogRecord[] }
     | { readonly error: FetchError; readonly records: readonly [] }
   );

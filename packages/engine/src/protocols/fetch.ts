@@ -81,17 +81,19 @@ function readPartitions(
   withRecords: boolean,
 ): PartitionRead[] {
   return task.partitions.map((p): PartitionRead => {
-    const partition = ctx.state.topics.get(p.topic)?.partitions[p.partition];
-    if (partition === undefined) {
-      return { ...p, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
+    const topic = ctx.state.topics.get(p.topic);
+    const partition = topic?.partitions[p.partition];
+    if (topic === undefined || partition === undefined) {
+      return { ...p, topicId: null, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
     }
+    const { topicId } = topic;
     // Valid fetch offsets run from the log start offset to the HW (the end for consumers).
     if (p.fetchOffset < partition.logStartOffset || p.fetchOffset > partition.highWatermark) {
-      return { ...p, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
+      return { ...p, topicId, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
     }
     const bytes = bytesAvailable(partition, p.fetchOffset);
     const records = withRecords ? readRecords(partition, p.fetchOffset) : [];
-    return { ...p, error: null, records, bytes };
+    return { ...p, topicId, error: null, records, bytes };
   });
 }
 

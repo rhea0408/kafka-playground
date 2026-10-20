@@ -70,6 +70,13 @@ describe('engine invariants (fast-check)', () => {
         const { engine, events } = runScenario(seed, topology, steps);
         const hw = new Map<string, number>();
         for (const e of events) {
+          // A deleted topic's HW goes with it: a topic re-created with the same name is a new
+          // topic (new topic ID, KIP-516) whose log starts again at offset 0.
+          if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') {
+            for (const key of [...hw.keys()]) {
+              if (key.slice(0, key.lastIndexOf('-')) === e.component.id) hw.delete(key);
+            }
+          }
           if (e.type === 'RecordAppended') hw.set(tp(e), e.offset + 1);
           if (e.type === 'OffsetCommitted')
             expect(e.offset).toBeLessThanOrEqual(hw.get(tp(e)) ?? 0);

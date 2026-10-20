@@ -138,7 +138,7 @@ export function buildSnapshot(
       const partitions = topicsOfConsumer(state, consumer.config.id).flatMap((topic) =>
         topic.partitions.map((p): ConsumerPartitionSnapshot => {
           const key = partitionName(topic.config.id, p.index);
-          const position = consumer.positions.get(key) ?? null;
+          const position = consumer.positions.get(key)?.offset ?? null;
           const saved = committed?.get(key) ?? null;
           return {
             topic: topic.config.id,
