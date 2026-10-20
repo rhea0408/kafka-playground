@@ -10,6 +10,7 @@ export {
 export * from './commands/index.ts';
 export * from './events/index.ts';
 export { describeEvent, formatEvent, formatSimTime } from './events/format.ts';
+export { createEventHasher, hashEvents, type EventHasher } from './events/hash.ts';
 export { partitionName, type LogRecord } from './model/partition.ts';
 export * from './snapshot/index.ts';
 export { murmur2, partitionForKey, toPositive, utf8Bytes } from './protocols/partitioner.ts';

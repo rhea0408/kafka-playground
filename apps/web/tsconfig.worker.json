@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Web Worker entry points: worker globals (self, postMessage), no DOM (M2-T4).
+    // Files they import (sim-host, protocol, the engine) are checked under this lib too.
+    "lib": ["ES2023", "WebWorker"],
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*.worker.ts"]
+}

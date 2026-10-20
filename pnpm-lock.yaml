@@ -205,6 +205,9 @@ importers:
       '@kp/schema':
         specifier: workspace:*
         version: link:../../packages/schema
+      comlink:
+        specifier: ^4.4.2
+        version: 4.4.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -743,6 +746,9 @@ packages:
   chai@6.3.0:
     resolution: {integrity: sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==}
     engines: {node: '>=18'}
+
+  comlink@4.4.2:
+    resolution: {integrity: sha512-OxGdvBmJuNKSCMO4NTl1L47VRp6xn2wG4F/2hYzB6tiCb709otOxtEYCSvK80PtjODfXXZu8ds+Nw5kVCjqd2g==}
 
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
@@ -1794,6 +1800,8 @@ snapshots:
       qified: 0.10.1
 
   chai@6.3.0: {}
+
+  comlink@4.4.2: {}
 
   cross-spawn@7.0.6:
     dependencies:

@@ -22,10 +22,4 @@ export function runScenario(seed: number, topology: TopologyInput, steps: readon
   return { engine, events, endTime: engine.now() };
 }
 
-/** 32-bit FNV-1a over the JSON event log, as a compact fingerprint for determinism checks. */
-export function hashEvents(events: readonly EngineEvent[]): string {
-  const text = JSON.stringify(events);
-  let h = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193);
-  return (h >>> 0).toString(16).padStart(8, '0');
-}
+export { hashEvents } from '../events/hash.ts';
