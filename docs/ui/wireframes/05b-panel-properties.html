@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Right panel Properties</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap}
+.f{height:56px;display:flex;flex-direction:column;gap:4px;font-size:12px}
+.in{height:30px;border:1px solid #999;background:#fff;box-sizing:border-box;padding:0 8px;font-size:13px}
+</style>
+</head>
+<body>
+
+
+<div style="width: 360px; height: 844px; position: relative; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+<span class="sz">360 × 844</span>
+<div style="height: 40px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="font-weight: 600; text-decoration: underline">Properties</span><span style="color: #555">Code</span><span style="color: #555">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="margin-top: 10px"><div style="font-size: 11px; color: #555">TOPIC</div><div style="font-size: 16px; font-weight: 700">orders</div></div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; position: relative">
+<div style="background: #e9ecef; border-radius: 6px; padding: 8px"><div style="font-size: 10px; color: #555">Messages</div><div style="font: 600 13px 'JetBrains Mono', monospace">3,599</div></div>
+<div style="background: #e9ecef; border-radius: 6px; padding: 8px"><div style="font-size: 10px; color: #555">In / s</div><div style="font: 600 13px 'JetBrains Mono', monospace">30</div></div>
+<div style="background: #e9ecef; border-radius: 6px; padding: 8px"><div style="font-size: 10px; color: #555">Size</div><div style="font: 600 13px 'JetBrains Mono', monospace">3.5 MB</div></div>
+</div>
+<div><span class="anim">ANIM: live stats tick up</span> <span style="font: 500 10px 'JetBrains Mono', monospace; color: #6b21a8">stat tile 104 × 48</span></div>
+
+<div style="font-size: 11px; font-weight: 700; color: #555; margin-top: 4px">CONFIGURATION</div>
+<div class="f" style="position: relative"><label for="pp-parts">Partitions</label><div style="display: flex; gap: 6px"><button type="button" style="width: 32px; height: 30px; border: 1px solid #999; background: #fff">−</button><input id="pp-parts" class="in" value="4" style="width: 60px; text-align: center"><button type="button" style="width: 32px; height: 30px; border: 1px solid #999; background: #fff">+</button></div><span class="sz" style="top: 0">field row 328 × 56</span></div>
+<div style="font-size: 11px; color: #9a3412; background: #fff4ec; border: 1px dashed #ea7a35; padding: 6px 8px; border-radius: 4px; margin-top: -4px">Increasing partitions changes which partition each key goes to. Partitions can't be reduced later.</div>
+<div class="f"><label for="pp-rf">Replication factor</label><select id="pp-rf" class="in"><option>3</option></select></div>
+<div class="f"><label for="pp-isr">min.insync.replicas</label><select id="pp-isr" class="in"><option>2</option></select></div>
+<div class="f"><label for="pp-ret">Retention</label><div style="display: flex; gap: 6px"><input id="pp-ret" class="in" value="7" style="width: 80px"><select class="in" aria-label="retention unit" style="flex: 1"><option>days</option></select></div></div>
+<div class="f"><label for="pp-clean">cleanup.policy</label><select id="pp-clean" class="in"><option>delete</option></select></div>
+<div style="font-size: 11px; color: #555">Each label has an (i) tooltip with a plain-language explanation and the real Kafka default.</div>
+<div style="font-size: 11px; font-weight: 700; color: #555; margin-top: 4px">CONSUMED BY</div>
+<div style="font: 500 12px/24px 'JetBrains Mono', monospace"><div>billing · lag 3</div><div style="color: #9a3412">analytics · lag 412</div></div>
+<button type="button" style="height: 40px; border: 1.5px solid #c2410c; color: #9a3412; background: #fff; border-radius: 6px; margin-top: 4px">Delete topic</button>
+</div>
+</div>
+
+
+</body>
+</html>

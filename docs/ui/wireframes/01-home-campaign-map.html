@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home and Campaign map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(234,122,53,.7)}50%{box-shadow:0 0 0 10px rgba(234,122,53,0)}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+@keyframes grow{from{width:0}to{width:62%}}
+.grow{animation:grow 2.4s ease-out infinite alternate}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #ffffff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 32px; padding: 0 24px">
+<span class="sz">1440 × 56 · top bar</span>
+<div style="display: flex; align-items: center; gap: 10px"><div style="width: 28px; height: 28px; border: 2px solid #333; border-radius: 6px"></div><strong style="font-size: 16px">Kafka Playground</strong></div>
+<nav style="display: flex; gap: 24px; font-size: 14px"><a href="01-home-campaign-map.html" style="font-weight: 600; text-decoration: underline">Campaign</a><a href="05-sandbox.html">Sandbox</a><span style="color: #555">Glossary</span><span style="color: #555">Settings</span></nav>
+<div style="margin-left: auto; display: flex; gap: 12px; align-items: center; font-size: 13px; padding-right: 150px">
+<span style="border: 1px solid #9a9a9a; border-radius: 14px; padding: 5px 12px">Stars 17 / 30</span>
+<span style="border: 1px dashed #9a9a9a; border-radius: 14px; padding: 5px 12px; color: #555">Real Lab: offline (v0.3)</span>
+</div>
+</div>
+
+<div style="position: absolute; left: 40px; top: 88px; width: 1360px; height: 120px; background: #ffffff; border: 1.5px solid #9a9a9a; border-radius: 8px; box-sizing: border-box; padding: 20px 24px; display: flex; align-items: center; gap: 24px">
+<span class="sz">1360 × 120 · continue card</span>
+<div style="width: 80px; height: 80px; background: #e9ecef; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #555">level thumb</div>
+<div style="display: flex; flex-direction: column; gap: 6px; flex: 1">
+<span style="font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: .06em">Continue where you left off</span>
+<span style="font-size: 20px; font-weight: 700">World 2 · Level 7 · acks: how sure is "sent"?</span>
+<div style="display: flex; align-items: center; gap: 12px; font-size: 12px; color: #555">
+<div style="width: 480px; height: 8px; background: #e9ecef; border-radius: 4px; overflow: hidden"><div class="grow" style="height: 8px; background: #0d6efd"></div></div>
+<span>Phase: Break it (2 of 3)</span><span class="anim">ANIM: progress bar fills on load</span>
+</div>
+</div>
+<a href="02-level-learn.html" style="width: 200px; height: 48px; background: #0d6efd; color: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 600; text-decoration: none; position: relative">Continue</a>
+<a href="05-sandbox.html" style="width: 200px; height: 48px; border: 1.5px solid #0d6efd; color: #0d6efd; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: 600; text-decoration: none">Open Sandbox</a>
+</div>
+<span style="position: absolute; left: 1006px; top: 214px" class="sz">buttons 200 × 48</span>
+
+<div style="position: absolute; left: 40px; top: 240px; font-size: 18px; font-weight: 700">Campaign</div>
+<div style="position: absolute; left: 150px; top: 242px; font-size: 13px; color: #555">Each level: Learn → Break it → Fix → (optional) Real Lab</div>
+
+<div style="position: absolute; left: 40px; top: 280px; width: 256px; height: 580px; background: #fff; border: 1.5px solid #9a9a9a; border-radius: 8px; box-sizing: border-box">
+<span class="sz">256 × 580 · world card</span>
+<div style="height: 64px; border-bottom: 1px solid #ccc; padding: 12px 16px; box-sizing: border-box"><div style="font-size: 11px; color: #555">WORLD 1</div><div style="font-size: 16px; font-weight: 700">One Node</div></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 32px; position: relative">
+<div style="position: absolute; left: 43px; top: 40px; width: 2px; height: 420px; background: #555"></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 50%; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700">1</div><div><div style="font-size: 13px; font-weight: 600">Hello Kafka</div><div style="font-size: 11px; color: #555">3 of 3 stars</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 50%; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700">2</div><div><div style="font-size: 13px; font-weight: 600">What is an offset?</div><div style="font-size: 11px; color: #555">3 of 3 stars</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 50%; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700">3</div><div><div style="font-size: 13px; font-weight: 600">Partitions and keys</div><div style="font-size: 11px; color: #555">2 of 3 stars</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 50%; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700">4</div><div><div style="font-size: 13px; font-weight: 600">Consumer groups</div><div style="font-size: 11px; color: #555">3 of 3 stars</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 8px; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700">BOSS</div><div><div style="font-size: 13px; font-weight: 600">The broker crashes</div><div style="font-size: 11px; color: #555">3 of 3 stars</div></div></div>
+</div>
+<span class="sz" style="top: 100px; right: 8px">level node 56 × 56</span>
+</div>
+
+<div style="position: absolute; left: 316px; top: 280px; width: 256px; height: 580px; background: #fff; border: 1.5px solid #9a9a9a; border-radius: 8px; box-sizing: border-box">
+<div style="height: 64px; border-bottom: 1px solid #ccc; padding: 12px 16px; box-sizing: border-box"><div style="font-size: 11px; color: #555">WORLD 2</div><div style="font-size: 16px; font-weight: 700">The Cluster</div></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 32px; position: relative">
+<div style="position: absolute; left: 43px; top: 40px; width: 2px; height: 88px; background: #555"></div>
+<div style="position: absolute; left: 43px; top: 128px; width: 0; height: 332px; border-left: 2px dashed #bbb"></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><div style="width: 56px; height: 56px; border-radius: 50%; background: #0d6efd; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700">6</div><div><div style="font-size: 13px; font-weight: 600">Three brokers, RF 3</div><div style="font-size: 11px; color: #555">2 of 3 stars</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative"><a href="02-level-learn.html" class="pulse" style="width: 56px; height: 56px; border-radius: 50%; background: #fff; border: 3px solid #0d6efd; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-weight: 700; text-decoration: none">7</a><div><div style="font-size: 13px; font-weight: 600">acks and durability</div><div style="font-size: 11px; color: #555">In progress</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative; opacity: .5"><div style="width: 56px; height: 56px; border-radius: 50%; border: 2px dashed #999; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 11px">lock</div><div><div style="font-size: 13px; font-weight: 600">Commits and crashes</div><div style="font-size: 11px">Locked</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative; opacity: .5"><div style="width: 56px; height: 56px; border-radius: 50%; border: 2px dashed #999; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 11px">lock</div><div><div style="font-size: 13px; font-weight: 600">Rebalancing</div><div style="font-size: 11px">Locked</div></div></div>
+<div style="display: flex; gap: 12px; align-items: center; position: relative; opacity: .5"><div style="width: 56px; height: 56px; border-radius: 8px; border: 2px dashed #999; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 10px">BOSS</div><div><div style="font-size: 13px; font-weight: 600">Zero data loss</div><div style="font-size: 11px">Locked</div></div></div>
+</div>
+<div style="position: absolute; left: 12px; top: 196px"><span class="anim">ANIM: current level pulses</span></div>
+</div>
+
+<div style="position: absolute; left: 592px; top: 280px; width: 256px; height: 580px; background: #e9ecef; border: 1.5px dashed #aaa; border-radius: 8px; box-sizing: border-box; padding: 12px 16px; color: #555">
+<div style="font-size: 11px">WORLD 3</div><div style="font-size: 16px; font-weight: 700">Under Pressure</div>
+<div style="margin-top: 200px; text-align: center; font-size: 13px">Locked<br>Coming in v0.2</div>
+</div>
+<div style="position: absolute; left: 868px; top: 280px; width: 256px; height: 580px; background: #e9ecef; border: 1.5px dashed #aaa; border-radius: 8px; box-sizing: border-box; padding: 12px 16px; color: #555">
+<div style="font-size: 11px">WORLD 4</div><div style="font-size: 16px; font-weight: 700">Patterns</div>
+<div style="margin-top: 200px; text-align: center; font-size: 13px">Locked<br>Coming in v0.4</div>
+</div>
+<div style="position: absolute; left: 1144px; top: 280px; width: 256px; height: 580px; background: #e9ecef; border: 1.5px dashed #aaa; border-radius: 8px; box-sizing: border-box; padding: 12px 16px; color: #555">
+<div style="font-size: 11px">WORLD 5</div><div style="font-size: 16px; font-weight: 700">Going Global</div>
+<div style="margin-top: 200px; text-align: center; font-size: 13px">Locked<br>Coming in v0.5</div>
+</div>
+<span class="sz" style="left: 40px; right: auto; top: 868px">5 cards · 256 wide · 20 gap · 40 side margin</span>
+
+</div>
+
+
+</body>
+</html>

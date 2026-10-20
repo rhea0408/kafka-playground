@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Level Learn phase</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap;z-index:21}
+.edge{position:absolute;height:2px;background:#6b6b6b}
+.edge::after{content:"";position:absolute;right:-2px;top:-4px;border-left:8px solid #6b6b6b;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.rep{position:absolute;height:0;border-top:2px dashed #8a8a8a}
+.dot{position:absolute;top:-7px;left:0;width:16px;height:16px;border-radius:50%;font:700 9px/16px Inter,sans-serif;text-align:center;color:#fff;animation:flow 2.4s linear infinite}
+.sdot{position:absolute;top:-6px;left:0;width:10px;height:10px;border-radius:50%;background:#8a8a8a;animation:flow 1.6s linear infinite}
+.kA{background:#222}.kB{background:#666}.kC{background:#b5b5b5;color:#111}
+@keyframes flow{from{left:0}to{left:calc(100% - 16px)}}
+@keyframes append{0%{opacity:0;transform:translateX(-6px)}25%,100%{opacity:1;transform:none}}
+.new{animation:append 2.4s ease-out infinite}
+.cell{width:18px;height:18px;border:1px solid #888;font:500 9px/16px 'JetBrains Mono',monospace;text-align:center;background:#fff;box-sizing:border-box}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(234,122,53,.7)}50%{box-shadow:0 0 0 8px rgba(234,122,53,0)}}
+.pulse{animation:pulse 1.6s ease-in-out infinite}
+@keyframes play{from{left:40px}to{left:780px}}
+.playhead{animation:play 12s linear infinite}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #fff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 20px; padding: 0 16px">
+<span class="sz" style="top: 42px; right: 240px">1440 × 56 · top bar · sim controls: 40 tall, centered, 8 px from right edge</span>
+<a href="01-home-campaign-map.html" style="font-size: 13px">Back to map</a>
+<strong style="font-size: 15px">W2 · L7 · acks: how sure is "sent"?</strong>
+<div style="display: flex; gap: 6px; font-size: 12px; position: relative">
+<span style="padding: 6px 12px; background: #0d6efd; color: #fff; border-radius: 14px">1 Learn</span>
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">2 Break it</span>
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">3 Fix</span>
+<span style="padding: 6px 12px; border: 1px dashed #999; border-radius: 14px; color: #555">Real Lab (opt.)</span>
+</div>
+<span style="font: 500 10px 'JetBrains Mono', monospace; color: #6b21a8">phase stepper 380 × 32</span>
+<div style="position: absolute; right: 8px; top: 0; bottom: 0; display: flex; gap: 8px; align-items: center">
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Pause</button>
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Step</button>
+<button type="button" style="width: 56px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 12px">1×</button>
+<button type="button" style="width: 42px; height: 39px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Reset</button>
+
+</div>
+</div>
+
+<div style="position: absolute; left: 0; top: 56px; width: 1440px; height: 44px; background: #ffffff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 24px; padding: 0 16px; font-size: 13px">
+<span class="sz">1440 × 44 · objectives strip</span>
+<span style="font-weight: 600">Objectives</span>
+<span>[done] Set producer acks to 1</span>
+<span style="display: flex; align-items: center; gap: 8px">[ ] Run 20 messages <span style="width: 120px; height: 8px; background: #ddd; border-radius: 4px; display: inline-block; overflow: hidden"><span style="display: block; width: 60%; height: 8px; background: #0d6efd"></span></span> 12 / 20</span>
+<span class="anim">ANIM: counter ticks up per ack</span>
+<span style="margin-left: auto; margin-right: 170px; color: #555">Step 4 of 5</span>
+</div>
+
+<div style="position: absolute; left: 0; top: 100px; width: 240px; height: 800px; background: #fff; border-right: 1.5px solid #9a9a9a; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<span class="sz">240 × 800 · palette</span>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 18px">COMPONENTS</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px; position: relative"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Producer<span class="sz" style="top: 18px">208 × 56</span></div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Topic</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Broker</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Consumer</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; gap: 10px; font-size: 13px"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Consumer group</div>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 12px">LOCKED IN THIS LEVEL</div>
+<div style="height: 56px; border: 1.5px dashed #bbb; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #555">acks = all (unlocks in Fix)</div>
+<div style="height: 56px; border: 1.5px dashed #bbb; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 12px; color: #555">min.insync.replicas</div>
+<div style="margin-top: auto; font-size: 12px; color: #555">Drag onto canvas</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 100px; width: 840px; height: 600px; background-color: #ffffff; background-image: radial-gradient(#dee2e6 1px, transparent 1px); background-size: 16px 16px">
+<span class="sz">840 × 600 · canvas (flexes)</span>
+
+<div style="position: absolute; left: 16px; top: 16px; width: 210px; height: 32px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 12px; gap: 6px">Concept: acks · reopen</div>
+<div style="position: absolute; left: 236px; top: 16px; width: 330px; font-size: 11px; color: #555; line-height: 1.35">Concept card is a 380 × 220 modal at step 2. After "Got it" it collapses to this 210 × 32 chip.</div>
+
+<div style="position: absolute; left: 32px; top: 166px; width: 150px; height: 72px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 10px 12px">
+<div style="font-size: 13px; font-weight: 600">producer-1</div>
+<div style="font-size: 11px; color: #555">2 msg/s · key: orderId</div>
+<div style="font: 600 10px 'JetBrains Mono', monospace; margin-top: 4px; outline: 2px solid #0d6efd; display: inline-block; padding: 1px 4px">acks=1</div>
+</div>
+<span class="sz" style="left: 32px; right: auto; top: 244px">node 150 × 72</span>
+
+<div class="edge" style="left: 182px; top: 201px; width: 96px"><div class="dot kA">A</div><div class="dot kB" style="animation-delay: -.8s">B</div><div class="dot kC" style="animation-delay: -1.6s">C</div></div>
+
+<div style="position: absolute; left: 278px; top: 90px; width: 230px; height: 196px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Topic: orders <span style="font-weight: 400; color: #555; margin-left: 6px; font-size: 11px">3 partitions · RF 3</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P0</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><div class="cell new">3</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B1</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P1</span><div class="cell">0</div><div class="cell">1</div><div class="cell new" style="animation-delay: -.8s">2</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P2</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><div class="cell">3</div><div class="cell new" style="animation-delay: -1.6s">4</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B3</span></div>
+</div>
+<span class="sz" style="left: 278px; right: auto; top: 292px">topic node 230 × (36 + 48 per partition)</span>
+<div style="position: absolute; left: 278px; top: 60px"><span class="anim">ANIM: new offset cell slides into log</span></div>
+
+<div class="edge" style="left: 508px; top: 153px; width: 82px"><div class="dot kA" style="animation-delay: -.4s">A</div></div>
+<div class="edge" style="left: 508px; top: 201px; width: 82px"><div class="dot kB" style="animation-delay: -1.2s">B</div></div>
+<div class="edge" style="left: 508px; top: 249px; width: 82px"><div class="dot kC" style="animation-delay: -2s">C</div></div>
+<div style="position: absolute; left: 470px; top: 300px"><span class="anim">ANIM: 1 dot = 1 message, letter = key</span></div>
+
+<div style="position: absolute; left: 590px; top: 90px; width: 220px; height: 196px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Group: billing</div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; gap: 6px">consumer-1 · P0<span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #e9ecef; padding: 2px 5px; border-radius: 8px">lag 0</span></div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; gap: 6px">consumer-2 · P1<span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #e9ecef; padding: 2px 5px; border-radius: 8px">lag 1</span></div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px; gap: 6px">consumer-3 · P2<span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #e9ecef; padding: 2px 5px; border-radius: 8px">lag 0</span></div>
+</div>
+<span class="sz" style="left: 590px; right: auto; top: 292px">group 220 × 196 · consumer row 196 × 40</span>
+<div style="position: absolute; left: 640px; top: 60px"><span class="anim">ANIM: lag badge counts</span></div>
+
+<div style="position: absolute; left: 32px; top: 330px; width: 778px; height: 150px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box">
+<div style="height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Cluster (KRaft) · 3 brokers</div>
+<div style="position: absolute; left: 16px; top: 46px; width: 226px; height: 92px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 1</strong> <span style="color: #555">· up</span><div style="font-size: 11px; color: #555; margin-top: 6px">Leader: P0<br>Follower: P1, P2</div></div>
+<div style="position: absolute; left: 276px; top: 46px; width: 226px; height: 92px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 2</strong> <span style="color: #555">· up</span><div style="font-size: 11px; color: #555; margin-top: 6px">Leader: P1<br>Follower: P0, P2</div></div>
+<div style="position: absolute; left: 536px; top: 46px; width: 226px; height: 92px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 3</strong> <span style="color: #555">· up</span><div style="font-size: 11px; color: #555; margin-top: 6px">Leader: P2<br>Follower: P0, P1</div></div>
+<div class="rep" style="left: 242px; top: 92px; width: 34px"><div class="sdot"></div></div>
+<div class="rep" style="left: 502px; top: 92px; width: 34px"><div class="sdot" style="animation-delay: -.8s"></div></div>
+<span class="sz">cluster 778 × 150 · broker 226 × 92</span>
+</div>
+<div style="position: absolute; left: 300px; top: 486px"><span class="anim">ANIM: grey dots on dashed lines = replication traffic</span></div>
+
+<div style="position: absolute; left: 32px; top: 512px; width: 778px; height: 76px; background: #fff; border: 2px solid #0d6efd; border-radius: 8px; box-sizing: border-box; padding: 0 16px; display: flex; align-items: center; gap: 12px">
+<span class="sz">predict card 778 × 76</span>
+<div style="flex: 1; font-size: 13px"><strong>Predict:</strong> broker 1 acks a write, then dies before copying it. Is the message safe?</div>
+<button type="button" style="width: 96px; height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Yes</button>
+<button type="button" style="width: 96px; height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">No</button>
+<button type="button" style="width: 96px; height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; margin-right: 110px">It depends</button>
+</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 700px; width: 840px; height: 200px; background: #fff; border-top: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">840 × 200 · bottom panel</span>
+<div style="height: 36px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="font-weight: 600; text-decoration: underline">Event timeline</span><span style="color: #555">Event list</span><span style="color: #555">Lag chart</span></div>
+<div style="position: absolute; left: 40px; top: 90px; width: 740px; height: 2px; background: #999"></div>
+<div style="position: absolute; left: 80px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 50px; top: 106px; font-size: 10px; color: #555">PartitionAssigned</div>
+<div style="position: absolute; left: 240px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 215px; top: 106px; font-size: 10px; color: #555">ConfigChanged acks=1</div>
+<div style="position: absolute; left: 400px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 375px; top: 106px; font-size: 10px; color: #555">ProduceAcked ×12</div>
+<div class="playhead" style="position: absolute; top: 60px; width: 2px; height: 60px; background: #ea7a35"></div>
+<div style="position: absolute; left: 40px; top: 146px"><span class="anim">ANIM: orange playhead moves with sim time; events drop in as markers</span></div>
+<div style="position: absolute; left: 40px; top: 46px; font: 500 10px 'JetBrains Mono', monospace; color: #555">t = 00:24.600</div>
+</div>
+
+<div style="position: absolute; left: 1080px; top: 100px; width: 360px; height: 800px; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">360 × 800 · right panel</span>
+<div style="height: 40px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="font-weight: 600; text-decoration: underline">Properties</span><span style="color: #555">Code</span><span style="color: #555">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-size: 14px; font-weight: 700">producer-1</div>
+<div style="height: 56px; display: flex; flex-direction: column; gap: 4px; font-size: 12px"><label for="lp-topic">Topic</label><select id="lp-topic" style="height: 32px; border: 1px solid #999; background: #fff"><option>orders</option></select></div>
+<div style="height: 56px; display: flex; flex-direction: column; gap: 4px; font-size: 12px"><label for="lp-key">Key strategy</label><select id="lp-key" style="height: 32px; border: 1px solid #999; background: #fff"><option>orderId</option></select></div>
+<div style="height: 56px; display: flex; flex-direction: column; gap: 4px; font-size: 12px"><label for="lp-rate">Rate (msg/s)</label><input id="lp-rate" value="2" style="height: 28px; border: 1px solid #999"></div>
+<div style="height: 56px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; outline: 3px solid #0d6efd; outline-offset: 4px; position: relative"><label for="lp-acks">acks <span style="color: #555">· changed</span></label><select id="lp-acks" style="height: 32px; border: 1px solid #999; background: #fff"><option>1</option></select><span class="sz" style="top: -2px">field row 328 × 56</span></div>
+<div style="font-size: 11px; color: #555; margin-top: 4px">Dark ring = guided highlight (step 3). Tooltip: "acks=1: only the leader must store the message before the producer gets an OK."</div>
+<div style="height: 56px; display: flex; flex-direction: column; gap: 4px; font-size: 12px; opacity: .5"><span>Idempotence (locked)</span><div style="height: 30px; border: 1px dashed #999"></div></div>
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

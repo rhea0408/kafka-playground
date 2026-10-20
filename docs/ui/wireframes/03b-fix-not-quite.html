@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fix attempt failed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap;z-index:21}
+.edge{position:absolute;height:2px;background:#9a9a9a}
+.edge::after{content:"";position:absolute;right:-2px;top:-4px;border-left:8px solid #9a9a9a;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.cell{width:18px;height:18px;border:1px solid #888;font:500 9px/16px 'JetBrains Mono',monospace;text-align:center;background:#fff;box-sizing:border-box}
+.lost{border:1.5px dashed #c2410c;color:#9a3412;text-decoration:line-through;background:#fff4ec}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(234,122,53,.8)}50%{box-shadow:0 0 0 10px rgba(234,122,53,0)}}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes shake{0%,100%{transform:none}10%,30%{transform:translateX(-4px)}20%,40%{transform:translateX(4px)}50%{transform:none}}
+.shake{animation:shake 2.4s ease-in-out infinite;display:inline-block}
+@keyframes slidein{0%{transform:translateX(40px);opacity:0}20%,100%{transform:none;opacity:1}}
+.slidein{animation:slidein 4s ease-out infinite}
+.btn{height:40px;border:1.5px solid #0d6efd;background:#fff;color:#0d6efd;border-radius:6px;font-size:11px}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #fff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 20px; padding: 0 16px">
+<span class="sz" style="top: 42px; right: 240px">1440 × 56 · sim controls: 40 tall, centered, 8 px from right edge</span>
+<a href="01-home-campaign-map.html" style="font-size: 13px">Back to map</a>
+<strong style="font-size: 15px">W2 · L7 · acks: how sure is "sent"?</strong>
+<div style="display: flex; gap: 6px; font-size: 12px">
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">1 Learn [done]</span>
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">2 Break it [done]</span>
+<span style="padding: 6px 12px; background: #0d6efd; color: #fff; border-radius: 14px">3 Fix</span>
+<span style="padding: 6px 12px; border: 1px dashed #999; border-radius: 14px; color: #555">Real Lab (opt.)</span>
+</div>
+<div style="position: absolute; right: 8px; top: 0; bottom: 0; display: flex; gap: 8px; align-items: center">
+<button type="button" class="btn" style="width: 40px; border: 2px solid #0d6efd; background: #0d6efd; color: #fff; font-weight: 700">Play</button>
+<button type="button" class="btn" style="width: 40px">Step</button>
+<button type="button" class="btn" style="width: 56px; font-size: 12px">1×</button>
+<button type="button" class="btn" style="width: 40px">Reset</button>
+</div>
+</div>
+
+<div style="position: absolute; left: 0; top: 56px; width: 1440px; height: 44px; background: #ffffff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 24px; padding: 0 16px; font-size: 13px">
+<span class="sz">1440 × 44</span>
+<span style="font-weight: 600">Fix</span>
+<span class="shake" style="font-weight: 600; color: #9a3412">[failed] Survive the same failure with 0 lost records: 1 lost</span>
+<span class="anim">ANIM: failed objective shakes once</span>
+<span style="margin-left: auto; margin-right: 60px; color: #555">Attempt 1 · retries unlimited</span>
+</div>
+
+<div style="position: absolute; left: 0; top: 100px; width: 240px; height: 800px; background: #fff; border-right: 1.5px solid #9a9a9a; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<span class="sz">240 × 800</span>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 18px">UNLOCKED FOR THIS FIX</div>
+<div style="height: 56px; border: 2px solid #0d6efd; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600">acks = all (used)</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px">min.insync.replicas</div>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 12px">COMPONENTS</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px">Producer</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px">Broker</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 100px; width: 840px; height: 600px; background-color: #ffffff; background-image: radial-gradient(#dee2e6 1px, transparent 1px); background-size: 16px 16px">
+<span class="sz" style="top: 68px">840 × 600 · canvas</span>
+
+<div style="position: absolute; left: 16px; top: 16px; width: 808px; height: 44px; background: #212529; color: #fff; border-radius: 6px; display: flex; align-items: center; gap: 12px; padding: 0 12px; box-sizing: border-box; font-size: 13px">
+<strong>REPLAY of the same failure · attempt 1</strong><span>1 acknowledged record lost on orders-0</span>
+<span style="margin-left: auto; font: 500 10px 'JetBrains Mono', monospace; color: #c9d7ff">replay banner 808 × 44</span>
+</div>
+
+<div style="position: absolute; left: 32px; top: 166px; width: 150px; height: 72px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 10px 12px">
+<div style="font-size: 13px; font-weight: 600">producer-1</div><div style="font: 600 10px 'JetBrains Mono', monospace; margin-top: 4px">acks=all</div>
+</div>
+<div class="edge" style="left: 182px; top: 201px; width: 96px"></div>
+
+<div style="position: absolute; left: 278px; top: 90px; width: 230px; height: 196px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Topic: orders <span style="font: 600 10px 'JetBrains Mono', monospace; margin-left: auto; outline: 2px solid #0d6efd; padding: 1px 4px">minISR=1</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px; outline: 3px solid #0d6efd; outline-offset: 2px"><span style="width: 22px">P0</span><div class="cell">2</div><div class="cell">3</div><div class="cell">4</div><div class="cell lost">5</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1.5px solid #222; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P1</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P2</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><div class="cell">3</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B3</span></div>
+</div>
+<div style="position: absolute; left: 278px; top: 296px; width: 300px; font-size: 11px; color: #555; line-height: 1.4">Just before the crash, P0's in-sync replicas (ISR) were only {B1}. Followers had fallen behind.</div>
+
+<div style="position: absolute; left: 32px; top: 340px; width: 778px; height: 150px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box">
+<div style="height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Cluster (KRaft) · 2 of 3 brokers up</div>
+<div class="pulse" style="position: absolute; left: 16px; top: 46px; width: 226px; height: 92px; border: 2.5px solid #222; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: repeating-linear-gradient(45deg, #f3f3f3 0 8px, #e2e2e2 8px 16px)"><strong>Broker 1 · DOWN</strong><div style="font-size: 11px; margin-top: 6px">was leader of P0<br>only member of ISR</div></div>
+<div style="position: absolute; left: 276px; top: 46px; width: 226px; height: 92px; border: 1.5px dashed #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: #fff"><strong>Broker 2</strong> · up<div style="font-size: 11px; color: #555; margin-top: 6px">lagging: dropped out of ISR<br>new leader of P0 (missing 5)</div></div>
+<div style="position: absolute; left: 536px; top: 46px; width: 226px; height: 92px; border: 1.5px dashed #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: #fff"><strong>Broker 3</strong> · up<div style="font-size: 11px; color: #555; margin-top: 6px">lagging: dropped out of ISR</div></div>
+<span class="sz">dashed border = out of ISR</span>
+</div>
+<div style="position: absolute; left: 32px; top: 500px"><span class="anim">ANIM: followers fade to dashed as they leave the ISR</span></div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 700px; width: 840px; height: 200px; background: #fff; border-top: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">840 × 200</span>
+<div style="height: 36px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="font-weight: 600; text-decoration: underline">Event timeline</span><span style="color: #555">Event list</span><span style="color: #555">Lag chart</span></div>
+<div style="position: absolute; left: 40px; top: 90px; width: 740px; height: 2px; background: #999"></div>
+<div style="position: absolute; left: 300px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 260px; top: 106px; font-size: 10px; color: #555">IsrShrunk P0 → {B1}</div>
+<div style="position: absolute; left: 440px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 410px; top: 56px; font-size: 10px; color: #555">ProduceAcked 5</div>
+<div style="position: absolute; left: 560px; top: 74px; width: 4px; height: 34px; background: #222"></div><div style="position: absolute; left: 520px; top: 112px; font-size: 10px; font-weight: 700">BrokerDown B1</div>
+<div style="position: absolute; left: 640px; top: 74px; width: 4px; height: 34px; background: #c2410c"></div><div style="position: absolute; left: 640px; top: 112px; font-size: 10px; font-weight: 700; color: #9a3412">RecordsTruncated ×1</div>
+</div>
+
+<div class="slidein" style="position: absolute; left: 1080px; top: 100px; width: 360px; height: 800px; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">360 × 800 · "Not quite" panel</span>
+<div style="height: 40px; display: flex; gap: 12px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 12px; white-space: nowrap"><span style="font-weight: 600; text-decoration: underline">Not quite</span><span style="color: #555">Properties</span><span style="color: #555">Code</span><span style="color: #555">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-size: 18px; font-weight: 700; margin-top: 12px">Not quite: 1 record lost</div>
+<div style="font-size: 13px; line-height: 1.5">acks=all waits for every replica <strong>in the ISR</strong>. Brokers 2 and 3 had fallen behind, so the ISR was just {B1}. "All" meant only broker 1.</div>
+<div style="border: 1px solid #ccc; border-radius: 6px; padding: 10px 12px; font: 500 12px/22px 'JetBrains Mono', monospace">
+<div>Your fix</div>
+<div>acks = all <strong style="float: right">[ok]</strong></div>
+<div style="color: #9a3412">min.insync.replicas = 1 <strong style="float: right">[weak]</strong></div>
+</div>
+<div style="background: #e9ecef; border-radius: 6px; padding: 10px 12px; font-size: 13px; line-height: 1.5"><strong>Hint 1 (free):</strong> How many brokers must have the message before the producer hears "OK"? Can you require more than one?</div>
+<button type="button" style="height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 13px">Stronger hint (costs the Quality star)</button>
+<button type="button" style="height: 44px; border: 1.5px dashed #999; background: #fff; border-radius: 6px; font-size: 13px; color: #555">Show solution (max 1 star)</button>
+<button type="button" style="height: 44px; border: 0; background: #0d6efd; color: #fff; border-radius: 6px; font-weight: 600">Try again</button>
+<div style="font-size: 11px; color: #555">Try again rewinds to just before the failure and keeps your config.</div>
+<div style="border-top: 1px solid #ccc; padding-top: 12px; position: relative">
+<div style="font-size: 12px; font-weight: 700; margin-bottom: 6px">Stars still possible</div>
+<div style="display: flex; gap: 8px; font-size: 12px"><span style="padding: 4px 8px; background: #e9ecef; border-radius: 4px">Outcome</span><span style="padding: 4px 8px; background: #e9ecef; border-radius: 4px">Understanding</span><span style="padding: 4px 8px; background: #e9ecef; border-radius: 4px">Quality</span></div>
+<div style="font-size: 11px; color: #555; margin-top: 6px">Quality is kept up to 1 failed attempt with no paid hints.</div>
+<div style="margin-top: 8px"><span class="anim">ANIM: a star tag greys out when it's lost</span></div>
+</div>
+</div>
+<div style="position: absolute; left: 16px; top: 760px"><span class="anim">ANIM: panel slides in from the right</span></div>
+</div>
+
+</div>
+
+
+</body>
+</html>

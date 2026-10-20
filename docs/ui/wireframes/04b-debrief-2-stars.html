@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Debrief two stars</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap}
+.star{width:56px;height:56px;background:#0d6efd;clip-path:polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)}
+.empty{background:#e9ecef}
+@keyframes pop{0%,10%{transform:scale(0)}25%{transform:scale(1.25)}35%,100%{transform:scale(1)}}
+.pop{animation:pop 3.6s ease-out infinite}
+@keyframes dim{0%,45%{opacity:0}60%,100%{opacity:1}}
+.dim{animation:dim 3.6s ease-out infinite}
+.row{display:grid;grid-template-columns:120px 1fr 56px;align-items:center;min-height:36px;border-bottom:1px solid #ddd;font-size:13px;gap:8px}
+.chk{font:500 11px/20px 'JetBrains Mono',monospace;color:#555}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #fff; border-bottom: 1.5px solid #9a9a9a"></div>
+<div style="position: absolute; left: 0; top: 56px; width: 1440px; height: 44px; background: #ffffff; border-bottom: 1.5px solid #9a9a9a"></div>
+<div style="position: absolute; left: 0; top: 100px; width: 240px; height: 800px; background: #fff; border-right: 1.5px solid #9a9a9a"></div>
+<div style="position: absolute; left: 240px; top: 100px; width: 840px; height: 600px; background: #e9ecef"></div>
+<div style="position: absolute; left: 240px; top: 700px; width: 840px; height: 200px; background: #fff; border-top: 1.5px solid #9a9a9a"></div>
+<div style="position: absolute; left: 1080px; top: 100px; width: 360px; height: 800px; background: #fff; border-left: 1.5px solid #9a9a9a"></div>
+<div style="position: absolute; inset: 0; background: rgba(20, 20, 20, .5)"></div>
+<div style="position: absolute; left: 16px; top: 16px; font: 500 11px 'JetBrains Mono', monospace; color: #fff">Same debrief modal as screen 4, showing a 2-star result</div>
+
+<div style="position: absolute; left: 360px; top: 96px; width: 720px; background: #fff; border-radius: 12px; box-sizing: border-box; padding: 28px 32px; display: flex; flex-direction: column; gap: 16px">
+<span class="sz">720 × auto · debrief modal</span>
+<div><div style="font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: .06em">World 2 · Level 7</div><div style="font-size: 26px; font-weight: 700">Level complete</div></div>
+
+<div style="display: flex; align-items: center; gap: 14px">
+<div class="star pop" role="img" aria-label="Outcome star earned"></div>
+<div class="star pop" style="animation-delay: .3s" role="img" aria-label="Understanding star earned"></div>
+<div class="star empty dim" role="img" aria-label="Quality star missed"></div>
+<span style="font-size: 14px; color: #555">2 of 3 stars</span>
+<span class="anim" style="margin-left: auto">ANIM: missed star fades in grey after the others</span>
+</div>
+
+<div style="border-top: 1px solid #ddd; position: relative">
+<div class="row"><strong>Outcome</strong><span>0 records lost when the failure was replayed (attempt 2)</span><strong style="text-align: right">[done]</strong></div>
+<div class="row"><strong>Understanding</strong><span>Predictions right on first try (1 of 1)</span><strong style="text-align: right">[done]</strong></div>
+<div class="row" style="border-bottom: 0; padding-top: 6px; align-items: start; background: #e9ecef"><strong style="padding-left: 6px">Quality</strong>
+<div>
+<div style="color: #9a3412; font-weight: 600">Missed: you used the stronger hint</div>
+<div class="chk">[ok]   Within budget: 3 brokers</div>
+<div class="chk">[ok]   No fragile settings: min.insync.replicas = 2</div>
+<div class="chk">[ok]   Failed attempts: 1 (limit 1)</div>
+<div class="chk" style="color: #9a3412; font-weight: 600">[miss] Paid hints used: 1 (limit 0)</div>
+</div>
+<strong style="text-align: right; color: #9a3412; padding-right: 6px">[miss]</strong></div>
+<span class="sz" style="top: 8px; right: 70px">star row 656 × 36 · Quality expands with checks</span>
+</div>
+
+<div style="border: 2px solid #0d6efd; border-radius: 8px; padding: 12px 16px">
+<div style="font-size: 12px; font-weight: 700; margin-bottom: 4px">HOW TO GET THE 3RD STAR</div>
+<div style="font-size: 13px; line-height: 1.5">Replay and fix it without the stronger hint. Think about this: if only one broker is left in sync, should the producer still be told "OK"?</div>
+</div>
+
+<div style="background: #e9ecef; border-radius: 8px; padding: 12px 16px">
+<div style="font-size: 12px; font-weight: 700; margin-bottom: 4px">KEY TAKEAWAY</div>
+<div style="font-size: 13px; line-height: 1.5">acks=all only means "all in-sync replicas". Pair it with min.insync.replicas = 2 so a write needs at least two copies before it counts.</div>
+</div>
+
+<div style="display: flex; gap: 8px; align-items: center; font-size: 12px">
+<span style="font-weight: 600">Unlocked:</span>
+<span style="padding: 4px 8px; background: #e9ecef; border-radius: 4px; font: 600 11px 'JetBrains Mono', monospace">acks = all</span>
+<span style="padding: 4px 8px; background: #e9ecef; border-radius: 4px; font: 600 11px 'JetBrains Mono', monospace">min.insync.replicas</span>
+</div>
+
+<div style="display: flex; gap: 12px; margin-top: 8px; position: relative">
+<a href="02-level-learn.html" style="width: 200px; height: 48px; border: 2px solid #0d6efd; color: #0d6efd; border-radius: 6px; display: flex; align-items: center; justify-content: center; text-decoration: none; font-weight: 600">Replay for 3 stars</a>
+<button type="button" disabled style="width: 220px; height: 48px; border: 0; background: #e9ecef; border-radius: 6px; color: #555; font-size: 13px">Try Real Lab · needs Docker (v0.3)</button>
+<a href="01-home-campaign-map.html" style="margin-left: auto; width: 200px; height: 48px; background: #0d6efd; color: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: center; text-decoration: none; font-weight: 600">Next level</a>
+</div>
+<div style="font-size: 11px; color: #555">1 star is enough to unlock the next level. Your best score is kept.</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

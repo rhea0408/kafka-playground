@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap;z-index:21}
+.edge{position:absolute;height:2px;background:#6b6b6b}
+.edge::after{content:"";position:absolute;right:-2px;top:-4px;border-left:8px solid #6b6b6b;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.rep{position:absolute;height:0;border-top:2px dashed #8a8a8a}
+.dot{position:absolute;top:-7px;left:0;width:16px;height:16px;border-radius:50%;font:700 9px/16px Inter,sans-serif;text-align:center;color:#fff;animation:flow 2s linear infinite}
+.sdot{position:absolute;top:-6px;left:0;width:10px;height:10px;border-radius:50%;background:#8a8a8a;animation:flow 1.6s linear infinite}
+.kA{background:#222}.kB{background:#666}.kC{background:#b5b5b5;color:#111}
+@keyframes flow{from{left:0}to{left:calc(100% - 16px)}}
+@keyframes grow{0%{width:30px}100%{width:52px}}
+.lagup{animation:grow 3s ease-in infinite alternate}
+@keyframes fade{0%{background:#ffe2cc}70%{background:#ffe2cc}100%{background:#fff}}
+.hl{animation:fade 3s ease-out infinite}
+@keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-140px)}}
+.scroll{animation:scroll 6s linear infinite}
+.pbtn{height:56px;border:1.5px solid #888;border-radius:6px;display:flex;align-items:center;padding:0 12px;gap:10px;font-size:13px;box-sizing:border-box}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #fff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 16px; padding: 0 16px; font-size: 13px">
+<span class="sz" style="top: 42px; left: 4px; right: auto">1440 × 56 · sim controls: 40 tall, centered, 8 px from right edge</span>
+<a href="01-home-campaign-map.html">Home</a>
+<strong style="font-size: 15px">Sandbox · fan-out-demo</strong>
+<button type="button" style="height: 36px; padding: 0 12px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Save</button>
+<button type="button" style="height: 36px; padding: 0 12px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Load</button>
+<button type="button" style="height: 36px; padding: 0 12px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Export JSON</button>
+<div style="position: absolute; right: 8px; top: 0; bottom: 0; display: flex; gap: 8px; align-items: center">
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Pause</button>
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Step</button>
+<button type="button" style="width: 56px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 12px">2×</button>
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Reset</button>
+</div>
+<div style="margin-left: auto; display: flex; gap: 10px; align-items: center; margin-right: 224px">
+<label style="display: flex; gap: 6px; align-items: center"><input type="checkbox"> Tips</label>
+<label style="display: flex; gap: 6px; align-items: center; color: #555; border: 1px dashed #999; padding: 6px 10px; border-radius: 14px"><input type="checkbox" disabled> Live: real Kafka (v0.3)</label>
+</div>
+</div>
+
+<div style="position: absolute; left: 0; top: 56px; width: 240px; height: 844px; background: #fff; border-right: 1.5px solid #9a9a9a; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<span class="sz">240 × 844 · full palette</span>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 18px">COMPONENTS</div>
+<div class="pbtn"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Producer</div>
+<div class="pbtn"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Topic</div>
+<div class="pbtn"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Broker</div>
+<div class="pbtn"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Consumer</div>
+<div class="pbtn"><div style="width: 28px; height: 28px; background: #ddd; border-radius: 4px"></div>Consumer group</div>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 10px">FAILURE TOOLS</div>
+<div class="pbtn" style="height: 44px">Kill broker</div>
+<div class="pbtn" style="height: 44px">Kill consumer</div>
+<div class="pbtn" style="height: 44px">Slow consumer</div>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 10px">COMING LATER</div>
+<div class="pbtn" style="height: 44px; border-style: dashed; color: #555">Load generator (v0.2)</div>
+<div class="pbtn" style="height: 44px; border-style: dashed; color: #555">World map view (v0.5)</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 56px; width: 840px; height: 644px; background-color: #ffffff; background-image: radial-gradient(#dee2e6 1px, transparent 1px); background-size: 16px 16px">
+<span class="sz">840 × 644 · canvas</span>
+
+<div style="position: absolute; left: 480px; top: 30px; width: 340px; height: 40px; background: #fff; border: 1.5px solid #c2410c; border-radius: 6px; box-sizing: border-box; display: flex; align-items: center; padding: 0 10px; font-size: 12px; gap: 8px"><strong style="color: #9a3412">Warning</strong> analytics is slower than the produce rate</div>
+<span class="sz" style="left: 480px; right: auto; top: 76px">non-blocking warning toast 340 × 40</span>
+
+<div style="position: absolute; left: 24px; top: 120px; width: 150px; height: 72px; background: #fff; border: 2.5px solid #222; border-radius: 8px; box-sizing: border-box; padding: 10px 12px; outline: 2px dashed #555; outline-offset: 4px"><div style="font-size: 13px; font-weight: 600">producer-1</div><div style="font-size: 11px; color: #555">20 msg/s · keys A, B<br>acks=all</div></div>
+<div style="position: absolute; left: 24px; top: 200px; font-size: 11px; color: #555">selected (dashed ring)</div>
+<div style="position: absolute; left: 24px; top: 260px; width: 150px; height: 72px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 10px 12px"><div style="font-size: 13px; font-weight: 600">producer-2</div><div style="font-size: 11px; color: #555">10 msg/s · key C</div></div>
+
+<div class="edge" style="left: 174px; top: 155px; width: 76px"><div class="dot kA">A</div><div class="dot kB" style="animation-delay: -1s">B</div></div>
+<div class="edge" style="left: 174px; top: 295px; width: 76px"><div class="dot kC" style="animation-delay: -.5s">C</div></div>
+
+<div style="position: absolute; left: 250px; top: 80px; width: 230px; height: 228px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Topic: orders <span style="font-weight: 400; color: #555; margin-left: 6px; font-size: 11px">4 partitions · RF 3</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px"><span style="width: 22px">P0</span><span style="font: 500 10px 'JetBrains Mono', monospace; color: #555">offset 1,204</span><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B1</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px"><span style="width: 22px">P1</span><span style="font: 500 10px 'JetBrains Mono', monospace; color: #555">offset 1,187</span><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px"><span style="width: 22px">P2</span><span style="font: 500 10px 'JetBrains Mono', monospace; color: #555">offset 610</span><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B3</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px"><span style="width: 22px">P3</span><span style="font: 500 10px 'JetBrains Mono', monospace; color: #555">offset 598</span><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B1</span></div>
+</div>
+<div style="position: absolute; left: 250px; top: 316px; width: 260px; font-size: 11px; color: #555">At higher rates, log cells collapse into an offset counter.</div>
+
+<div class="edge" style="left: 480px; top: 149px; width: 80px"><div class="dot kA" style="animation-delay: -.3s">A</div><div class="dot kC" style="animation-delay: -1.3s">C</div></div>
+<div class="edge" style="left: 480px; top: 297px; width: 80px"><div class="dot kB" style="animation-delay: -.7s">B</div></div>
+<div style="position: absolute; left: 470px; top: 228px"><span class="anim">ANIM: fan-out, each group gets every message</span></div>
+
+<div style="position: absolute; left: 560px; top: 80px; width: 240px; height: 140px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Group: billing</div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-1 · P0, P1<span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #e9ecef; padding: 2px 5px; border-radius: 8px">lag 3</span></div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-2 · P2, P3<span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #e9ecef; padding: 2px 5px; border-radius: 8px">lag 0</span></div>
+</div>
+<div style="position: absolute; left: 560px; top: 250px; width: 240px; height: 96px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Group: analytics</div>
+<div style="height: 40px; margin-top: 8px; border: 1.5px solid #c2410c; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-a · P0–P3<span class="lagup" style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; background: #fff4ec; color: #9a3412; padding: 2px 5px; border-radius: 8px; text-align: center; overflow: hidden; white-space: nowrap">lag 412</span></div>
+</div>
+<div style="position: absolute; left: 560px; top: 352px"><span class="anim">ANIM: lag badge grows while lag rises</span></div>
+
+<div style="position: absolute; left: 24px; top: 400px; width: 776px; height: 140px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box">
+<div style="height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Cluster (KRaft) · 3 brokers</div>
+<div style="position: absolute; left: 16px; top: 44px; width: 226px; height: 84px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 1</strong> · up<div style="font-size: 11px; color: #555; margin-top: 4px">Leader: P0, P3</div></div>
+<div style="position: absolute; left: 274px; top: 44px; width: 226px; height: 84px; border: 2px solid #0d6efd; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 2</strong> · up<div style="font-size: 11px; color: #555; margin-top: 4px">Leader: P1</div></div>
+<div style="position: absolute; left: 532px; top: 44px; width: 226px; height: 84px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px"><strong>Broker 3</strong> · up<div style="font-size: 11px; color: #555; margin-top: 4px">Leader: P2</div></div>
+<div class="rep" style="left: 242px; top: 86px; width: 32px"><div class="sdot"></div></div>
+<div class="rep" style="left: 500px; top: 86px; width: 32px"><div class="sdot" style="animation-delay: -.8s"></div></div>
+</div>
+<div style="position: absolute; left: 298px; top: 548px; width: 200px; height: 36px; background: #212529; color: #fff; border-radius: 6px; display: flex; align-items: center; justify-content: space-around; font-size: 12px">Kill<span>Restart</span><span>Details</span></div>
+<span class="sz" style="left: 298px; right: auto; top: 590px">hover toolbar 200 × 36</span>
+
+<div style="position: absolute; left: 16px; top: 588px; width: 160px; height: 40px; background: #fff; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; justify-content: space-around; font-size: 13px">−<span>fit</span><span>+</span><span style="border-left: 1px solid #bbb; padding-left: 8px">map</span></div>
+<span class="sz" style="left: 16px; right: auto; top: 568px">zoom + minimap toggle 160 × 40</span>
+<div style="position: absolute; left: 664px; top: 548px; width: 160px; height: 84px; background: #fff; border: 1.5px solid #888; border-radius: 6px"><div style="position: absolute; left: 20px; top: 14px; width: 100px; height: 50px; border: 1.5px solid #555; background: #eee"></div></div>
+<span class="sz" style="left: 504px; right: auto; top: 528px">minimap 160 × 84 · only when content is off-screen</span>
+<div style="position: absolute; left: 470px; top: 616px"><span class="anim">ANIM: minimap fades in / out (200 ms)</span></div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 700px; width: 840px; height: 200px; background: #fff; border-top: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">840 × 200 · same tabbed bottom panel as screens 2–3</span>
+<div style="height: 36px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="color: #555">Event timeline</span><span style="color: #555">Event list</span><span style="font-weight: 600; text-decoration: underline">Lag chart</span></div>
+<div style="position: absolute; left: 40px; top: 52px; width: 600px; height: 110px; overflow: hidden; border-left: 1px solid #999; border-bottom: 1px solid #999">
+<svg class="scroll" width="760" height="110" viewBox="0 0 440 110" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,100 40,96 80,90 120,82 160,74 200,62 240,52 280,40 320,30 360,22 400,14 440,8" fill="none" stroke="#c2410c" stroke-width="2"></polyline><polyline points="0,100 40,98 80,99 120,97 160,99 200,98 240,99 280,97 320,99 360,98 400,99 440,98" fill="none" stroke="#555" stroke-width="2" stroke-dasharray="5 3"></polyline></svg>
+</div>
+<div style="position: absolute; left: 664px; top: 60px; font-size: 11px; color: #555; line-height: 1.6">Lag by group<br>solid = analytics<br>dashed = billing</div>
+<div style="position: absolute; left: 40px; top: 170px"><span class="anim">ANIM: chart scrolls live</span></div>
+</div>
+
+<div style="position: absolute; left: 1080px; top: 56px; width: 360px; height: 844px; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">360 × 844 · right panel</span>
+<div style="height: 40px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="color: #555">Properties</span><span style="font-weight: 600; text-decoration: underline">Code</span><span style="color: #555">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="font-size: 12px; color: #555; margin-top: 12px">Code for selected: <strong style="color: #1f1f1f">producer-1</strong></div>
+<div style="display: flex; height: 32px; border: 1.5px solid #0d6efd; border-radius: 6px; overflow: hidden; font-size: 12px; position: relative"><span style="flex: 1; display: flex; align-items: center; justify-content: center; background: #0d6efd; color: #fff">Java</span><span style="flex: 1; display: flex; align-items: center; justify-content: center; border-left: 1px solid #555">Go</span><span style="flex: 1; display: flex; align-items: center; justify-content: center; border-left: 1px solid #555">CLI</span></div>
+<span style="font: 500 10px 'JetBrains Mono', monospace; color: #6b21a8">language tabs 328 × 32</span>
+<div style="border: 1.5px solid #888; border-radius: 6px; padding: 8px 0; font: 500 10.5px/22px 'JetBrains Mono', monospace; overflow-x: auto; white-space: pre; position: relative">
+<div style="padding: 0 10px"><span style="color: #888">1 </span>var props = new Properties();</div>
+<div style="padding: 0 10px"><span style="color: #888">2 </span>props.put("bootstrap.servers", "localhost:9092");</div>
+<div class="hl" style="padding: 0 10px; border-left: 3px solid #ea7a35"><span style="color: #888">3 </span>props.put("acks", "all");</div>
+<div style="padding: 0 10px"><span style="color: #888">4 </span>props.put("key.serializer", StringSerializer.class.getName());</div>
+<div style="padding: 0 10px"><span style="color: #888">5 </span>props.put("value.serializer", StringSerializer.class.getName());</div>
+<div style="padding: 0 10px"><span style="color: #888">6 </span> </div>
+<div style="padding: 0 10px"><span style="color: #888">7 </span>var producer = new KafkaProducer&lt;String, String&gt;(props);</div>
+<div style="padding: 0 10px"><span style="color: #888">8 </span>producer.send(new ProducerRecord&lt;&gt;("orders", key, value));</div>
+</div>
+<span class="anim" style="align-self: flex-start">ANIM: changed line glows orange, fades in 1.5 s</span>
+<div style="border: 2px solid #0d6efd; border-radius: 6px; padding: 10px 12px; font-size: 12px; line-height: 1.45; position: relative"><strong>Line 3 · acks=all</strong><br>The producer gets an OK only after every in-sync replica has the record.<span class="sz" style="top: -12px">line tooltip 328 × auto</span></div>
+<div style="font-size: 12px; font-weight: 700; margin-top: 8px">Topic setup (CLI)</div>
+<div style="border: 1.5px solid #888; border-radius: 6px; padding: 8px 10px; font: 500 10.5px/20px 'JetBrains Mono', monospace; white-space: pre-wrap">kafka-topics.sh --create --topic orders --partitions 4 --replication-factor 3</div>
+<div style="display: flex; gap: 8px"><button type="button" style="flex: 1; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Copy</button><button type="button" style="flex: 1; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Explain all lines</button></div>
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

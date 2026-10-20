@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Level Break-it moment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#1f1f1f}a:hover{color:#000}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap;z-index:21}
+.edge{position:absolute;height:2px;background:#9a9a9a}
+.edge::after{content:"";position:absolute;right:-2px;top:-4px;border-left:8px solid #9a9a9a;border-top:5px solid transparent;border-bottom:5px solid transparent}
+.dot{position:absolute;top:-7px;width:16px;height:16px;border-radius:50%;font:700 9px/16px Inter,sans-serif;text-align:center;color:#fff}
+.kA{background:#222}.kB{background:#666}.kC{background:#b5b5b5;color:#111}
+.cell{width:18px;height:18px;border:1px solid #888;font:500 9px/16px 'JetBrains Mono',monospace;text-align:center;background:#fff;box-sizing:border-box}
+.lost{border:1.5px dashed #c2410c;color:#9a3412;text-decoration:line-through;background:#fff4ec}
+.pin{position:absolute;width:24px;height:24px;border-radius:50%;background:#0d6efd;color:#fff;font:700 12px/24px Inter,sans-serif;text-align:center;z-index:15}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(234,122,53,.8)}50%{box-shadow:0 0 0 10px rgba(234,122,53,0)}}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes flip{0%,40%{transform:rotateX(0)}50%{transform:rotateX(90deg)}60%,100%{transform:rotateX(0)}}
+.flip{animation:flip 3s ease-in-out infinite;display:inline-block}
+@keyframes scrub{0%,100%{left:620px}50%{left:540px}}
+.scrub{animation:scrub 3s ease-in-out infinite}
+</style>
+</head>
+<body>
+
+
+<div style="width: 1440px; height: 900px; position: relative; background: #ffffff; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+
+<div style="position: absolute; left: 0; top: 0; width: 1440px; height: 56px; background: #fff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 20px; padding: 0 16px">
+<span class="sz" style="top: 42px; right: 240px">1440 × 56 · sim controls: 40 tall, centered, 8 px from right edge</span>
+<a href="01-home-campaign-map.html" style="font-size: 13px">Back to map</a>
+<strong style="font-size: 15px">W2 · L7 · acks: how sure is "sent"?</strong>
+<div style="display: flex; gap: 6px; font-size: 12px">
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">1 Learn [done]</span>
+<span style="padding: 6px 12px; background: #0d6efd; color: #fff; border-radius: 14px">2 Break it</span>
+<span style="padding: 6px 12px; border: 1px solid #999; border-radius: 14px">3 Fix</span>
+<span style="padding: 6px 12px; border: 1px dashed #999; border-radius: 14px; color: #555">Real Lab (opt.)</span>
+</div>
+<div style="position: absolute; right: 8px; top: 0; bottom: 0; display: flex; gap: 8px; align-items: center">
+<button type="button" style="width: 40px; height: 40px; border: 2px solid #0d6efd; background: #0d6efd; color: #fff; border-radius: 6px; font-size: 11px; font-weight: 700">Play</button>
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Step</button>
+<button type="button" style="width: 56px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 12px">1×</button>
+<button type="button" style="width: 40px; height: 40px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px; font-size: 11px">Reset</button>
+</div>
+</div>
+
+<div style="position: absolute; left: 0; top: 56px; width: 1440px; height: 44px; background: #ffffff; border-bottom: 1.5px solid #9a9a9a; box-sizing: border-box; display: flex; align-items: center; gap: 24px; padding: 0 16px; font-size: 13px">
+<span class="sz">1440 × 44</span>
+<span style="font-weight: 600">Break it</span>
+<span>[done] Kill the leader of orders-0 right after a write</span>
+<span style="font-weight: 600">Failure triggered: data loss</span>
+</div>
+
+<div style="position: absolute; left: 0; top: 100px; width: 240px; height: 800px; background: #fff; border-right: 1.5px solid #9a9a9a; box-sizing: border-box; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<span class="sz">240 × 800</span>
+<div style="font-size: 12px; font-weight: 600; color: #555; margin-top: 18px">FAILURE TOOLS</div>
+<div style="height: 56px; border: 2px solid #0d6efd; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600">Kill broker (used)</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px">Restart broker</div>
+<div style="height: 56px; border: 1.5px solid #888; border-radius: 6px; display: flex; align-items: center; padding: 0 12px; font-size: 13px">Kill consumer</div>
+<div style="font-size: 11px; color: #555; margin-top: 8px">In Break it, the palette swaps to failure tools. The prompt also offers "Do it for me".</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 100px; width: 840px; height: 600px; background-color: #ffffff; background-image: radial-gradient(#dee2e6 1px, transparent 1px); background-size: 16px 16px">
+<span class="sz" style="top: 68px">840 × 600 · canvas</span>
+
+<div style="position: absolute; left: 16px; top: 16px; width: 808px; height: 44px; background: #212529; color: #fff; border-radius: 6px; display: flex; align-items: center; gap: 12px; padding: 0 12px; box-sizing: border-box; font-size: 13px">
+<strong>PAUSED at t = 00:42.180</strong><span>2 acknowledged records lost on orders-0</span>
+<button type="button" style="margin-left: auto; height: 32px; padding: 0 12px; background: #fff; border: 0; border-radius: 4px; font-size: 12px">Replay last 5 s</button>
+<span style="font: 500 10px 'JetBrains Mono', monospace; color: #c9d7ff">auto-pause banner 808 × 44</span>
+</div>
+
+<div style="position: absolute; left: 32px; top: 166px; width: 150px; height: 72px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 10px 12px; opacity: .7">
+<div style="font-size: 13px; font-weight: 600">producer-1</div><div style="font-size: 11px; color: #555">acks=1</div>
+</div>
+<div class="edge" style="left: 182px; top: 201px; width: 96px"><div class="dot kB" style="left: 40px">B</div></div>
+
+<div style="position: absolute; left: 278px; top: 90px; width: 230px; height: 196px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Topic: orders</div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px; outline: 3px solid #0d6efd; outline-offset: 2px"><span style="width: 22px">P0</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><div class="cell">3</div><div class="cell lost">4</div><div class="cell lost">5</div><span class="flip" style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1.5px solid #222; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P1</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B2</span></div>
+<div style="height: 40px; margin-top: 8px; display: flex; align-items: center; gap: 3px; font-size: 11px"><span style="width: 22px">P2</span><div class="cell">0</div><div class="cell">1</div><div class="cell">2</div><div class="cell">3</div><span style="margin-left: auto; font: 600 10px 'JetBrains Mono', monospace; border: 1px solid #555; padding: 2px 4px">L B3</span></div>
+</div>
+<div class="pin" style="left: 254px; top: 134px">2</div>
+<div style="position: absolute; left: 290px; top: 296px; display: flex; flex-direction: column; gap: 4px"><span class="anim">ANIM: lost cells shake, then strike through</span><span class="anim">ANIM: leader badge flips B1 → B2</span></div>
+
+<div class="edge" style="left: 508px; top: 153px; width: 82px"></div>
+<div class="edge" style="left: 508px; top: 201px; width: 82px"></div>
+<div class="edge" style="left: 508px; top: 249px; width: 82px"></div>
+
+<div style="position: absolute; left: 590px; top: 90px; width: 220px; height: 196px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box; padding: 0 12px; opacity: .7">
+<div style="height: 36px; display: flex; align-items: center; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Group: billing</div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-1 · P0</div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-2 · P1</div>
+<div style="height: 40px; margin-top: 8px; border: 1px solid #999; border-radius: 6px; display: flex; align-items: center; padding: 0 8px; font-size: 12px">consumer-3 · P2</div>
+</div>
+<div style="position: absolute; left: 590px; top: 296px; width: 220px; font-size: 11px; color: #555">Parts not involved in the failure dim to 70%.</div>
+
+<div style="position: absolute; left: 32px; top: 340px; width: 778px; height: 150px; background: #fff; border: 1.5px solid #555; border-radius: 8px; box-sizing: border-box">
+<div style="height: 36px; display: flex; align-items: center; padding: 0 12px; font-size: 13px; font-weight: 600; border-bottom: 1px solid #ccc">Cluster (KRaft) · 2 of 3 brokers up</div>
+<div class="pulse" style="position: absolute; left: 16px; top: 46px; width: 226px; height: 92px; border: 2.5px solid #222; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: repeating-linear-gradient(45deg, #f3f3f3 0 8px, #e2e2e2 8px 16px)"><strong>Broker 1 · DOWN</strong><div style="font-size: 11px; margin-top: 6px">was leader of P0<br>had offsets 4–5 only here</div></div>
+<div style="position: absolute; left: 276px; top: 46px; width: 226px; height: 92px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: #fff"><strong>Broker 2</strong> · up<div style="font-size: 11px; color: #555; margin-top: 6px">NEW leader of P0 (log ends at 3)<br>Leader: P1</div></div>
+<div style="position: absolute; left: 536px; top: 46px; width: 226px; height: 92px; border: 1.5px solid #888; border-radius: 6px; box-sizing: border-box; padding: 8px 10px; font-size: 12px; background: #fff"><strong>Broker 3</strong> · up<div style="font-size: 11px; color: #555; margin-top: 6px">Leader: P2<br>Follower: P0</div></div>
+</div>
+<div class="pin" style="left: 20px; top: 376px">1</div>
+<div style="position: absolute; left: 32px; top: 500px"><span class="anim">ANIM: failed broker hatched + orange pulse ring</span></div>
+<div style="position: absolute; left: 32px; top: 530px; width: 778px; font-size: 11px; color: #555">Numbered pins on the canvas match the steps in the "What went wrong" panel →</div>
+</div>
+
+<div style="position: absolute; left: 240px; top: 700px; width: 840px; height: 200px; background: #fff; border-top: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">840 × 200</span>
+<div style="height: 36px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="font-weight: 600; text-decoration: underline">Event timeline</span><span style="color: #555">Event list</span><span style="color: #555">Lag chart</span></div>
+<div style="position: absolute; left: 40px; top: 90px; width: 740px; height: 2px; background: #999"></div>
+<div style="position: absolute; left: 400px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 360px; top: 106px; font-size: 10px; color: #555">ProduceAcked 4, 5</div>
+<div style="position: absolute; left: 560px; top: 74px; width: 4px; height: 34px; background: #222"></div><div style="position: absolute; left: 520px; top: 112px; font-size: 10px; font-weight: 700">BrokerDown B1</div>
+<div style="position: absolute; left: 600px; top: 82px; width: 2px; height: 18px; background: #555"></div><div style="position: absolute; left: 590px; top: 56px; font-size: 10px; color: #555">LeaderElected B2</div>
+<div style="position: absolute; left: 640px; top: 74px; width: 4px; height: 34px; background: #c2410c"></div><div style="position: absolute; left: 640px; top: 112px; font-size: 10px; font-weight: 700; color: #9a3412">RecordsTruncated ×2</div>
+<div class="scrub" style="position: absolute; top: 66px; width: 14px; height: 50px; background: #ea7a35; border-radius: 3px; opacity: .85"></div>
+<div style="position: absolute; left: 40px; top: 150px"><span class="anim">ANIM: drag orange scrubber back; canvas replays the moment</span></div>
+</div>
+
+<div style="position: absolute; left: 1080px; top: 100px; width: 360px; height: 800px; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box">
+<span class="sz">360 × 800</span>
+<div style="height: 40px; display: flex; gap: 12px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 12px; white-space: nowrap"><span style="font-weight: 600; text-decoration: underline">What went wrong</span><span style="color: #555">Properties</span><span style="color: #555">Code</span><span style="color: #555">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 12px; position: relative">
+<span class="sz" style="top: 8px">dialogue 328 × 360</span>
+<div style="display: flex; gap: 6px; font-size: 12px; margin-top: 16px"><span style="padding: 4px 10px; border: 1px solid #999; border-radius: 12px">1 Cause</span><span style="padding: 4px 10px; background: #0d6efd; color: #fff; border-radius: 12px">2 Effect</span><span style="padding: 4px 10px; border: 1px solid #999; border-radius: 12px">3 Concept</span></div>
+<div style="font-size: 13px; line-height: 1.5; color: #555"><strong style="color: #1f1f1f">1 · Cause.</strong> Broker 1 led P0. With acks=1 it confirmed offsets 4–5 before any follower copied them.</div>
+<div style="font-size: 14px; line-height: 1.5; border: 2px solid #0d6efd; border-radius: 6px; padding: 12px"><strong>2 · Effect.</strong> Broker 1 died. Broker 2 became leader, but its copy ends at offset 3. Offsets 4–5 existed only on broker 1, so they are gone, even though the producer was told "OK".</div>
+<div style="font-size: 13px; line-height: 1.5; color: #555"><strong style="color: #1f1f1f">3 · Concept</strong> (next): acks=1 waits for the leader only.</div>
+<div style="display: flex; gap: 8px"><button type="button" style="flex: 1; height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Back</button><button type="button" style="flex: 1; height: 44px; border: 1.5px solid #0d6efd; background: #fff; color: #0d6efd; border-radius: 6px">Next</button></div>
+<button type="button" style="height: 44px; border: 0; background: #0d6efd; color: #fff; border-radius: 6px; font-weight: 600">Show me the fix</button>
+</div>
+<div style="position: absolute; left: 16px; top: 440px; width: 328px">
+<div style="font-size: 13px; font-weight: 700; margin-bottom: 2px">Partition log · orders-0</div><div style="font-size: 11px; color: #555; margin-bottom: 8px">Compact copy pinned under the dialogue during a failure; the full log is in the Partition log tab.</div>
+<div style="display: grid; grid-template-columns: 56px 48px 1fr; font: 500 11px/28px 'JetBrains Mono', monospace; border-top: 1px solid #ccc">
+<span style="font-weight: 600">offset</span><span style="font-weight: 600">key</span><span style="font-weight: 600">status</span>
+<span>2</span><span>A</span><span>acked · on 3 brokers</span>
+<span>3</span><span>C</span><span>acked · on 3 brokers</span>
+<span style="color: #9a3412">4</span><span style="color: #9a3412">B</span><span style="color: #9a3412; font-weight: 600">acked · LOST</span>
+<span style="color: #9a3412">5</span><span style="color: #9a3412">A</span><span style="color: #9a3412; font-weight: 600">acked · LOST</span>
+</div>
+<span class="sz" style="top: -2px">log table row 328 × 28</span>
+</div>
+</div>
+
+</div>
+
+
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Right panel Partition log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+.sz{position:absolute;top:4px;right:4px;font:500 10px/1 'JetBrains Mono',monospace;color:#6b21a8;background:#f5edff;border:1px solid #c9a8f0;padding:3px 5px;border-radius:3px;white-space:nowrap;z-index:20}
+.anim{font:600 10px/1.25 'JetBrains Mono',monospace;color:#9a3412;background:#fff4ec;border:1px dashed #ea7a35;padding:3px 6px;border-radius:3px;white-space:nowrap}
+.r{display:grid;grid-template-columns:44px 28px 1fr 74px;gap:6px;font:500 11px/28px 'JetBrains Mono',monospace;border-bottom:1px solid #eee;padding:0 4px}
+.m{font:600 10px/22px 'JetBrains Mono',monospace;text-align:center;border-top:2px solid #222;color:#1f1f1f;background:#e9ecef}
+@keyframes rowin{0%,15%{opacity:0;transform:translateY(8px)}35%,100%{opacity:1;transform:none}}
+.rowin{animation:rowin 3s ease-out infinite}
+</style>
+</head>
+<body>
+
+
+<div style="width: 360px; height: 844px; position: relative; background: #fff; border-left: 1.5px solid #9a9a9a; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1f1f1f; overflow: hidden">
+<span class="sz">360 × 844</span>
+<div style="height: 40px; display: flex; gap: 20px; align-items: center; padding: 0 16px; border-bottom: 1px solid #ccc; font-size: 13px"><span style="color: #555">Properties</span><span style="color: #555">Code</span><span style="font-weight: 600; text-decoration: underline">Partition log</span></div>
+<div style="padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="margin-top: 10px"><div style="font-size: 11px; color: #555">TOPIC</div><div style="font-size: 16px; font-weight: 700">orders</div></div>
+
+<div style="display: flex; height: 32px; border: 1.5px solid #0d6efd; border-radius: 6px; overflow: hidden; font-size: 12px; position: relative"><span style="flex: 1; display: flex; align-items: center; justify-content: center; background: #0d6efd; color: #fff">P0</span><span style="flex: 1; display: flex; align-items: center; justify-content: center; border-left: 1px solid #555">P1</span><span style="flex: 1; display: flex; align-items: center; justify-content: center; border-left: 1px solid #555">P2</span><span style="flex: 1; display: flex; align-items: center; justify-content: center; border-left: 1px solid #555">P3</span></div>
+<span style="font: 500 10px 'JetBrains Mono', monospace; color: #6b21a8; margin-top: -6px">partition picker 328 × 32</span>
+
+<div style="border: 1px solid #ccc; border-radius: 6px; padding: 8px 10px; font: 500 11px/20px 'JetBrains Mono', monospace">
+<div>Leader B1 · replicas B1 B2 B3 · ISR B1 B2 B3</div>
+<div>log-end offset 1204 · high-watermark 1203</div>
+<div>billing committed 1201 · analytics committed 790</div>
+</div>
+
+<div style="display: flex; gap: 8px; align-items: center"><label for="pl-key" style="font-size: 12px">Filter key</label><input id="pl-key" placeholder="e.g. A" style="flex: 1; height: 30px; border: 1px solid #999; padding: 0 8px; font-size: 12px"><label style="display: flex; gap: 4px; align-items: center; font-size: 12px"><input type="checkbox" checked> Follow</label></div>
+
+<div style="border: 1.5px solid #888; border-radius: 6px; overflow: hidden; position: relative">
+<div class="r" style="font-weight: 600; background: #e9ecef"><span>offset</span><span>key</span><span>value</span><span>status</span></div>
+<div class="r"><span>1196</span><span>A</span><span>{"order":981}</span><span>replicated</span></div>
+<div class="r"><span>1197</span><span>B</span><span>{"order":982}</span><span>replicated</span></div>
+<div class="r"><span>1198</span><span>A</span><span>{"order":983}</span><span>replicated</span></div>
+<div class="r"><span>1199</span><span>A</span><span>{"order":984}</span><span>replicated</span></div>
+<div class="r"><span>1200</span><span>B</span><span>{"order":985}</span><span>replicated</span></div>
+<div class="m">billing committed: next read is 1201</div>
+<div class="r"><span>1201</span><span>A</span><span>{"order":986}</span><span>replicated</span></div>
+<div class="r"><span>1202</span><span>B</span><span>{"order":987}</span><span>replicated</span></div>
+<div class="m">high-watermark 1203: consumers read only above this line</div>
+<div class="r rowin" style="color: #555"><span>1203</span><span>A</span><span>{"order":988}</span><span>leader only</span></div>
+<span class="sz" style="top: 32px">log row 328 × 28 · marker row 328 × 22</span>
+</div>
+<span class="anim" style="align-self: flex-start">ANIM: new rows append at the bottom; markers move down as offsets advance</span>
+<div style="font-size: 11px; color: #555; line-height: 1.45">Click a row to open the message inspector: the message's path from producer → leader → followers → consumer. Hovering a marker explains it in plain language. Lost records appear crossed out (see screen 3).</div>
+</div>
+</div>
+
+
+</body>
+</html>
