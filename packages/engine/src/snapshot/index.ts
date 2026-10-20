@@ -6,7 +6,7 @@
 import type { Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
 import type { SimTime } from '../core/clock.ts';
 import type { LogRecord } from '../model/partition.ts';
-import type { EngineState } from '../model/state.ts';
+import type { EngineState, ProducerStats } from '../model/state.ts';
 
 export interface PartitionSnapshot {
   readonly index: number;
@@ -27,7 +27,7 @@ export interface EngineSnapshot {
   readonly t: SimTime;
   readonly brokers: readonly { readonly config: Broker }[];
   readonly topics: readonly TopicSnapshot[];
-  readonly producers: readonly { readonly config: Producer }[];
+  readonly producers: readonly { readonly config: Producer; readonly stats: ProducerStats }[];
   readonly consumers: readonly { readonly config: Consumer }[];
   readonly connections: readonly Connection[];
 }
@@ -57,7 +57,7 @@ export function buildSnapshot(
         records: options.recordsPerPartition > 0 ? p.log.slice(-options.recordsPerPartition) : [],
       })),
     })),
-    producers: [...state.producers.values()].map((p) => ({ config: p.config })),
+    producers: [...state.producers.values()].map((p) => ({ config: p.config, stats: p.stats })),
     consumers: [...state.consumers.values()].map((c) => ({ config: c.config })),
     connections: state.connections,
   });

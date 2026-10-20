@@ -12,4 +12,10 @@ export interface EngineContext {
   readonly kernel: Kernel<EngineTask, EngineEventPayload>;
   readonly state: EngineState;
   readonly emit: (event: EngineEventPayload) => void;
+  readonly config: EngineConfig;
+}
+
+export interface EngineConfig {
+  /** Fixed one-way network latency between clients and brokers, in sim ms. */
+  readonly networkDelayMs: number;
 }

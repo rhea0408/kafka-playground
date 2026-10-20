@@ -5,6 +5,8 @@
  */
 
 import type { Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
+import type { Rng } from '../core/rng.ts';
+import type { StickyState } from '../protocols/partitioner.ts';
 import type { PartitionState } from './partition.ts';
 
 export interface BrokerState {
@@ -18,6 +20,25 @@ export interface TopicState {
 
 export interface ProducerState {
   readonly config: Producer;
+  /** Distinguishes this life of the producer from earlier ones with the same id. */
+  readonly incarnation: number;
+  /** Sim time the producer started; record n is due at startedAt + floor(n * 1000 / rate). */
+  readonly startedAt: number;
+  /** Seeded streams: one for key choice, one for the sticky partitioner. */
+  readonly keyRng: Rng;
+  readonly partitionRng: Rng;
+  /** Sticky partition per topic, for records without a key. */
+  readonly sticky: Map<string, StickyState>;
+  stats: ProducerStats;
+}
+
+export interface ProducerStats {
+  /** Records handed to the producer (RecordProduced). */
+  sent: number;
+  /** Records the producer considers delivered (ProduceAcked). */
+  acked: number;
+  /** Records the producer was told failed (ProduceFailed). */
+  failed: number;
 }
 
 export interface ConsumerState {
@@ -31,6 +52,8 @@ export interface EngineState {
   readonly consumers: Map<string, ConsumerState>;
   /** In the order they were made. */
   readonly connections: Connection[];
+  /** Source of incarnation numbers for producers and consumers. */
+  readonly counters: { incarnation: number };
 }
 
 export function createState(): EngineState {
@@ -40,6 +63,7 @@ export function createState(): EngineState {
     producers: new Map(),
     consumers: new Map(),
     connections: [],
+    counters: { incarnation: 0 },
   };
 }
 
