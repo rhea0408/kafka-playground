@@ -43,6 +43,25 @@ export interface ProducerStats {
 
 export interface ConsumerState {
   readonly config: Consumer;
+  /** Changes on every (re)start, so poll tasks from an earlier life are ignored. */
+  incarnation: number;
+  /** "stopped" after KillConsumer, until RestartConsumer. */
+  status: 'running' | 'stopped';
+  /** Next offset to fetch, per assigned partition ("topic-partition" → offset). */
+  readonly positions: Map<string, number>;
+  /** Sim time of the last auto-commit (or of the start); the interval counts from here. */
+  lastAutoCommitAt: number;
+  /** Rotates which assigned partition is read first, so no partition starves. */
+  nextPartitionIndex: number;
+  stats: { consumed: number };
+}
+
+/**
+ * Committed offsets of one consumer group (what Kafka stores in __consumer_offsets via the
+ * group coordinator). A committed offset is the next offset to read, not the last one read.
+ */
+export interface GroupState {
+  readonly committed: Map<string, number>;
 }
 
 export interface EngineState {
@@ -50,6 +69,8 @@ export interface EngineState {
   readonly topics: Map<string, TopicState>;
   readonly producers: Map<string, ProducerState>;
   readonly consumers: Map<string, ConsumerState>;
+  /** Survive their consumers: a restarted or re-added consumer resumes from here. */
+  readonly groups: Map<string, GroupState>;
   /** In the order they were made. */
   readonly connections: Connection[];
   /** Source of incarnation numbers for producers and consumers. */
@@ -62,6 +83,7 @@ export function createState(): EngineState {
     topics: new Map(),
     producers: new Map(),
     consumers: new Map(),
+    groups: new Map(),
     connections: [],
     counters: { incarnation: 0 },
   };
