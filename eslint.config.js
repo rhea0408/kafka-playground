@@ -37,6 +37,8 @@ export default defineConfig(
     rules: {
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
+      // `const { omitted, ...rest } = obj` is the idiomatic way to drop a field.
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
       // Named exports only (CLAUDE.md code style).
       'no-restricted-syntax': [
         'error',
