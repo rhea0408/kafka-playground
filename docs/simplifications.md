@@ -20,3 +20,6 @@ Where the simulation differs from real Kafka. Add an entry for every simplificat
 | Consumer groups (M1 only) | Many consumers share a group and split its partitions | One consumer per group; it reads every partition of the topics it is connected to | Group coordinator and rebalancing arrive in M3 |
 | Manual commits (M1 only) | `commitSync` / `commitAsync` from application code | With `enable.auto.commit = false` nothing is committed | Manual commit commands arrive in M3 |
 | Consumer crash | A crashed consumer is detected by the group coordinator after `session.timeout.ms` | `KillConsumer` stops it instantly without committing; `RestartConsumer` resumes from the committed offsets | Session timeouts arrive with groups (M3) |
+| Retention (M1 only) | Old log segments are deleted by `retention.ms` / `retention.bytes`, moving the log start offset up | Logs never shrink; `logStartOffset` stays 0 | Retention and compaction arrive in v0.4 |
+| Topic deletion | Deletion is asynchronous; the group's committed offsets for the topic are cleaned up later | The topic disappears at once; in-flight produce requests fail; committed offsets stay in the group | Keeps the event log easy to follow |
+| Time | Wall-clock milliseconds with real jitter | Integer sim milliseconds; ties are broken by scheduling order (`seq`) | Determinism (NFR-4.1) |
