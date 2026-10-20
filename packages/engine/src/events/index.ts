@@ -55,7 +55,32 @@ export type EngineEventPayload =
       readonly partition: number;
       readonly traceId: string;
       readonly error: ProduceError;
-    };
+    }
+  /** poll() returned this record to the consumer application. */
+  | {
+      readonly type: 'RecordConsumed';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly offset: number;
+      readonly key: string | null;
+      readonly value: string;
+      readonly traceId: string;
+    }
+  /** The group saved `offset` (the next offset to read) for this partition. */
+  | {
+      readonly type: 'OffsetCommitted';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly offset: number;
+    }
+  /** The consumer process crashed or was stopped (KillConsumer). Nothing was committed. */
+  | { readonly type: 'ConsumerStopped'; readonly consumerId: string }
+  /** The consumer process started again (RestartConsumer); it resumes from committed offsets. */
+  | { readonly type: 'ConsumerStarted'; readonly consumerId: string };
 
 export type EngineEvent = Stamped<EngineEventPayload>;
 

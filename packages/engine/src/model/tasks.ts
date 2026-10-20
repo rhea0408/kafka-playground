@@ -8,6 +8,8 @@ import type { Acks } from '@kp/schema';
 import type { LogRecord } from './partition.ts';
 
 export type EngineTask =
+  /** The consumer application calls poll(). */
+  | { readonly type: 'ConsumerPoll'; readonly consumerId: string; readonly incarnation: number }
   /** The producer creates its n-th scheduled record(s). */
   | {
       readonly type: 'ProducerTick';

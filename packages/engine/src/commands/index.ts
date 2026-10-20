@@ -12,7 +12,7 @@ import type { SimTime } from '../core/clock.ts';
 export type Command =
   /** Adds a component. Optional config fields take their defaults. */
   | { readonly type: 'AddComponent'; readonly component: ComponentInput }
-  /** Removes a component and its connections. */
+  /** Removes a component and its connections. A consumer is closed gracefully (commits first). */
   | { readonly type: 'RemoveComponent'; readonly id: string }
   /** Connects two components (producer → topic or topic → consumer). */
   | { readonly type: 'Connect'; readonly from: string; readonly to: string }
@@ -23,7 +23,11 @@ export type Command =
       readonly producerId: string;
       readonly key: string | null;
       readonly value: string;
-    };
+    }
+  /** Crashes a consumer: it stops polling without committing (FR-3.1). */
+  | { readonly type: 'KillConsumer'; readonly id: string }
+  /** Starts a killed consumer again; it resumes from the group's committed offsets. */
+  | { readonly type: 'RestartConsumer'; readonly id: string };
 
 export type CommandType = Command['type'];
 

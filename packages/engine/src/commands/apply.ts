@@ -10,6 +10,7 @@ import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
 import { placePartitions } from '../model/placement.ts';
 import { topicsOfProducer } from '../model/state.ts';
+import { closeConsumer, killConsumer, runConsumer, startConsumer } from '../protocols/consume.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
@@ -31,6 +32,9 @@ export function applyCommand(ctx: EngineContext, command: Command): ApplyResult 
       return disconnect(ctx, command.from, command.to);
     case 'ProduceManual':
       return produceManual(ctx, command);
+    case 'KillConsumer':
+    case 'RestartConsumer':
+      return setConsumerRunning(ctx, command.id, command.type === 'RestartConsumer');
     default:
       return assertNever(command);
   }
@@ -76,7 +80,7 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
       startProducer(ctx, component);
       break;
     case 'consumer':
-      state.consumers.set(component.id, { config: component });
+      startConsumer(ctx, component);
       break;
     default:
       return assertNever(component);
@@ -135,10 +139,14 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       component = (state.producers.get(id) as { config: Component }).config;
       state.producers.delete(id);
       break;
-    case 'consumer':
-      component = (state.consumers.get(id) as { config: Component }).config;
+    case 'consumer': {
+      const consumer = state.consumers.get(id);
+      if (consumer === undefined) return reject(`There is no component with id "${id}".`);
+      closeConsumer(ctx, consumer);
+      component = consumer.config;
       state.consumers.delete(id);
       break;
+    }
     default:
       return assertNever(kind);
   }
@@ -187,4 +195,19 @@ function produceManual(
   }
   for (const topic of topics) sendRecord(ctx, producer, topic, command.key, command.value);
   return { ok: true, logged: command };
+}
+
+function setConsumerRunning(ctx: EngineContext, id: string, running: boolean): ApplyResult {
+  const consumer = ctx.state.consumers.get(id);
+  if (consumer === undefined) return reject(`There is no consumer with id "${id}".`);
+  if (running) {
+    if (consumer.status === 'running') return reject(`Consumer ${id} is already running.`);
+    runConsumer(ctx, consumer);
+    ctx.emit({ type: 'ConsumerStarted', consumerId: id });
+    return { ok: true, logged: { type: 'RestartConsumer', id } };
+  }
+  if (consumer.status === 'stopped') return reject(`Consumer ${id} is already stopped.`);
+  killConsumer(ctx, consumer);
+  ctx.emit({ type: 'ConsumerStopped', consumerId: id });
+  return { ok: true, logged: { type: 'KillConsumer', id } };
 }
