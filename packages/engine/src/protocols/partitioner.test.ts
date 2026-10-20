@@ -69,6 +69,13 @@ describe('partitionForKey', () => {
     expect(partitionForKey('21', 3)).toBe((-973932308 & 0x7fffffff) % 3);
   });
 
+  it('maps single-letter keys like the Java client: A, B and C all land on partition 1 of 3', () => {
+    // Cross-checked against an independent port of Utils#murmur2 that passes Kafka's vectors.
+    // A real lesson: a handful of keys rarely spreads evenly over partitions.
+    expect(['A', 'B', 'C', 'D'].map((k) => partitionForKey(k, 3))).toEqual([1, 1, 1, 0]);
+    expect(['A', 'B', 'C', 'D'].map((k) => partitionForKey(k, 4))).toEqual([2, 0, 0, 1]);
+  });
+
   it('spreads 10k random keys roughly evenly', () => {
     const rng = createRng(2024);
     const counts = Array.from({ length: 6 }, () => 0);

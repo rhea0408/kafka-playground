@@ -91,6 +91,16 @@ export default defineConfig(
     },
   },
 
+  // Node scripts next to a headless package (demo, tooling) may use Node globals such as console.
+  {
+    files: ['packages/*/scripts/**/*.ts'],
+    languageOptions: { globals: globals.node },
+    rules: {
+      'no-restricted-globals': 'off',
+      'no-restricted-properties': 'off',
+    },
+  },
+
   // Config files use default exports by convention; they are plain JS without type info.
   {
     files: ['*.js'],
