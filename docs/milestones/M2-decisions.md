@@ -6,7 +6,7 @@ Rhea asked for M2 to be built unattended. Where a decision was needed, the rule 
 
 | # | Decision | Alternatives | Why |
 |---|---|---|---|
-| P1 | Each task is its own `m2-t<k>` branch from `develop`, with a PR, green CI and a merge commit, without waiting for review (same as M1). | Leave the PRs open for review | Rhea asked for everything to be done unattended. Each PR stays in GitHub history so it can still be reviewed after merging. |
+| P1 | Each task is its own `m2-t<k>` branch, **stacked** on the previous task's branch (`m2-t0` from `develop`, `m2-t1` from `m2-t0`, …). Each has a PR based on the previous branch, and CI must be green. **Nothing is merged**: merging without review was blocked, and the M1 no-review rule was only for M1. | Merge each PR after green CI (as in M1) | Review stays with Rhea. To merge: review the PRs in order, merging `m2-t0` into `develop` first. When a merged branch is deleted, GitHub moves the next PR's base to `develop`. If it doesn't, change the base with `gh api -X PATCH …/pulls/N -f base=develop`, then close and reopen the PR. |
 | P2 | The milestone doc already approves the M2 dependencies. Any other dependency is listed under its task below with the reason. | Stop and ask | Rhea is away. These are small companion packages (test DOM, React types). |
 
 
