@@ -21,6 +21,12 @@ import type { TopologyInput } from '@kp/schema';
 export const MIN_SPEED = 0.25;
 export const MAX_SPEED = 10;
 
+/**
+ * Events the host keeps for history and late subscribers (NFR-2.9). The main thread's event list
+ * keeps the same number (simStore), so a late subscriber's history fills it exactly.
+ */
+export const EVENT_HISTORY_SIZE = 10_000;
+
 /** Result of a host call that can be refused. Same shape as the engine's `DispatchResult`. */
 export type HostResult = DispatchResult;
 

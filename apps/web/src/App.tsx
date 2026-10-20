@@ -1,7 +1,10 @@
 import { formatSimTime } from '@kp/engine';
+import { Toasts } from './components/Toasts.tsx';
+import { useSimStore } from './stores/sim-store.ts';
 
-/** M2-T0 placeholder: the themed top bar. The Sandbox layout (screen 05) arrives in T6. */
+/** Minimal shell until the Sandbox layout (screen 05) arrives in T6. */
 export function App() {
+  const t = useSimStore((s) => s.t);
   return (
     <div className="flex h-full flex-col bg-surface">
       <header className="relative flex h-14 shrink-0 items-center border-b border-border px-4">
@@ -10,10 +13,11 @@ export function App() {
           Sandbox
         </span>
         <time className="absolute right-2 font-mono text-sm text-status" aria-label="Sim time">
-          {formatSimTime(0)}
+          {formatSimTime(t)}
         </time>
       </header>
       <main className="flex-1" />
+      <Toasts />
     </div>
   );
 }
