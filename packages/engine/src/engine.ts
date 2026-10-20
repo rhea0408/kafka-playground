@@ -6,7 +6,7 @@
 import { parseTopology, type TopologyInput } from '@kp/schema';
 import { applyCommand } from './commands/apply.ts';
 import type { Command, CommandLogEntry, DispatchResult, LoggedCommand } from './commands/index.ts';
-import type { SimTime } from './core/clock.ts';
+import { assertSimTime, type SimTime } from './core/clock.ts';
 import { createKernel, type Kernel } from './core/kernel.ts';
 import type { EngineEvent, EngineEventPayload } from './events/index.ts';
 import type { EngineContext } from './model/context.ts';
@@ -21,6 +21,8 @@ export interface EngineOptions {
   readonly topology?: TopologyInput;
   /** How many recent records per partition snapshots include. Default 20. */
   readonly snapshotRecordsPerPartition?: number;
+  /** Fixed one-way client↔broker network latency in sim ms. Default 1. */
+  readonly networkDelayMs?: number;
 }
 
 export interface Engine {
@@ -46,6 +48,8 @@ function createEngineInternal(options: EngineOptions): {
   engine: Engine;
   kernel: Kernel<EngineTask, EngineEventPayload>;
 } {
+  const networkDelayMs = options.networkDelayMs ?? 1;
+  assertSimTime(networkDelayMs);
   let loading = true;
   const kernel = createKernel<EngineTask, EngineEventPayload>({
     seed: options.seed,
@@ -60,6 +64,7 @@ function createEngineInternal(options: EngineOptions): {
     emit: (event) => {
       if (!loading) kernel.emit(event);
     },
+    config: { networkDelayMs },
   };
 
   loadTopology(context, options.topology ?? {});

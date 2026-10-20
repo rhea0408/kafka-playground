@@ -9,6 +9,8 @@ import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
 import { placePartitions } from '../model/placement.ts';
+import { topicsOfProducer } from '../model/state.ts';
+import { sendRecord, startProducer } from '../protocols/produce.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
 export type ApplyResult =
@@ -27,6 +29,8 @@ export function applyCommand(ctx: EngineContext, command: Command): ApplyResult 
       return connect(ctx, command.from, command.to);
     case 'Disconnect':
       return disconnect(ctx, command.from, command.to);
+    case 'ProduceManual':
+      return produceManual(ctx, command);
     default:
       return assertNever(command);
   }
@@ -69,7 +73,7 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
       break;
     }
     case 'producer':
-      state.producers.set(component.id, { config: component });
+      startProducer(ctx, component);
       break;
     case 'consumer':
       state.consumers.set(component.id, { config: component });
@@ -168,4 +172,19 @@ function disconnect(ctx: EngineContext, from: string, to: string): ApplyResult {
   ctx.state.connections.splice(index, 1);
   ctx.emit({ type: 'Disconnected', from, to });
   return { ok: true, logged: { type: 'Disconnect', from, to } };
+}
+
+function produceManual(
+  ctx: EngineContext,
+  command: Extract<Command, { type: 'ProduceManual' }>,
+): ApplyResult {
+  const producer = ctx.state.producers.get(command.producerId);
+  if (producer === undefined)
+    return reject(`There is no producer with id "${command.producerId}".`);
+  const topics = topicsOfProducer(ctx.state, producer.config.id);
+  if (topics.length === 0) {
+    return reject(`Producer ${producer.config.id} is not connected to a topic.`);
+  }
+  for (const topic of topics) sendRecord(ctx, producer, topic, command.key, command.value);
+  return { ok: true, logged: command };
 }

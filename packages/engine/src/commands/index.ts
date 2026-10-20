@@ -16,7 +16,14 @@ export type Command =
   | { readonly type: 'RemoveComponent'; readonly id: string }
   /** Connects two components (producer → topic or topic → consumer). */
   | { readonly type: 'Connect'; readonly from: string; readonly to: string }
-  | { readonly type: 'Disconnect'; readonly from: string; readonly to: string };
+  | { readonly type: 'Disconnect'; readonly from: string; readonly to: string }
+  /** Sends one record now from a producer to each topic it is connected to (FR-6.5). */
+  | {
+      readonly type: 'ProduceManual';
+      readonly producerId: string;
+      readonly key: string | null;
+      readonly value: string;
+    };
 
 export type CommandType = Command['type'];
 
