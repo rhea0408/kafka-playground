@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createEventQueue } from './queue';
+import { createEventQueue } from './queue.ts';
 
 const drain = <T>(q: ReturnType<typeof createEventQueue<T>>): T[] => {
   const out: T[] = [];

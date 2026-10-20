@@ -7,10 +7,8 @@
  * change how fast the worker drives the loop, never the simulated outcome, so they are not logged.
  */
 
-import type { SimTime } from '../core/clock';
-
-/** Placeholder until @kp/schema defines components (M1-T3). */
-export type ComponentKind = 'broker' | 'topic' | 'producer' | 'consumer';
+import type { ComponentKind } from '@kp/schema';
+import type { SimTime } from '../core/clock.ts';
 
 export interface ComponentRef {
   readonly kind: ComponentKind;

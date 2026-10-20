@@ -197,6 +197,10 @@ importers:
   apps/web: {}
 
   packages/engine:
+    dependencies:
+      '@kp/schema':
+        specifier: workspace:*
+        version: link:../schema
     devDependencies:
       fast-check:
         specifier: ^4.10.2
@@ -205,7 +209,15 @@ importers:
         specifier: ^5.0.5
         version: 5.0.5(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5))
 
-  packages/schema: {}
+  packages/schema:
+    dependencies:
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5))
 
 packages:
 
@@ -1012,6 +1024,9 @@ packages:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
+
 snapshots:
 
   '@cacheable/memory@2.2.0':
@@ -1681,3 +1696,5 @@ snapshots:
   word-wrap@1.2.5: {}
 
   yocto-queue@0.1.0: {}
+
+  zod@4.6.7: {}

@@ -3,11 +3,11 @@
  * engine state, command handling and the command log (architecture §4.1, §4.4).
  */
 
-import type { Command, CommandLogEntry, ComponentRef, DispatchResult } from './commands';
-import { assertNever } from './core/assert-never';
-import type { SimTime } from './core/clock';
-import { createKernel, type Kernel } from './core/kernel';
-import type { EngineEvent, EngineEventPayload } from './events';
+import type { Command, CommandLogEntry, ComponentRef, DispatchResult } from './commands/index.ts';
+import { assertNever } from './core/assert-never.ts';
+import type { SimTime } from './core/clock.ts';
+import { createKernel, type Kernel } from './core/kernel.ts';
+import type { EngineEvent, EngineEventPayload } from './events/index.ts';
 
 /** Scheduled engine work. Empty until producers and consumers arrive (M1-T6, T7). */
 type EngineTask = never;

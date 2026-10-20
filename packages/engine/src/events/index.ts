@@ -7,8 +7,8 @@
  * added by the tasks that model them.
  */
 
-import type { ComponentRef } from '../commands';
-import type { Stamped } from '../core/kernel';
+import type { ComponentRef } from '../commands/index.ts';
+import type { Stamped } from '../core/kernel.ts';
 
 export type EngineEventPayload =
   | { readonly type: 'ComponentAdded'; readonly component: ComponentRef }
