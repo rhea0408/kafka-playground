@@ -79,6 +79,7 @@ function createEngineInternal(options: EngineOptions): {
       const afterStep = kernel.stepsProcessed();
       const result = applyCommand(context, command);
       if (!result.ok) return result;
+      if (result.logged === null) return { ok: true }; // accepted, but it changed nothing
       // Plain JSON copy, so a caller mutating its object later cannot rewrite history.
       const logged = JSON.parse(JSON.stringify(result.logged)) as LoggedCommand;
       commandLog.push({ t, afterStep, command: logged });

@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { appendRecord, createPartition, partitionName, readRecords } from './partition.ts';
+import {
+  appendRecord,
+  bytesAvailable,
+  createPartition,
+  partitionName,
+  readRecords,
+} from './partition.ts';
 
 const rec = (n: number, key: string | null = null) => ({
   key,
   value: `v${String(n)}`,
   timestamp: n * 100,
   producerId: 'p1',
-  traceId: `p1#${String(n)}`,
+  traceId: `p1@1#${String(n)}`,
+  sizeBytes: 100,
 });
 
 describe('partition log', () => {
@@ -47,6 +54,16 @@ describe('partition log', () => {
     expect(readRecords(p, 5, 100)).toEqual([]);
     p.highWatermark = 3; // as if offsets 3-4 were not yet replicated (M4)
     expect(readRecords(p, 2, 100).map((r) => r.offset)).toEqual([2]);
+  });
+
+  it('counts the bytes a fetch could return: records from the offset up to the HW', () => {
+    const p = createPartition('orders', 0, 'b1');
+    for (let n = 0; n < 4; n++) appendRecord(p, rec(n));
+    expect(bytesAvailable(p, 0)).toBe(400);
+    expect(bytesAvailable(p, 3)).toBe(100);
+    expect(bytesAvailable(p, 4)).toBe(0);
+    p.highWatermark = 2;
+    expect(bytesAvailable(p, 0)).toBe(200);
   });
 
   it('names partitions like Kafka tools do', () => {

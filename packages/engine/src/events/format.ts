@@ -41,9 +41,27 @@ export function describeEvent(e: EngineEvent): string {
     case 'ConsumerStopped':
     case 'ConsumerStarted':
       return e.consumerId;
+    case 'ConfigUpdated':
+      return `${e.after.kind} ${e.id}  ${configChanges(e.before, e.after)}`;
     default:
       return assertNever(e);
   }
+}
+
+/** "partitions: 3 → 4, acks: all → 1" for the fields that differ. */
+function configChanges(before: object, after: object): string {
+  const b = before as Record<string, unknown>;
+  const a = after as Record<string, unknown>;
+  return Object.keys(a)
+    .filter((k) => JSON.stringify(b[k]) !== JSON.stringify(a[k]))
+    .map((k) => `${k}: ${valueText(b[k])} → ${valueText(a[k])}`)
+    .join(', ');
+}
+
+function valueText(v: unknown): string {
+  return typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean'
+    ? String(v)
+    : JSON.stringify(v);
 }
 
 export function formatEvent(e: EngineEvent): string {

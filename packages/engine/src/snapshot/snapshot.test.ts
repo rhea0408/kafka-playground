@@ -6,9 +6,10 @@ import { createEngine } from '../engine.ts';
  * One partition, so every number can be worked out by hand:
  * - p1 sends key "A" at 2 msg/s: records at t = 500, 1000, 1500, …; each reaches the broker 1 ms
  *   later (501, 1001, …), so by t = 2999 offsets 0-4 exist and LEO = HW = 5.
- * - c1 polls every 100 ms (processing time 0) and auto-commits every 1000 ms at the start of a
- *   poll: at t = 1000 it commits 1, at t = 2000 it commits 3 (offsets 1 and 2 were read at 1100
- *   and 1600), at t = 3000 it commits 5.
+ * - c1's fetch waits at the broker (long poll) and is answered when a record is appended; the
+ *   response arrives 1 ms later, so poll() returns offset n at 502, 1002, 1502, … While blocked
+ *   in poll() it wakes for auto-commit every 1000 ms: at t = 1000 it commits 1, at t = 2000 it
+ *   commits 3 (offsets 1 and 2 were returned at 1002 and 1502), at t = 3000 it commits 5.
  */
 const topology: TopologyInput = {
   brokers: [{ kind: 'broker', id: 'b1' }],
@@ -22,7 +23,6 @@ const topology: TopologyInput = {
       id: 'c1',
       autoOffsetReset: 'earliest',
       autoCommitIntervalMs: 1000,
-      pollIntervalMs: 100,
     },
   ],
   connections: [

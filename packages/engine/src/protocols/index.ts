@@ -6,7 +6,8 @@
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import type { EngineTask } from '../model/tasks.ts';
-import { handleConsumerPoll } from './consume.ts';
+import { handleConsumerPoll, handleFetchResponse } from './consume.ts';
+import { handleFetchExpire, handleFetchRequest } from './fetch.ts';
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
 
 export function runTask(ctx: EngineContext, task: EngineTask): void {
@@ -22,6 +23,15 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'ConsumerPoll':
       handleConsumerPoll(ctx, task);
+      return;
+    case 'FetchRequest':
+      handleFetchRequest(ctx, task);
+      return;
+    case 'FetchExpire':
+      handleFetchExpire(ctx, task);
+      return;
+    case 'FetchResponse':
+      handleFetchResponse(ctx, task);
       return;
     default:
       assertNever(task);

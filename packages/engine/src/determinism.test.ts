@@ -51,6 +51,10 @@ const steps: Step[] = [
   advance(3000),
   cmd({ type: 'RestartConsumer', id: 'c1' }),
   advance(2000),
+  cmd({ type: 'UpdateConfig', id: 'orders', patch: { partitions: 5 } }),
+  cmd({ type: 'UpdateConfig', id: 'p1', patch: { ratePerSec: 11, metadataMaxAgeMs: 1000 } }),
+  cmd({ type: 'UpdateConfig', id: 'c1', patch: { fetchMinBytes: 4096, maxPollRecords: 3 } }),
+  advance(2000),
   cmd({ type: 'Disconnect', from: 'p2', to: 'orders' }),
   advance(3000),
 ];

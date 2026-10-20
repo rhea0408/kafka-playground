@@ -27,7 +27,17 @@ export type Command =
   /** Crashes a consumer: it stops polling without committing (FR-3.1). */
   | { readonly type: 'KillConsumer'; readonly id: string }
   /** Starts a killed consumer again; it resumes from the group's committed offsets. */
-  | { readonly type: 'RestartConsumer'; readonly id: string };
+  | { readonly type: 'RestartConsumer'; readonly id: string }
+  /**
+   * Changes a component's config (properties panel, FR-1.3). `patch` holds only the fields to
+   * change; the merged config is validated like AddComponent. Rules per kind are in apply.ts.
+   */
+  | { readonly type: 'UpdateConfig'; readonly id: string; readonly patch: ConfigPatch };
+
+type Patchable<T> = T extends unknown ? Partial<Omit<T, 'kind' | 'id'>> : never;
+
+/** Config fields to change: any field of one component kind except `kind` and `id`. */
+export type ConfigPatch = Readonly<Patchable<ComponentInput>>;
 
 export type CommandType = Command['type'];
 

@@ -10,15 +10,24 @@ import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
 import { placePartitions } from '../model/placement.ts';
 import { topicsOfProducer } from '../model/state.ts';
-import { closeConsumer, killConsumer, runConsumer, startConsumer } from '../protocols/consume.ts';
+import {
+  closeConsumer,
+  killConsumer,
+  runConsumer,
+  startConsumer,
+  wakeConsumer,
+} from '../protocols/consume.ts';
+import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
+import { updateConfig } from './update-config.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
+/** `logged` is null for an accepted command that changed nothing (it is not logged). */
 export type ApplyResult =
-  | { readonly ok: true; readonly logged: LoggedCommand }
+  | { readonly ok: true; readonly logged: LoggedCommand | null }
   | { readonly ok: false; readonly reason: string };
 
-const reject = (reason: string): ApplyResult => ({ ok: false, reason });
+export const reject = (reason: string): ApplyResult => ({ ok: false, reason });
 
 export function applyCommand(ctx: EngineContext, command: Command): ApplyResult {
   switch (command.type) {
@@ -35,6 +44,8 @@ export function applyCommand(ctx: EngineContext, command: Command): ApplyResult 
     case 'KillConsumer':
     case 'RestartConsumer':
       return setConsumerRunning(ctx, command.id, command.type === 'RestartConsumer');
+    case 'UpdateConfig':
+      return updateConfig(ctx, command);
     default:
       return assertNever(command);
   }
@@ -134,6 +145,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
     case 'topic':
       component = (state.topics.get(id) as { config: Component }).config;
       state.topics.delete(id);
+      onTopicRemoved(ctx, id);
       break;
     case 'producer':
       component = (state.producers.get(id) as { config: Component }).config;
@@ -171,6 +183,9 @@ function connect(ctx: EngineContext, from: string, to: string): ApplyResult {
   }
   ctx.state.connections.push({ from, to });
   ctx.emit({ type: 'Connected', from, to });
+  // A consumer blocked in poll() with nothing to fetch starts fetching the new topic now.
+  const consumer = ctx.state.consumers.get(to);
+  if (consumer !== undefined) wakeConsumer(ctx, consumer);
   return { ok: true, logged: { type: 'Connect', from, to } };
 }
 

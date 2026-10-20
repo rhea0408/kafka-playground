@@ -104,6 +104,12 @@ export const ProducerSchema = z.object({
   batchSize: positiveInt('batch.size').default(16384),
   /** Game setting: serialized size of each record in bytes. */
   messageSizeBytes: positiveInt('Message size').default(1024),
+  /**
+   * metadata.max.age.ms, default 300000 (5 min): how often the client refreshes its cluster
+   * metadata even without errors, which is when it notices partitions added to a topic
+   * (CommonClientConfigs METADATA_MAX_AGE_DOC).
+   */
+  metadataMaxAgeMs: nonNegativeInt('metadata.max.age.ms').default(300_000),
 });
 
 // ── Consumer ──────────────────────────────────────────────────────────────────────────────────
@@ -126,8 +132,20 @@ export const ConsumerSchema = z
     autoCommitIntervalMs: positiveInt('auto.commit.interval.ms').default(5000),
     /** max.poll.records, default 500: the most records one poll() returns, over all partitions. */
     maxPollRecords: positiveInt('max.poll.records').default(500),
-    /** Game setting: how often an idle consumer polls again when the last poll was empty. */
-    pollIntervalMs: positiveInt('Poll interval').default(100),
+    /**
+     * fetch.min.bytes, default 1: "The minimum amount of data the server should return for a
+     * fetch request. If insufficient data is available the request will wait for that much data
+     * to accumulate before answering the request." (ConsumerConfig FETCH_MIN_BYTES_DOC)
+     */
+    fetchMinBytes: nonNegativeInt('fetch.min.bytes').default(1),
+    /**
+     * fetch.max.wait.ms, default 500: "The maximum amount of time the server will block before
+     * answering the fetch request there isn't sufficient data to immediately satisfy the
+     * requirement given by fetch.min.bytes." (ConsumerConfig FETCH_MAX_WAIT_MS_DOC)
+     */
+    fetchMaxWaitMs: nonNegativeInt('fetch.max.wait.ms').default(500),
+    /** metadata.max.age.ms, default 300000 (5 min). See the producer field. */
+    metadataMaxAgeMs: nonNegativeInt('metadata.max.age.ms').default(300_000),
     /** Game setting: time the application spends on each record before polling again. */
     processingTimeMs: nonNegativeInt('Processing time').default(0),
   })
