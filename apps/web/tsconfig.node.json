@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // DOM: Playwright `page.evaluate` callbacks run in the browser.
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["vite.config.ts", "playwright.config.ts", "e2e"]
+}

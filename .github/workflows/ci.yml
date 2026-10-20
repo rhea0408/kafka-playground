@@ -7,7 +7,9 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to Ubuntu 26 on 2026-10-19. Move to the new image in its own PR
+    # once the Playwright job is stable (M2-T0).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # Reads the pnpm version from "packageManager" in package.json.
@@ -19,6 +21,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      - run: pnpm test
+      # Every package writes its own report to <package>/coverage (NFR-4.4). No minimum yet.
+      - run: pnpm test:coverage
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage
+          path: |
+            packages/*/coverage/
+            apps/*/coverage/
+          if-no-files-found: warn
       # The demo runs the engine directly in Node; this also catches imports without .ts.
       - run: pnpm --filter @kp/engine demo > /dev/null
+      - run: pnpm --filter @kp/web build
+      # --with-deps installs the system libraries Chromium needs on this runner image.
+      - run: pnpm --filter @kp/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @kp/web e2e
+      - uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          if-no-files-found: ignore
