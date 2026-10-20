@@ -9,10 +9,6 @@ export {
 } from './core/kernel.ts';
 export * from './commands/index.ts';
 export * from './events/index.ts';
-export {
-  createEngine,
-  replayCommandLog,
-  type Engine,
-  type EngineOptions,
-  type EngineSnapshot,
-} from './engine.ts';
+export { partitionName, type LogRecord } from './model/partition.ts';
+export * from './snapshot/index.ts';
+export { createEngine, replayCommandLog, type Engine, type EngineOptions } from './engine.ts';

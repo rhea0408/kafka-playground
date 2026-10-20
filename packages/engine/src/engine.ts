@@ -3,25 +3,24 @@
  * engine state, command handling and the command log (architecture §4.1, §4.4).
  */
 
-import type { Command, CommandLogEntry, ComponentRef, DispatchResult } from './commands/index.ts';
-import { assertNever } from './core/assert-never.ts';
+import { parseTopology, type TopologyInput } from '@kp/schema';
+import { applyCommand } from './commands/apply.ts';
+import type { Command, CommandLogEntry, DispatchResult, LoggedCommand } from './commands/index.ts';
 import type { SimTime } from './core/clock.ts';
 import { createKernel, type Kernel } from './core/kernel.ts';
 import type { EngineEvent, EngineEventPayload } from './events/index.ts';
-
-/** Scheduled engine work. Empty until producers and consumers arrive (M1-T6, T7). */
-type EngineTask = never;
+import type { EngineContext } from './model/context.ts';
+import { createState } from './model/state.ts';
+import type { EngineTask } from './model/tasks.ts';
+import { runTask } from './protocols/index.ts';
+import { buildSnapshot, type EngineSnapshot } from './snapshot/index.ts';
 
 export interface EngineOptions {
   readonly seed: number;
-  /** Initial components. Loaded at t=0 without events or command-log entries. */
-  readonly topology?: { readonly components: readonly ComponentRef[] };
-}
-
-/** Minimal snapshot; expanded in M1-T8. Plain data, safe to JSON-serialise or postMessage. */
-export interface EngineSnapshot {
-  readonly t: SimTime;
-  readonly components: readonly ComponentRef[];
+  /** Initial components and connections. Loaded at t=0 without events or command-log entries. */
+  readonly topology?: TopologyInput;
+  /** How many recent records per partition snapshots include. Default 20. */
+  readonly snapshotRecordsPerPartition?: number;
 }
 
 export interface Engine {
@@ -47,80 +46,73 @@ function createEngineInternal(options: EngineOptions): {
   engine: Engine;
   kernel: Kernel<EngineTask, EngineEventPayload>;
 } {
+  let loading = true;
   const kernel = createKernel<EngineTask, EngineEventPayload>({
     seed: options.seed,
+    // Tasks only run from step()/runUntil(), after `context` below is initialised.
     handleTask: (task) => {
-      assertNever(task);
+      runTask(context, task);
     },
   });
+  const context: EngineContext = {
+    kernel,
+    state: createState(),
+    emit: (event) => {
+      if (!loading) kernel.emit(event);
+    },
+  };
 
-  // Map iteration follows insertion order, so it is deterministic for a given command log.
-  const components = new Map<string, ComponentRef>();
-  for (const component of options.topology?.components ?? []) {
-    if (components.has(component.id)) {
-      throw new Error(`duplicate component id in topology: "${component.id}"`);
-    }
-    components.set(component.id, component);
-  }
+  loadTopology(context, options.topology ?? {});
+  loading = false;
 
   const commandLog: CommandLogEntry[] = [];
-
-  const apply = (command: Command): DispatchResult => {
-    switch (command.type) {
-      case 'AddComponent': {
-        const { component } = command;
-        if (components.has(component.id)) {
-          return { ok: false, reason: `A component with id "${component.id}" already exists.` };
-        }
-        components.set(component.id, { ...component });
-        kernel.emit({ type: 'ComponentAdded', component: { ...component } });
-        return { ok: true };
-      }
-      case 'RemoveComponent': {
-        const component = components.get(command.id);
-        if (component === undefined) {
-          return { ok: false, reason: `There is no component with id "${command.id}".` };
-        }
-        components.delete(command.id);
-        kernel.emit({ type: 'ComponentRemoved', component });
-        return { ok: true };
-      }
-      default:
-        return assertNever(command);
-    }
-  };
+  const recordsPerPartition = options.snapshotRecordsPerPartition ?? 20;
 
   const engine: Engine = {
     dispatch: (command) => {
-      const entry: CommandLogEntry = {
-        t: kernel.now(),
-        afterStep: kernel.stepsProcessed(),
-        // Commands are plain JSON data; copy so a caller mutating its object cannot rewrite history.
-        command: JSON.parse(JSON.stringify(command)) as Command,
-      };
-      const result = apply(command);
-      if (result.ok) commandLog.push(entry);
-      return result;
+      const t = kernel.now();
+      const afterStep = kernel.stepsProcessed();
+      const result = applyCommand(context, command);
+      if (!result.ok) return result;
+      // Plain JSON copy, so a caller mutating its object later cannot rewrite history.
+      const logged = JSON.parse(JSON.stringify(result.logged)) as LoggedCommand;
+      commandLog.push({ t, afterStep, command: logged });
+      return { ok: true };
     },
     step: kernel.step,
     runUntil: kernel.runUntil,
     now: kernel.now,
     stepsProcessed: kernel.stepsProcessed,
-    getSnapshot: () => ({
-      t: kernel.now(),
-      components: [...components.values()].map((c) => ({ ...c })),
-    }),
+    getSnapshot: () => buildSnapshot(context.state, kernel.now(), { recordsPerPartition }),
     on: kernel.on,
     commandLog,
   };
   return { engine, kernel };
 }
 
+/** Builds the initial topology through the same handlers as commands, so the same rules apply. */
+function loadTopology(ctx: EngineContext, input: TopologyInput): void {
+  const parsed = parseTopology(input);
+  if (!parsed.ok) throw new Error(`Invalid topology:\n${parsed.errors.join('\n')}`);
+  const { brokers, topics, producers, consumers, connections } = parsed.value;
+  const commands: Command[] = [
+    ...[...brokers, ...topics, ...producers, ...consumers].map((component): Command => ({
+      type: 'AddComponent',
+      component,
+    })),
+    ...connections.map(({ from, to }): Command => ({ type: 'Connect', from, to })),
+  ];
+  for (const command of commands) {
+    const result = applyCommand(ctx, command);
+    if (!result.ok) throw new Error(`Invalid topology: ${result.reason}`);
+  }
+}
+
 /**
  * Builds a fresh engine and replays `log` on it. For each entry it processes exactly `afterStep`
  * tasks, moves the clock to `t` without running tasks due at `t`, then dispatches the command.
- * With the same options this reproduces the original run event for event (NFR-4.1). Listeners
- * passed in `onEvent` see every replayed event, including those emitted before the first command.
+ * With the same options this reproduces the original run event for event (NFR-4.1). `onEvent`
+ * sees every replayed event, including those emitted before the first command.
  */
 export function replayCommandLog(
   options: EngineOptions,

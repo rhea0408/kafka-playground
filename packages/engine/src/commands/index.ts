@@ -2,24 +2,31 @@
  * Commands: the only way the UI (or a level script, or a replay) changes engine state
  * (CLAUDE.md rule 3, architecture §4.4). A discriminated union on `type`.
  *
- * M1-T2 starts with adding and removing components; later tasks add UpdateConfig, Connect,
- * ProduceManual, KillBroker and so on. Pause / SetSpeed / Step are not engine commands: they only
- * change how fast the worker drives the loop, never the simulated outcome, so they are not logged.
+ * Pause / SetSpeed / Step are not engine commands: they only change how fast the worker drives
+ * the loop, never the simulated outcome, so they are not logged.
  */
 
-import type { ComponentKind } from '@kp/schema';
+import type { Component, ComponentInput } from '@kp/schema';
 import type { SimTime } from '../core/clock.ts';
 
-export interface ComponentRef {
-  readonly kind: ComponentKind;
-  readonly id: string;
-}
-
 export type Command =
-  | { readonly type: 'AddComponent'; readonly component: ComponentRef }
-  | { readonly type: 'RemoveComponent'; readonly id: string };
+  /** Adds a component. Optional config fields take their defaults. */
+  | { readonly type: 'AddComponent'; readonly component: ComponentInput }
+  /** Removes a component and its connections. */
+  | { readonly type: 'RemoveComponent'; readonly id: string }
+  /** Connects two components (producer → topic or topic → consumer). */
+  | { readonly type: 'Connect'; readonly from: string; readonly to: string }
+  | { readonly type: 'Disconnect'; readonly from: string; readonly to: string };
 
 export type CommandType = Command['type'];
+
+/**
+ * A command as stored in the log: AddComponent carries the fully-defaulted component, so a saved
+ * log replays the same way even if a default changes later.
+ */
+export type LoggedCommand =
+  | { readonly type: 'AddComponent'; readonly component: Component }
+  | Exclude<Command, { readonly type: 'AddComponent' }>;
 
 /**
  * An accepted command, stamped for replay. `afterStep` is the number of queue tasks processed
@@ -29,7 +36,7 @@ export type CommandType = Command['type'];
 export interface CommandLogEntry {
   readonly t: SimTime;
   readonly afterStep: number;
-  readonly command: Command;
+  readonly command: LoggedCommand;
 }
 
 export type DispatchResult =
