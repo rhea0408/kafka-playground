@@ -48,7 +48,8 @@ docs/                     requirements, ui, milestones, adr, simplifications
 pnpm install
 pnpm dev                          # web app
 pnpm test                         # all unit + property tests
-pnpm lint && pnpm typecheck
+pnpm lint && pnpm typecheck      # lint = eslint + prettier --check
+pnpm format                       # prettier --write
 pnpm --filter @kp/engine demo     # headless event-log demo
 pnpm levels:verify                # replay every level's solution headlessly (from M6)
 docker compose -f docker/compose.kraft-3.yml up -d && pnpm fidelity   # sim vs real Kafka (from M5)
