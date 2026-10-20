@@ -101,4 +101,4 @@ When the last task of a milestone is done, write `docs/milestones/M<n>-summary.m
 Also update "Current milestone" below.
 
 ## Current milestone
-M2: Web app shell (architecture §11). Task list not written yet; plan it from `docs/milestones/M1-summary.md`. M1 (engine core) is done. Update this line when a milestone is done.
+M2: Web app shell. See `docs/milestones/M2-web-shell.md`; M1 handover notes are in `docs/milestones/M1-summary.md`. Update this line when a milestone is done.
