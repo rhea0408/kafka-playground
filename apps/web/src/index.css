@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import '@xyflow/react/dist/style.css';
 
 /*
  * Design tokens from docs/ui/ui-spec.md ("Color tokens"). Tailwind v4 turns each --color-* entry
@@ -21,6 +22,8 @@
   --color-border: #9a9a9a;
   /* Dividers inside panels. */
   --color-divider: #cccccc;
+  /* Canvas dotted grid (wireframe 05). Decorative, so below the 3:1 non-text contrast on purpose. */
+  --color-grid: #dee2e6;
   /* Needed by Tailwind's preflight and for `transparent` / `currentColor` utilities. */
   --color-transparent: transparent;
   --color-current: currentColor;
@@ -38,4 +41,73 @@
     color: var(--color-status);
     font-family: system-ui, sans-serif;
   }
+}
+
+/*
+ * React Flow (M2-T7): its default theme colors are replaced by the ui-spec tokens through its own
+ * CSS variables, so no React Flow color is used as is.
+ */
+.kp-canvas {
+  /* Edges: status at 75 % (about 4.6 : 1 on white, above the 3 : 1 needed for graphics). */
+  --kp-edge: color-mix(in srgb, var(--color-status) 75%, var(--color-surface));
+  --xy-background-color: var(--color-surface);
+  --xy-edge-stroke: var(--kp-edge);
+  --xy-edge-stroke-selected: var(--color-primary);
+  --xy-edge-stroke-width: 2;
+  --xy-connectionline-stroke: var(--color-status);
+  --xy-connectionline-stroke-width: 2;
+  --xy-handle-background-color: var(--color-surface);
+  --xy-handle-border-color: var(--color-status);
+  --xy-selection-background-color: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  --xy-selection-border: 1px dashed var(--color-primary);
+  --xy-minimap-background-color: var(--color-surface);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-muted) 70%, transparent);
+  --xy-minimap-mask-stroke-color: var(--color-border);
+  --xy-minimap-node-background-color: var(--color-border);
+  --xy-minimap-node-stroke-color: var(--color-status);
+  --xy-node-color: var(--color-status);
+  --xy-node-boxshadow-selected: none;
+}
+
+/* A selected edge is thicker as well as blue, so selection is not shown by color alone. */
+.kp-canvas .react-flow__edge.selected .react-flow__edge-path,
+.kp-canvas .react-flow__edge:focus-visible .react-flow__edge-path {
+  stroke-width: 3.5;
+}
+
+/* Connectable handles: 10 px circles, easy to grab. */
+.kp-canvas .kp-handle {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+/* Valid drop target while connecting: filled primary. */
+.kp-canvas .kp-handle.connectingto.valid {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* A connection dragged onto a handle it can't connect to: dashed and danger (the reason shows too). */
+.kp-canvas .react-flow__connection.invalid .react-flow__connection-path {
+  stroke: var(--color-danger);
+  stroke-dasharray: 6 4;
+}
+
+/* Invisible anchors the message overlay measures (partition rows). */
+.kp-canvas .kp-anchor {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Nodes get a focus ring for keyboard selection (React Flow nodes are focusable). */
+.kp-canvas .react-flow__node:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 6px;
+  border-radius: 8px;
 }

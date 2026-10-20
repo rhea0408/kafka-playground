@@ -9,5 +9,7 @@ export default defineConfig({
   test: {
     // Playwright specs live in e2e/ and are run by `pnpm e2e`, not Vitest.
     include: ['src/**/*.test.{ts,tsx}'],
+    // ResizeObserver & co. for React Flow in jsdom component tests (no-op in Node tests).
+    setupFiles: ['src/test/jsdom-setup.ts'],
   },
 });
