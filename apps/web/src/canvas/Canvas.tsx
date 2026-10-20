@@ -32,6 +32,7 @@ import { ConnectionHint, nodeRects } from './ConnectionHint.tsx';
 import { toFlowEdges, toFlowNodes, type FlowNode } from './flow-mapping.ts';
 import { centredTopLeft, GRID_SIZE, nodeAtPoint, nodeSize } from './geometry.ts';
 import { NODE_TYPES } from './nodes.tsx';
+import { MessageOverlay } from './overlay/MessageOverlay.tsx';
 
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 const DELETE_KEYS = ['Delete', 'Backspace'];
@@ -190,6 +191,7 @@ export function Canvas() {
         size={1.5}
         color="var(--color-grid)"
       />
+      <MessageOverlay />
       <ConnectionHint />
       <CanvasNavigation />
     </ReactFlow>
