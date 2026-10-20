@@ -52,7 +52,9 @@ export function appendRecord(
   partition: PartitionState,
   record: Omit<LogRecord, 'offset'>,
 ): LogRecord {
-  const appended: LogRecord = { offset: partition.logEndOffset, ...record };
+  // Frozen: a record never changes once it is in the log, so snapshots can share it with the
+  // engine instead of copying it (snapshot/index.ts) and nobody can rewrite it through them.
+  const appended: LogRecord = Object.freeze({ offset: partition.logEndOffset, ...record });
   partition.log.push(appended);
   partition.logEndOffset += 1;
   // Single replica: the leader alone is the ISR, so everything appended is committed.

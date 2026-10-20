@@ -82,6 +82,7 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
         ctx.kernel.rng.fork(`placement:${component.id}`),
       );
       state.topics.set(component.id, {
+        topicId: ++state.counters.topic,
         config: component,
         partitions: leaders.map((leader, index) => createPartition(component.id, index, leader)),
       });

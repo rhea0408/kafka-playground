@@ -1,7 +1,10 @@
 /**
  * Snapshots: plain, JSON-serialisable copies of engine state for the UI (architecture §4.1, §5)
- * and, later, the AI tutor (FR-7.11). Nothing in a snapshot aliases engine state, so the UI
- * cannot mutate the simulation through it.
+ * and, later, the AI tutor (FR-7.11). A snapshot never changes after it is built and the UI
+ * cannot mutate the simulation through it: every object in it is a fresh copy, except log
+ * records, which are frozen when appended (model/partition.ts) and can therefore be shared.
+ *
+ * Diffs between two snapshots, for sending frames across the worker boundary: diff.ts.
  */
 
 import type { Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
@@ -20,6 +23,11 @@ export interface PartitionSnapshot {
 }
 
 export interface TopicSnapshot {
+  /**
+   * Topic ID (KIP-516): new each time a topic with this name is created, so a deleted and
+   * re-created topic can be told apart from the old one.
+   */
+  readonly topicId: number;
   readonly config: Topic;
   readonly partitions: readonly PartitionSnapshot[];
 }
@@ -67,9 +75,13 @@ export interface GroupSnapshot {
   }[];
 }
 
+export interface BrokerSnapshot {
+  readonly config: Broker;
+}
+
 export interface EngineSnapshot {
   readonly t: SimTime;
-  readonly brokers: readonly { readonly config: Broker }[];
+  readonly brokers: readonly BrokerSnapshot[];
   readonly topics: readonly TopicSnapshot[];
   readonly producers: readonly ProducerSnapshot[];
   readonly consumers: readonly ConsumerSnapshot[];
@@ -81,28 +93,46 @@ export interface SnapshotOptions {
   readonly recordsPerPartition: number;
 }
 
-const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+/**
+ * Deep copy of a small plain-JSON value (component configs, connections). Much cheaper than a
+ * JSON round trip, and only used for the few objects the engine might replace or that hold
+ * nested arrays; bulk data (records) is shared frozen instead.
+ */
+function copyPlain<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(copyPlain) as T;
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value)) out[key] = copyPlain(v);
+    return out as T;
+  }
+  return value;
+}
 
 export function buildSnapshot(
   state: EngineState,
   t: SimTime,
   options: SnapshotOptions,
 ): EngineSnapshot {
-  const snapshot: EngineSnapshot = {
+  return {
     t,
-    brokers: [...state.brokers.values()].map((b) => ({ config: b.config })),
+    brokers: [...state.brokers.values()].map((b) => ({ config: copyPlain(b.config) })),
     topics: [...state.topics.values()].map((topic) => ({
-      config: topic.config,
+      topicId: topic.topicId,
+      config: copyPlain(topic.config),
       partitions: topic.partitions.map((p) => ({
         index: p.index,
         leader: p.leader,
         logStartOffset: p.logStartOffset,
         logEndOffset: p.logEndOffset,
         highWatermark: p.highWatermark,
+        // A fresh array of frozen records: appending to the log later does not change it.
         records: options.recordsPerPartition > 0 ? p.log.slice(-options.recordsPerPartition) : [],
       })),
     })),
-    producers: [...state.producers.values()].map((p) => ({ config: p.config, stats: p.stats })),
+    producers: [...state.producers.values()].map((p) => ({
+      config: copyPlain(p.config),
+      stats: { ...p.stats },
+    })),
     consumers: [...state.consumers.values()].map((consumer) => {
       const committed = state.groups.get(consumer.config.groupId)?.committed;
       const partitions = topicsOfConsumer(state, consumer.config.id).flatMap((topic) =>
@@ -122,7 +152,7 @@ export function buildSnapshot(
         }),
       );
       return {
-        config: consumer.config,
+        config: copyPlain(consumer.config),
         status: consumer.status,
         consumed: consumer.stats.consumed,
         partitions,
@@ -136,7 +166,16 @@ export function buildSnapshot(
         return { topic: key.slice(0, dash), partition: Number(key.slice(dash + 1)), offset };
       }),
     })),
-    connections: state.connections,
+    connections: state.connections.map(copyPlain),
   };
-  return copy(snapshot);
 }
+
+export {
+  applyDiff,
+  diffSnapshot,
+  isEmptyDiff,
+  type KeyedDiff,
+  type PartitionDiff,
+  type SnapshotDiff,
+  type TopicDiff,
+} from './diff.ts';

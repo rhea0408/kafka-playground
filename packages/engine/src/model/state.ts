@@ -16,6 +16,12 @@ export interface BrokerState {
 }
 
 export interface TopicState {
+  /**
+   * Identifies this life of the topic. Kafka gives every topic a topic ID when it is created
+   * (KIP-516), so a topic deleted and re-created with the same name is a different topic with a
+   * new ID. Ours is a sequence number rather than a random UUID (see simplifications).
+   */
+  readonly topicId: number;
   /** Replaced by UpdateConfig. */
   config: Topic;
   /** Grows when partitions are added (UpdateConfig); never shrinks. */
@@ -120,8 +126,8 @@ export interface EngineState {
    * available or fetch.max.wait.ms passes, by fetch id, oldest first.
    */
   readonly parkedFetches: Map<number, FetchRequestTask>;
-  /** Sources of incarnation numbers (producers and consumers) and fetch request ids. */
-  readonly counters: { incarnation: number; fetch: number };
+  /** Sources of incarnation numbers (producers and consumers), fetch request ids and topic IDs. */
+  readonly counters: { incarnation: number; fetch: number; topic: number };
 }
 
 export function createState(): EngineState {
@@ -133,7 +139,7 @@ export function createState(): EngineState {
     groups: new Map(),
     connections: [],
     parkedFetches: new Map(),
-    counters: { incarnation: 0, fetch: 0 },
+    counters: { incarnation: 0, fetch: 0, topic: 0 },
   };
 }
 
