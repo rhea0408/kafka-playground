@@ -20,3 +20,5 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # The demo runs the engine directly in Node; this also catches imports without .ts.
+      - run: pnpm --filter @kp/engine demo > /dev/null
