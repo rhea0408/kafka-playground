@@ -1,18 +1,18 @@
-export * from './core';
-export { assertNever } from './core/assert-never';
+export * from './core/index.ts';
+export { assertNever } from './core/assert-never.ts';
 export {
   createKernel,
   type Kernel,
   type KernelOptions,
   type Listener,
   type Stamped,
-} from './core/kernel';
-export * from './commands';
-export * from './events';
+} from './core/kernel.ts';
+export * from './commands/index.ts';
+export * from './events/index.ts';
 export {
   createEngine,
   replayCommandLog,
   type Engine,
   type EngineOptions,
   type EngineSnapshot,
-} from './engine';
+} from './engine.ts';

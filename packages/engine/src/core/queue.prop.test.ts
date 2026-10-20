@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, it } from 'vitest';
-import { createEventQueue } from './queue';
+import { createEventQueue } from './queue.ts';
 
 type Op = { kind: 'push'; time: number } | { kind: 'pop' };
 

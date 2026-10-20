@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Command } from './commands';
-import { createEngine, replayCommandLog, type Engine } from './engine';
-import type { EngineEvent } from './events';
+import type { Command } from './commands/index.ts';
+import { createEngine, replayCommandLog, type Engine } from './engine.ts';
+import type { EngineEvent } from './events/index.ts';
 
 function record(engine: Engine): EngineEvent[] {
   const events: EngineEvent[] = [];

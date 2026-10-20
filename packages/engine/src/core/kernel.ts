@@ -7,9 +7,9 @@
  * stays inspectable and can later be serialised for rewind checkpoints (architecture §4.7).
  */
 
-import { createClock, type SimTime } from './clock';
-import { createEventQueue } from './queue';
-import { createRng, type Rng } from './rng';
+import { createClock, type SimTime } from './clock.ts';
+import { createEventQueue } from './queue.ts';
+import { createRng, type Rng } from './rng.ts';
 
 /** An event as delivered to listeners: sim time and emission order first, then the payload. */
 export type Stamped<E> = { readonly t: SimTime; readonly seq: number } & E;

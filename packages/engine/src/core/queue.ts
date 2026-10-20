@@ -7,7 +7,7 @@
  * diverge. Because no two items share a seq, `(time, seq)` is a total order.
  */
 
-import { assertSimTime, type SimTime } from './clock';
+import { assertSimTime, type SimTime } from './clock.ts';
 
 export interface Scheduled<T> {
   readonly time: SimTime;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createKernel, type Kernel, type Stamped } from './kernel';
+import { createKernel, type Kernel, type Stamped } from './kernel.ts';
 
 type Task =
   { type: 'Ping'; name: string } | { type: 'Chain'; name: string; every: number; left: number };
