@@ -4,7 +4,8 @@ import { dismissToast, TOAST_DURATION_MS, useUiStore, type Toast } from '../stor
 /**
  * Warning toasts (ui-spec: 340 × 40). The live region is always rendered so screen readers
  * announce toasts added later (role="status" is polite). Each toast dismisses itself after
- * `TOAST_DURATION_MS` and has a close button. Placement is provisional until the layout (T6).
+ * `TOAST_DURATION_MS` and has a close button. Placed in the canvas's top-right corner (wireframe 05:
+ * 30 px from the top, 20 px from the right), so it never covers the panels or the sim controls.
  */
 export function Toasts() {
   const toasts = useUiStore((s) => s.toasts);
@@ -12,7 +13,7 @@ export function Toasts() {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2"
+      className="pointer-events-none absolute right-5 top-[30px] z-50 flex flex-col gap-2"
     >
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} />

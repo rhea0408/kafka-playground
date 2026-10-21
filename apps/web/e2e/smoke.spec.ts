@@ -6,7 +6,7 @@ test('loads the app shell with the ui-spec theme', async ({ page }) => {
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
   await expect(page).toHaveTitle('Kafka Playground');
-  await expect(page.getByRole('banner')).toContainText('Kafka Playground');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Kafka Playground');
 
   // The color tokens from docs/ui/ui-spec.md are exposed as CSS variables.
   const primary = await page.evaluate(() =>

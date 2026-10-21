@@ -5,7 +5,7 @@ The React app: canvas, panels and the worker bootstrap (M2). Vite + React 18 + T
 ```
 pnpm dev                                   # from the repo root, or `pnpm --filter @kp/web dev`
 pnpm --filter @kp/web build                # production build into dist/
-pnpm --filter @kp/web e2e                  # Playwright smoke tests (Chromium), via vite preview
+pnpm --filter @kp/web e2e                  # Playwright tests (Chromium), via vite preview; layout screenshots go to e2e-screenshots/ (gitignored)
 pnpm --filter @kp/web exec playwright install chromium   # once, locally
 ```
 
