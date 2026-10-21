@@ -98,12 +98,20 @@ test('message dots: Play draws A1 and A2 dots on the overlay', async ({ page }) 
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: `${SHOTS}overlay-dots.png` });
 
-  // Pause freezes the dots: two pictures of the overlay a moment apart are identical.
+  // Pause freezes the dots: two pictures of the overlay's own pixels a moment apart are identical.
+  // Wait for the paused frame first (the button turns back into Play): the click returns before
+  // the worker stops, so a record can still be appended just after it. Read the canvas bitmap,
+  // not an element screenshot: a screenshot also shows the nodes under the transparent canvas,
+  // and a new log cell's A4 slide-in (250 ms, wall-clock, animations.md) may still be running.
   await page.getByRole('button', { name: 'Pause' }).click();
-  const overlay = page.getByTestId('message-overlay');
-  const before = await overlay.screenshot();
+  await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
+  const overlayPixels = (): Promise<string> =>
+    page
+      .getByTestId('message-overlay')
+      .evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
+  const before = await overlayPixels();
   await page.waitForTimeout(400);
-  expect((await overlay.screenshot()).equals(before)).toBe(true);
+  expect((await overlayPixels()) === before, 'overlay pixels changed while paused').toBe(true);
   expect((await counters(page)).dotsActive).toBeGreaterThan(0);
 
   // Reset (a full frame) clears them.
