@@ -1,6 +1,25 @@
 # M2 decisions log
 
-Rhea asked for M2 to be built unattended. Where a decision was needed, the rule was: **behave like real Kafka 4.x as closely as practical**, and write the decision down here. Each entry gives the decision, the alternatives and the reason. Review these first.
+Rhea asked for M2 to be built unattended. Where a decision was needed, the rule was: **behave like real Kafka 4.x as closely as practical**, and write the decision down here. Each entry gives the decision, the alternatives and the reason. The milestone summary is `M2-summary.md`.
+
+## Review these first
+
+The decisions with the most consequences, most important first. Engine semantics come before UI.
+
+| # | Decision | Why it matters |
+|---|---|---|
+| [P1](#process) | **Stacked PRs, nothing merged.** Every task is a branch on the previous one; review and merge in order from `m2-t0`. | All of M2 is waiting for your review. |
+| [F1](#fixes) | **Engine bug fixed:** deleting a topic now deletes its committed offsets, and a commit never lands in a re-created topic. Adds the simplification row "Commits after a topic is re-created". | A real engine change found by a property test. The re-create race is our best guess at the classic consumer's behaviour: please check the new row (M5 fidelity should confirm it). |
+| [T2-2](#t2--engine-additions-for-the-ui) | **New partitions reach clients only at their next metadata refresh** (`metadata.max.age.ms`, real default 5 min). | Faithful but surprising in play: after adding a partition it gets no traffic for up to 5 min of sim time, and a `latest` consumer can skip records on it. |
+| [T2-5](#t2--engine-additions-for-the-ui) | **A rate change is not a new producer incarnation** (the milestone text said it was); it starts a new send schedule. | Bumping the incarnation would drop acks of requests in flight. Trace ids stay unique. |
+| [T2-11](#t2--engine-additions-for-the-ui) | **Long-poll fetch modelled on the classic consumer**, including prefetch (pipelining); byte caps and fetch sessions not modelled (T2-12). | The consumer side of every lesson now has real timing. |
+| [T5-6](#t5--stores-and-the-command-path) | **Reset re-inits the engine from the current canvas**, not from the initial topology. | Keeps what the user built; the command log restarts from that canvas. |
+| [T8-6](#t8--live-state-on-nodes) | **Lag badge: committed lag summed over partitions; danger above a fixed 100 records.** No `LagChanged` event (lag is derived from snapshots, Q2). | The threshold is a guess (no doc gives one); with 5 s auto-commit a producer above ~20 msg/s crosses it briefly between commits. Levels (M6) may want their own. |
+| [T10-4](#t10--properties-panel), [T10-5](#t10--properties-panel) | **Not-modelled configs are shown disabled with their real default** and a "coming in M<n>" chip; `min.insync.replicas` is disabled even though the engine accepts it. | Shows real configs without teaching that they do nothing. |
+| [T12-2](#t12--default-scene-end-to-end-test-worker-determinism) | **Default keys D, E, F** (→ partitions 0, 1, 2), because A, B, C all hash to partition 1 with 3 partitions. | Affects the wireframes' A/B/C examples and level design (see "Notes for level design" at the end). |
+| [T6-9](#t6--sandbox-layout-shell) | **Bottom tab order Event timeline · Event list · Lag chart** (ui-spec), not the milestone text's order. | Visible layout choice; the milestone text and ui-spec disagreed. |
+| [T4-3](#t4--worker-host-and-comlink-api), [T9-15](#t9--message-overlay-canvas2d), [T12-5](#t12--default-scene-end-to-end-test-worker-determinism) | **Frames are lossless; debug hooks (`window.__kp`) ship in production builds.** | The hooks are read-only, but you may want them behind a flag before a public release. |
+| [F3](#fixes) | **Event list scrolled 6 px past its last row while following** (fixed in T13). | The T12 "blank list" screenshot was the entry animation, not a windowing bug. |
 
 ## Process
 
@@ -247,6 +266,17 @@ Rhea asked for M2 to be built unattended. Where a decision was needed, the rule 
 | T12-7 | **Worker determinism, two Playwright tests.** The Node side imports `@kp/engine` **source** (the test asserts `import.meta.resolve('@kp/engine')` ends in `packages/engine/src/index.ts`). Playwright's TS loader handles the workspace package's `.ts` imports with no configuration. (a) **Independently specified scenario:** the default scene's topology and the hook's seed are built in Node, then `createEngine` + `runUntil(t)` runs to the worker's paused sim time. It must have > 100 events, its hash must equal the worker's `eventLogHash()`, **and** it must equal the hash of the worker's live `eventHistory()`. The last check covers the live stream, not just the worker's replay, and works because there are fewer than 10,000 events. (b) **UI commands:** while the sim plays at 10×, add a partition (`UpdateConfig`) and send a manual record (`ProduceManual`) through the panels, then pause. The test writes the command log to a JSON file in the test's output folder, reads it back, runs `replayCommandLog` + `runUntil(t)`, and compares with both hashes. `runUntil(t)` matches the worker because Pause runs the engine to "now" with `runUntil`, so both have processed every task due at or before `t`. | Compare only the worker's own `eventLogHash()` (a replay) with Node's | (a) and (b) together show that the live worker run, the worker's replay and Node all agree. |
 | T12-8 | Stale comment in `e2e/properties.spec.ts` ("event list shows ConfigUpdated once T11 lands") replaced with a real assertion on the `ConfigUpdated` row (`consumer c1  fetchMaxWaitMs: 500 → 100`). | — | — |
 | T12-9 | No new dependencies. `docs/simplifications.md` unchanged (no engine change). | — | — |
+
+## T13 · Docs
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T13-1 | ADRs 0001–0003 follow ADR 0008's format, Status Accepted, dated 2026-10-21 with a note that the decision itself comes from the architecture draft (§1, §2, §4.1, §12) and was built in M1/M2. Their content is limited to what the architecture doc and the code show. | Backdate them | No record of an earlier date; avoids inventing history. |
+| T13-2 | Architecture §4.4/§4.5 now split **Built** from **Planned** commands and events. `SetSpeed` / `Step` / `Pause` / `Reset` are listed as host calls, and `RewindTo` as "expected to be a host operation too" (it replays the command log, §4.7). The M1 events `ComponentAdded/Removed`, `Connected/Disconnected` and `ConsumerStopped/Started` are added. `LagChanged` is removed with the Q2 reasoning. | Only delete the four commands | The list mixed shipped and future items; readers couldn't tell which exist. RewindTo is M4; flagged as an expectation, not decided. |
+| T13-3 | `docs/simplifications.md`: rows labelled "(M1 only)" still applied after M2, so they now say "(until M3)", "(until M4)" or "(until v0.4)". New row **"Manual produce (M2)"** (no explicit partition, headers or timestamp). The UpdateConfig, long-poll fetch, metadata refresh, topic ID and topic-deletion rows were checked and already complete. | Leave the labels | "M1 only" was no longer true. |
+| T13-4 | animations.md A1/A2: A1 ends on the partition row (not the edge's end), sizes and speed are flow px, `RecordConsumed` fires when `poll()` returns the record. A5's trigger is snapshot-derived lag. | — | Matches what T9 and T8 built. |
+| T13-5 | Coverage thresholds are **proposed in M2-summary, not set**. | Set them now | The milestone says to set one once the numbers are known; the level is Rhea's call. |
+| T13-6 | CLAUDE.md "Current milestone" points to M3 with "planning pending" (the M3 file doesn't exist); Commands gained `pnpm test:coverage`, the web build and e2e. | — | Task. |
 
 ## Fixes
 

@@ -12,11 +12,11 @@ Every orange "ANIM" tag in the wireframes is listed here with its trigger and ti
 
 | # | Element | Trigger (engine event) | Animation | Timing | Screens |
 |---|---|---|---|---|---|
-| A1 | Message dot on producer → topic edge (decorative, see below) | `RecordProduced` | 16 px dot with key letter travels along the edge | edge length ÷ (120 px/s × sim speed) | 02, 05 |
-| A2 | Message dot on topic → consumer edge (decorative, see below) | `RecordConsumed` (fetch) | Same as A1, from partition row to consumer row; starts only after the A1 dot with the same trace id has arrived | same | 02, 05 |
+| A1 | Message dot on producer → topic edge (decorative, see below) | `RecordProduced` (it already carries the partition the partitioner chose) | 16 px dot with key letter (`∅` for a null key) travels from the producer's handle to the target **partition row** of the topic, so its last stretch leaves the edge line and curves into the row | path length ÷ (120 px/s × sim speed); px are flow px, see below | 02, 05 |
+| A2 | Message dot on topic → consumer edge (decorative, see below) | `RecordConsumed` (when `poll()` returns the record) | Same as A1, from partition row to consumer row; starts only after the A1 dot with the same trace id has arrived | same | 02, 05 |
 | A3 | Replication dot between brokers | `RecordReplicated` | 10 px grey dot along dashed edge | ~1.6 s at 1× | 02, 05 |
 | A4 | New offset cell in partition row | `RecordAppended` | Cell slides in from left + fades in; never waits for dots | 250 ms ease-out | 02 |
-| A5 | Lag badge | `LagChanged` | Number counts to new value; badge widens; turns danger color above threshold; never waits for dots | 300 ms | 02, 05 |
+| A5 | Lag badge | Lag derived from each snapshot (sum of HW − committed per partition); there is no `LagChanged` event (M2 Q2, architecture §4.5) | Number counts to new value; badge widens; turns danger color above threshold; never waits for dots | 300 ms | 02, 05 |
 | A6 | Failed broker | `BrokerDown` | Hatched fill + danger pulse ring | pulse 1.4 s loop until restart | 03, 03b |
 | A7 | Leader badge | `LeaderElected` | Flip (rotateX) from old to new broker id | 400 ms | 03 |
 | A8 | Lost records | `RecordsTruncated` | Cells shake (2×), then strike through with dashed danger border | 600 ms | 03, 03b |
@@ -29,6 +29,7 @@ Every orange "ANIM" tag in the wireframes is listed here with its trigger and ti
 Decided in M2-T1, see `docs/adr/0008-message-timing.md`. The engine runs at real Kafka timing (a record reaches a waiting consumer a few ms after `send()`); the dots are a visual aid, not a timing claim. The partition log, offsets, lag and counters show the true order and timing.
 
 - **Speed:** dots move at 120 px/s × sim speed, so they are always much slower than the engine.
+- **Units:** dot size (16 px) and speed (120 px/s) are in React Flow **flow coordinates**: dots are drawn with the canvas's pan / zoom transform, so they scale with zoom and take the same time to cross an edge at any zoom. Paths are React Flow's bezier edges, with endpoints re-read every frame, so dots stay on their path while nodes are dragged (M2-T9).
 - **Order by trace id:** a record's A2 dot (topic → consumer) starts only after the A1 dot (producer → topic) with the same trace id has arrived. The overlay queues A2 dots by trace id. If the record has no A1 dot (it was skipped), the A2 dot is skipped too.
 - **Never block state:** log cells (A4), offsets, HW, lag (A5), counters and the event list update straight from snapshots and events and never wait for a dot.
 - **Skip, don't delay:** if dots fall behind the engine (high rate, long edges), new dots are skipped rather than queued for later.

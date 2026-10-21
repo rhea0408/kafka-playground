@@ -85,8 +85,8 @@ kafka-playground/
 ### 4.1 Execution model: discrete-event simulation
 - **Simulated clock** in milliseconds. The engine pops events from a **priority queue** ordered by `(time, sequence)`. The sequence number breaks ties so ordering is always deterministic.
 - Every behavior is an event that schedules future events, e.g. `ProduceRequest@t` → `LeaderAppend@t+netDelay` → `FollowerFetch@t+fetchInterval` → `HighWatermarkAdvance` → `ProduceAck`.
-- **Speed control** maps wall-clock to sim-clock (0.25×–10×). Step mode processes the next event (or the next N ms).
-- The worker runs the loop and emits a **snapshot diff ~30×/s** plus every **domain event** as it happens.
+- **Speed control** maps wall-clock to sim-clock (0.25×–10×). Step mode processes the next event (or the next N ms). Speed, pause and step belong to the **worker host**, not the engine: they change how fast the engine is driven, never the outcome, so they are not commands and are not in the command log (§4.4, ADR 0001).
+- The worker runs the loop and pushes **frames** to the main thread (Comlink callback), at most one per ~33 ms while playing: each frame has a **snapshot diff** and **every domain event** since the previous frame, in order, none dropped. A full snapshot is sent after init / reset and to a new subscriber, with the recent event history from a bounded ring buffer (10,000 events, NFR-2.9). User actions send a frame at once. Details: `apps/web/src/sim/protocol.ts` and `apps/web/README.md`.
 
 ### 4.2 Core model (MVP)
 
@@ -121,11 +121,15 @@ Consumer     { id, groupId, status, position: Map<partition, offset>, config: { 
 **Game-time defaults:** real defaults (e.g. `session.timeout.ms` = 45 s) are too slow for gameplay. Levels can use shortened values, always shown as "game-tuned" with the real default beside them (NFR-3.3).
 
 ### 4.4 Commands (UI → engine)
-`AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig`, `KillBroker`, `RestartBroker`, `KillConsumer`, `ProduceManual`, `SetSpeed`, `Step`, `Pause`, `Reset`, `RewindTo` (scrubber / "Try again").
-Each accepted command is stamped with sim-time and appended to the **command log**, which is used for replay, save files, the failure replay in Fix, and CI playback.
+Built (M1–M2): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer`, `RestartConsumer`, `ProduceManual`. Planned: `KillBroker`, `RestartBroker` (M4).
+**Not commands:** `SetSpeed`, `Step`, `Pause` / `Play` and `Reset` are calls on the worker host (`setSpeed`, `step` / `stepBy`, `pause` / `play`, `init`); Reset re-initialises the engine from the current canvas. They never change what happens in the simulation, so they stay out of the command log. Rewind (`RewindTo`, scrubber / "Try again", §4.7, M4) replays the command log and so is expected to be a host operation too.
+`UpdateConfig { id, patch }` is validated with `@kp/schema` on the merged config: topic partitions can only grow (the KRaft controller's `InvalidPartitionsException` text otherwise), producer changes apply to the next record (a rate change restarts the send schedule), consumer changes apply from the next `poll()`; ids, `group.id`, `auto.offset.reset`, the replication factor and `broker.rack` can't change (see `docs/simplifications.md`, "Config changes at run time"). A patch that changes nothing is accepted without an event or log entry.
+Each accepted command is appended to the **command log** as `{ t, afterStep, command }` (sim time plus the number of tasks already processed, so a command dispatched between two tasks of the same millisecond replays at the same place). The log is used for replay, save files, the failure replay in Fix, and CI playback.
 
 ### 4.5 Domain events (engine → UI and level runtime)
-`ConfigUpdated` (M2), `RecordProduced`, `RecordAppended`, `RecordReplicated`, `HighWatermarkAdvanced`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss), `RebalanceStarted`, `RebalanceCompleted`, `PartitionAssigned`, `ConsumerIdle`, `DuplicateProcessed`, `LagChanged`.
+Built (M1–M2): `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated` (M2, `{ id, before, after }`), `RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `ConsumerStopped`, `ConsumerStarted`.
+Planned: `RecordReplicated`, `HighWatermarkAdvanced`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss), `RebalanceStarted`, `RebalanceCompleted`, `PartitionAssigned`, `ConsumerIdle`, `DuplicateProcessed`.
+**No `LagChanged` event** (decided in M2, Q2): lag moves on almost every append, so one event per change would roughly double the event stream. The UI derives lag from snapshots (sum of HW − committed offset per partition, as `kafka-consumer-groups.sh` reports it) and drives the lag badge (A5) from that. When the level runtime (M6) needs a trigger, add a threshold event such as `LagThresholdCrossed`, emitted only when lag crosses a level-defined value.
 Typed as a discriminated union in `packages/engine/events`. This single stream feeds the UI, animations (`docs/ui/animations.md`), tips, objectives, alerts, and later the AI tutor (NFR-8.4).
 
 ### 4.6 Invariants (property tests with fast-check)
