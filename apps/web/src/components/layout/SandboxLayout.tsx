@@ -22,7 +22,7 @@ export function SandboxLayout() {
           aria-label="Canvas"
           className="relative min-h-0 min-w-0 bg-surface [grid-area:canvas]"
         >
-          {/* The message overlay (Canvas2D) arrives in T9. */}
+          {/* The Canvas2D message overlay (T9) lives inside <Canvas>, above React Flow's nodes. */}
           <Canvas />
           <Toasts />
         </main>
