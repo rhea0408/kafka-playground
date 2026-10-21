@@ -24,7 +24,7 @@ describe('formatEvent', () => {
       key: 'B',
       value: 'p1-3',
       producerId: 'p1',
-      traceId: 'p1#3',
+      traceId: 'p1@1#3',
     };
     expect(formatEvent(e)).toBe('00:01.500  RecordAppended   orders-1  offset=2  key=B');
   });
@@ -37,7 +37,7 @@ describe('formatEvent', () => {
       producerId: 'p1',
       topic: 'orders',
       partition: 0,
-      traceId: 'p1#1',
+      traceId: 'p1@1#1',
       offset: null,
     };
     expect(formatEvent(e)).toBe(
@@ -58,5 +58,25 @@ describe('formatEvent', () => {
         offset: 4,
       }),
     ).toBe('00:05.000  OffsetCommitted  g  orders-2  offset=4');
+  });
+
+  it('lists the fields a ConfigUpdated event changed', () => {
+    const before = {
+      kind: 'topic',
+      id: 'orders',
+      partitions: 3,
+      replicationFactor: 1,
+      minInsyncReplicas: 1,
+    } as const;
+    expect(
+      formatEvent({
+        t: 2000,
+        seq: 4,
+        type: 'ConfigUpdated',
+        id: 'orders',
+        before,
+        after: { ...before, partitions: 4 },
+      }),
+    ).toBe('00:02.000  ConfigUpdated    topic orders  partitions: 3 → 4');
   });
 });

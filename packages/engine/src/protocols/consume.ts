@@ -1,29 +1,50 @@
 /**
- * Consuming records with one consumer per group (M1; group membership and rebalancing are M3).
- * Modelled on the classic KafkaConsumer (Kafka docs, Design §"The Consumer"; KafkaConsumer and
- * ConsumerConfig javadoc).
+ * Consuming records with one consumer per group (M1/M2; group membership and rebalancing are M3).
+ * Modelled on the classic KafkaConsumer (the default `group.protocol` in Kafka 4.x): Kafka docs,
+ * Design §"The Consumer"; KafkaConsumer, ClassicKafkaConsumer, FetchCollector and ConsumerConfig.
  *
- * The application loop is `while (running) { records = poll(); process(records); }`:
- * - poll() returns at most max.poll.records records *in total* over all assigned partitions,
- *   starting at each partition's position, and only below the high watermark.
- * - Processing takes processingTimeMs per record; the next poll() happens after that. An empty
- *   poll waits pollIntervalMs (game setting standing in for the poll timeout / long poll).
- * - Position = next offset to fetch. Committed offset = what the group has saved; a restarted
- *   consumer resumes from it.
- * - No committed offset (or one that is out of range): auto.offset.reset decides the start.
- *   "earliest" = log start offset; "latest" = the end offset, which for read_uncommitted
- *   consumers is the high watermark (KafkaConsumer#endOffsets javadoc).
- * - enable.auto.commit: "offsets are committed automatically with a frequency controlled by the
- *   config auto.commit.interval.ms". Modelled as in the classic consumer: at the start of poll(),
- *   once the interval has passed, the positions reached by earlier polls are committed. That is
- *   why the javadoc requires processing everything from one poll before the next (at-least-once).
- * - close() commits pending offsets when auto-commit is on; a crash (KillConsumer) does not.
+ * The application loop is `while (running) { records = poll(); process(records); }`.
+ *
+ * poll() (ClassicKafkaConsumer#poll / #pollForFetches):
+ * 1. Housekeeping: drop partitions that are no longer assigned (committing them first when
+ *    auto-commit is on), and auto-commit once auto.commit.interval.ms has passed. As in the
+ *    classic consumer this happens inside poll(), which is why the javadoc asks the application
+ *    to finish processing one poll's records before the next (at-least-once).
+ * 2. Partitions without a position start from the group's committed offset; without one (or if
+ *    it is out of range), auto.offset.reset decides: "earliest" = log start offset, "latest" = the
+ *    end offset, which for read_uncommitted consumers is the high watermark.
+ * 3. "If data is available already, return it immediately": records already in the fetch buffer
+ *    are returned first, at most max.poll.records in total; leftovers stay buffered
+ *    (FetchCollector#collectFetch). RecordConsumed is emitted here, when poll() hands a record to
+ *    the application, and the position moves past it.
+ * 4. Fetches are sent for assigned partitions with nothing buffered, one request per leader that
+ *    has no request in flight ("won't resend pending fetches"). When records were returned this
+ *    happens before returning them, so the next fetch runs while the application processes
+ *    ("send off the next round of fetches … to enable pipelining").
+ * 5. With nothing to return, the application stays blocked in poll() until a fetch response
+ *    arrives, or until the next auto-commit is due (pollForFetches caps its wait with
+ *    coordinator.timeToNextPoll, which includes the auto-commit deadline).
+ *
+ * A fetch response is discarded for partitions that are no longer assigned, or whose position no
+ * longer matches the fetch offset ("discarding stale fetch response", FetchCollector).
+ * OFFSET_OUT_OF_RANGE resets the position with auto.offset.reset; UNKNOWN_TOPIC_OR_PARTITION
+ * requests a metadata refresh. The broker side of the long poll is in fetch.ts.
+ *
+ * Processing takes processingTimeMs per record (game setting); the next poll() happens after it.
+ * close() commits pending offsets when auto-commit is on; a crash (KillConsumer) does not. Both
+ * start a new incarnation, so fetch responses and poll tasks of the old life are ignored.
  */
 
 import type { EngineContext } from '../model/context.ts';
-import { partitionName, readRecords } from '../model/partition.ts';
+import { partitionName, type LogRecord, type PartitionState } from '../model/partition.ts';
 import { topicsOfConsumer, type ConsumerState, type GroupState } from '../model/state.ts';
-import type { EngineTask } from '../model/tasks.ts';
+import type { EngineTask, FetchPartition } from '../model/tasks.ts';
+import {
+  createClientMetadata,
+  knownPartitionCount,
+  refreshIfStale,
+  resetClientMetadata,
+} from './metadata.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
@@ -45,6 +66,11 @@ export function startConsumer(ctx: EngineContext, config: ConsumerState['config'
     positions: new Map(),
     lastAutoCommitAt: 0,
     nextPartitionIndex: 0,
+    buffer: [],
+    fetchesInFlight: new Set(),
+    inPoll: false,
+    pollToken: 0,
+    metadata: createClientMetadata(ctx.kernel.now()),
     stats: { consumed: 0 },
   };
   ctx.state.consumers.set(config.id, consumer);
@@ -53,25 +79,24 @@ export function startConsumer(ctx: EngineContext, config: ConsumerState['config'
   return consumer;
 }
 
-/** Starts (or restarts) the poll loop as a fresh life: no positions, commit timer from now. */
+/** Starts (or restarts) the poll loop as a fresh process: no positions, buffer or metadata. */
 export function runConsumer(ctx: EngineContext, consumer: ConsumerState): void {
+  const now = ctx.kernel.now();
   consumer.incarnation = ++ctx.state.counters.incarnation;
   consumer.status = 'running';
-  consumer.positions.clear();
-  consumer.lastAutoCommitAt = ctx.kernel.now();
+  forgetProcessState(consumer);
+  resetClientMetadata(consumer.metadata, now);
+  consumer.lastAutoCommitAt = now;
   consumer.nextPartitionIndex = 0;
-  ctx.kernel.scheduleIn(0, {
-    type: 'ConsumerPoll',
-    consumerId: consumer.config.id,
-    incarnation: consumer.incarnation,
-  });
+  schedulePoll(ctx, consumer, now);
 }
 
-/** A crash: the process stops; nothing is committed; positions are lost. */
+/** A crash: the process stops; nothing is committed; positions and fetched data are lost. */
 export function killConsumer(ctx: EngineContext, consumer: ConsumerState): void {
   consumer.status = 'stopped';
-  consumer.positions.clear();
-  consumer.incarnation = ++ctx.state.counters.incarnation; // pending polls become stale
+  forgetProcessState(consumer);
+  // Pending polls and in-flight fetch responses belong to the old incarnation and are ignored.
+  consumer.incarnation = ++ctx.state.counters.incarnation;
 }
 
 /** KafkaConsumer#close(): commits pending offsets first when auto-commit is on. */
@@ -82,37 +107,93 @@ export function closeConsumer(ctx: EngineContext, consumer: ConsumerState): void
   killConsumer(ctx, consumer);
 }
 
+/**
+ * Wakes a consumer that is blocked in poll() so its next poll() iteration happens now, e.g. after
+ * it was connected to a topic (subscribing to a new topic) while it had nothing to fetch.
+ */
+export function wakeConsumer(ctx: EngineContext, consumer: ConsumerState): void {
+  if (consumer.status === 'running' && consumer.inPoll) {
+    schedulePoll(ctx, consumer, ctx.kernel.now());
+  }
+}
+
+function forgetProcessState(consumer: ConsumerState): void {
+  consumer.positions.clear();
+  consumer.buffer.length = 0;
+  consumer.fetchesInFlight.clear();
+  consumer.inPoll = false;
+}
+
+/** Schedules the one current ConsumerPoll task; any earlier one becomes stale. */
+function schedulePoll(ctx: EngineContext, consumer: ConsumerState, at: number): void {
+  consumer.pollToken += 1;
+  ctx.kernel.scheduleAt(at, {
+    type: 'ConsumerPoll',
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    token: consumer.pollToken,
+  });
+}
+
+const running = (
+  ctx: EngineContext,
+  consumerId: string,
+  incarnation: number,
+): ConsumerState | undefined => {
+  const consumer = ctx.state.consumers.get(consumerId);
+  return consumer?.incarnation === incarnation && consumer.status === 'running'
+    ? consumer
+    : undefined;
+};
+
+export function handleConsumerPoll(ctx: EngineContext, task: Task<'ConsumerPoll'>): void {
+  const consumer = running(ctx, task.consumerId, task.incarnation);
+  if (consumer?.pollToken !== task.token) return;
+  poll(ctx, consumer);
+}
+
 interface Assigned {
   readonly topic: string;
   readonly partition: number;
   readonly key: string;
 }
 
-/** Every partition of every connected topic, in connection order then partition order. */
+/**
+ * Every partition of every connected topic that the consumer's metadata knows about, in
+ * connection order then partition order (like subscribe(); one member gets everything).
+ */
 function assignment(ctx: EngineContext, consumer: ConsumerState): Assigned[] {
+  refreshIfStale(ctx, consumer.metadata, consumer.config.metadataMaxAgeMs);
   return topicsOfConsumer(ctx.state, consumer.config.id).flatMap((topic) =>
-    topic.partitions.map((p) => ({
+    Array.from({ length: knownPartitionCount(consumer.metadata, topic) }, (_, index) => ({
       topic: topic.config.id,
-      partition: p.index,
-      key: partitionName(topic.config.id, p.index),
+      partition: index,
+      key: partitionName(topic.config.id, index),
     })),
   );
 }
 
-export function handleConsumerPoll(ctx: EngineContext, task: Task<'ConsumerPoll'>): void {
-  const consumer = ctx.state.consumers.get(task.consumerId);
-  if (consumer?.incarnation !== task.incarnation || consumer.status !== 'running') return;
+const partitionOf = (ctx: EngineContext, a: Assigned): PartitionState | undefined =>
+  ctx.state.topics.get(a.topic)?.partitions[a.partition];
+
+/** One poll() call by the application (see the file comment for the steps). */
+function poll(ctx: EngineContext, consumer: ConsumerState): void {
   const { config } = consumer;
   const now = ctx.kernel.now();
   const assigned = assignment(ctx, consumer);
 
   // Partitions no longer assigned (disconnected or deleted topic): KafkaConsumer#assign commits
-  // the old assignment first when auto-commit is on, then forgets those positions.
+  // the old assignment first when auto-commit is on, then forgets those positions and their
+  // buffered data.
   const assignedKeys = new Set(assigned.map((a) => a.key));
   const dropped = [...consumer.positions.keys()].filter((k) => !assignedKeys.has(k));
   if (dropped.length > 0) {
     if (config.enableAutoCommit) commitPositions(ctx, consumer, dropped);
     for (const k of dropped) consumer.positions.delete(k);
+  }
+  for (let i = consumer.buffer.length - 1; i >= 0; i--) {
+    const chunk = consumer.buffer[i];
+    if (chunk !== undefined && !assignedKeys.has(chunk.key)) consumer.buffer.splice(i, 1);
   }
 
   // Auto-commit what earlier polls returned, once the interval has passed.
@@ -121,55 +202,155 @@ export function handleConsumerPoll(ctx: EngineContext, task: Task<'ConsumerPoll'
     consumer.lastAutoCommitAt = now;
   }
 
-  const group = groupOf(ctx, config.groupId);
-  let budget = config.maxPollRecords;
-  let fetched = 0;
-  const count = assigned.length;
-  const first = count === 0 ? 0 : consumer.nextPartitionIndex % count;
-  for (let i = 0; i < count && budget > 0; i++) {
-    const a = assigned[(first + i) % count];
-    const partition =
-      a === undefined ? undefined : ctx.state.topics.get(a.topic)?.partitions[a.partition];
-    if (a === undefined || partition === undefined) continue;
-
-    let position = consumer.positions.get(a.key);
-    if (position === undefined) {
-      const committed = group.committed.get(a.key);
-      const inRange =
-        committed !== undefined &&
-        committed >= partition.logStartOffset &&
-        committed <= partition.highWatermark;
-      position = inRange
-        ? committed
-        : config.autoOffsetReset === 'earliest'
-          ? partition.logStartOffset
-          : partition.highWatermark;
+  for (const a of assigned) {
+    const partition = partitionOf(ctx, a);
+    if (partition !== undefined && !consumer.positions.has(a.key)) {
+      consumer.positions.set(a.key, startingOffset(ctx, consumer, a.key, partition));
     }
+  }
 
-    const records = readRecords(partition, position, budget);
-    for (const r of records) {
+  const returned = drainBuffer(ctx, consumer);
+  sendFetches(ctx, consumer, assigned);
+  if (returned > 0) {
+    consumer.inPoll = false;
+    schedulePoll(ctx, consumer, now + returned * config.processingTimeMs);
+  } else {
+    // Blocked in poll(): a fetch response wakes it, and so does the auto-commit deadline.
+    consumer.inPoll = true;
+    if (config.enableAutoCommit) {
+      schedulePoll(ctx, consumer, consumer.lastAutoCommitAt + config.autoCommitIntervalMs);
+    } else {
+      consumer.pollToken += 1; // nothing else is due; a stale wake-up must not run
+    }
+  }
+}
+
+/** Committed offset if it is in range, otherwise auto.offset.reset. */
+function startingOffset(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  key: string,
+  partition: PartitionState,
+): number {
+  const committed = groupOf(ctx, consumer.config.groupId).committed.get(key);
+  const inRange =
+    committed !== undefined &&
+    committed >= partition.logStartOffset &&
+    committed <= partition.highWatermark;
+  if (inRange) return committed;
+  return resetOffset(consumer, partition);
+}
+
+/** auto.offset.reset: "earliest" = log start offset, "latest" = HW (KafkaConsumer#endOffsets). */
+function resetOffset(consumer: ConsumerState, partition: PartitionState): number {
+  return consumer.config.autoOffsetReset === 'earliest'
+    ? partition.logStartOffset
+    : partition.highWatermark;
+}
+
+/** Hands buffered records to the application, at most max.poll.records. Returns the count. */
+function drainBuffer(ctx: EngineContext, consumer: ConsumerState): number {
+  const { config } = consumer;
+  let budget = config.maxPollRecords;
+  let returned = 0;
+  while (budget > 0) {
+    const chunk = consumer.buffer[0];
+    if (chunk === undefined) break;
+    const taken: LogRecord[] = chunk.records.splice(0, budget);
+    for (const r of taken) {
       ctx.emit({
         type: 'RecordConsumed',
         consumerId: config.id,
         groupId: config.groupId,
-        topic: a.topic,
-        partition: a.partition,
+        topic: chunk.topic,
+        partition: chunk.partition,
         offset: r.offset,
         key: r.key,
         value: r.value,
         traceId: r.traceId,
       });
-      position = r.offset + 1;
+      consumer.positions.set(chunk.key, r.offset + 1);
     }
-    consumer.positions.set(a.key, position);
-    budget -= records.length;
-    fetched += records.length;
+    if (chunk.records.length === 0) consumer.buffer.shift();
+    budget -= taken.length;
+    returned += taken.length;
   }
-  if (count > 0) consumer.nextPartitionIndex = (first + 1) % count;
-  consumer.stats.consumed += fetched;
+  consumer.stats.consumed += returned;
+  return returned;
+}
 
-  const delay = fetched > 0 ? fetched * config.processingTimeMs : config.pollIntervalMs;
-  ctx.kernel.scheduleIn(delay, task);
+/**
+ * Sends one FetchRequest per leader for the assigned partitions that have nothing buffered and
+ * no fetch in flight to their leader. The partition order rotates by one each time, so with
+ * max.poll.records smaller than a fetch, no partition is always drained last.
+ */
+function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assigned[]): void {
+  const count = assigned.length;
+  if (count === 0) return;
+  const first = consumer.nextPartitionIndex % count;
+  const byLeader = new Map<string, FetchPartition[]>();
+  for (let i = 0; i < count; i++) {
+    const a = assigned[(first + i) % count];
+    if (a === undefined) continue;
+    const partition = partitionOf(ctx, a);
+    if (partition === undefined) {
+      // The cached metadata names a partition that does not exist (the topic was re-created
+      // smaller): ask for fresh metadata.
+      consumer.metadata.updateRequested = true;
+      continue;
+    }
+    const position = consumer.positions.get(a.key);
+    if (position === undefined || consumer.fetchesInFlight.has(partition.leader)) continue;
+    if (consumer.buffer.some((chunk) => chunk.key === a.key)) continue;
+    const list = byLeader.get(partition.leader) ?? [];
+    list.push({ topic: a.topic, partition: a.partition, fetchOffset: position });
+    byLeader.set(partition.leader, list);
+  }
+  for (const [broker, partitions] of byLeader) {
+    consumer.fetchesInFlight.add(broker);
+    ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+      type: 'FetchRequest',
+      consumerId: consumer.config.id,
+      incarnation: consumer.incarnation,
+      fetchId: ++ctx.state.counters.fetch,
+      broker,
+      partitions,
+      minBytes: consumer.config.fetchMinBytes,
+      maxWaitMs: consumer.config.fetchMaxWaitMs,
+    });
+  }
+  if (byLeader.size > 0) consumer.nextPartitionIndex = (first + 1) % count;
+}
+
+/** A fetch response reaches the consumer: buffer its records; wake poll() if it is waiting. */
+export function handleFetchResponse(ctx: EngineContext, task: Task<'FetchResponse'>): void {
+  const consumer = running(ctx, task.consumerId, task.incarnation);
+  if (consumer === undefined) return; // the consumer died or restarted: nobody reads this
+  consumer.fetchesInFlight.delete(task.broker);
+  for (const result of task.partitions) {
+    const key = partitionName(result.topic, result.partition);
+    // Discard data for partitions no longer assigned or whose position moved on (stale fetch).
+    if (consumer.positions.get(key) !== result.fetchOffset) continue;
+    if (result.error === 'UNKNOWN_TOPIC_OR_PARTITION') {
+      consumer.metadata.updateRequested = true;
+      continue;
+    }
+    if (result.error === 'OFFSET_OUT_OF_RANGE') {
+      const partition = ctx.state.topics.get(result.topic)?.partitions[result.partition];
+      if (partition !== undefined) consumer.positions.set(key, resetOffset(consumer, partition));
+      continue;
+    }
+    if (result.records.length > 0) {
+      consumer.buffer.push({
+        key,
+        topic: result.topic,
+        partition: result.partition,
+        records: [...result.records],
+      });
+    }
+  }
+  // An empty response also ends the wait: poll() loops and sends the next fetch.
+  if (consumer.inPoll) poll(ctx, consumer);
 }
 
 /** Commits the consumer's current position for each given partition, if it moved. */

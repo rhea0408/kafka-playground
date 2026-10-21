@@ -1,7 +1,7 @@
 /**
  * Engine invariants (architecture §4.6) checked over random topologies and command sequences.
- * M1 has one replica per partition and no groups with several members, so the ISR and
- * group-assignment invariants join in M3/M4.
+ * M1/M2 have one replica per partition and no groups with several members, so the ISR and
+ * group-assignment invariants join in M3/M4. The generated commands include UpdateConfig.
  */
 
 import fc from 'fast-check';
@@ -47,15 +47,17 @@ describe('engine invariants (fast-check)', () => {
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
         const { events } = runScenario(seed, topology, steps);
+        const producedSeq = new Map<string, number>();
         const last = new Map<string, number>();
         for (const e of events) {
+          if (e.type === 'RecordProduced') producedSeq.set(e.traceId, e.seq);
           if (e.type !== 'RecordAppended' || e.key === null) continue;
-          const n = Number(e.traceId.slice(e.traceId.lastIndexOf('#') + 1));
+          const sentAt = producedSeq.get(e.traceId);
+          expect(sentAt).toBeDefined();
           const k = `${tp(e)}|${e.producerId}|${e.key}`;
-          // Re-adding a producer restarts its numbering, so only compare within increasing runs.
           const prev = last.get(k);
-          if (prev !== undefined && n !== 1) expect(n).toBeGreaterThan(prev);
-          last.set(k, n);
+          if (prev !== undefined) expect(sentAt).toBeGreaterThan(prev);
+          last.set(k, sentAt ?? -1);
         }
       }),
       { numRuns: NUM_RUNS },
@@ -123,6 +125,57 @@ describe('engine invariants (fast-check)', () => {
             expect(e.offset).toBe(previous.offset + 1);
           }
           previous = e;
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('trace ids are unique across producer lives and rate changes', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        const ids = events.filter((e) => e.type === 'RecordProduced').map((e) => e.traceId);
+        expect(new Set(ids).size).toBe(ids.length);
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('a record reaches a consumer no sooner than one network delay after it was appended', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        const appendedAt = new Map<string, number>();
+        for (const e of events) {
+          if (e.type === 'RecordAppended') appendedAt.set(`${tp(e)}@${String(e.offset)}`, e.t);
+          if (e.type === 'RecordConsumed') {
+            const t = appendedAt.get(`${tp(e)}@${String(e.offset)}`) ?? Infinity;
+            expect(e.t).toBeGreaterThanOrEqual(t + 1); // default networkDelayMs
+          }
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('a stopped or removed consumer emits nothing until it is started or added again', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        const alive = new Set((topology.consumers ?? []).map((c) => c.id));
+        for (const e of events) {
+          if (e.type === 'ComponentAdded' && e.component.kind === 'consumer') {
+            alive.add(e.component.id);
+          }
+          if (e.type === 'ComponentRemoved' && e.component.kind === 'consumer') {
+            alive.delete(e.component.id);
+          }
+          if (e.type === 'ConsumerStarted') alive.add(e.consumerId);
+          if (e.type === 'ConsumerStopped') alive.delete(e.consumerId);
+          if (e.type === 'RecordConsumed' || e.type === 'OffsetCommitted') {
+            expect(alive.has(e.consumerId)).toBe(true);
+          }
         }
       }),
       { numRuns: NUM_RUNS },

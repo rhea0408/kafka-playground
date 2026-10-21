@@ -1,6 +1,8 @@
 /**
- * Headless demo (M1-T10): producer (keys A/B/C, 2 msg/s) → topic "orders" (3 partitions) →
- * consumer, for 5 sim seconds. Prints the event log, then a snapshot of partitions and lag.
+ * Headless demo (M1-T10, extended in M2-T2): producer (keys A/B/C, 2 msg/s) → topic "orders"
+ * (3 partitions) → consumer, for 5 sim seconds. Halfway through, UpdateConfig raises the rate to
+ * 4 msg/s and grows the topic to 4 partitions. Prints the event log, then a snapshot of
+ * partitions and lag.
  *
  *   pnpm --filter @kp/engine demo                 # seed 42, 5000 ms
  *   pnpm --filter @kp/engine demo -- --seed 7 --until 12000
@@ -20,6 +22,7 @@ function option(name: string, fallback: number): number {
 
 const seed = option('seed', 42);
 const until = option('until', 5000);
+const half = Math.floor(until / 2);
 
 const engine = createEngine({
   seed,
@@ -45,8 +48,17 @@ const engine = createEngine({
 const out: string[] = [];
 out.push(`Kafka Playground engine demo · seed ${String(seed)} · ${String(until)} ms of sim time`);
 out.push('p1 (keys A/B/C, 2 msg/s, acks=all) → orders (3 partitions on b1) → c1 (group c1-group)');
+out.push(`At ${String(half)} ms: p1 → 4 msg/s and orders → 4 partitions (UpdateConfig)`);
 out.push('');
 engine.on((e) => out.push(formatEvent(e)));
+engine.runUntil(half);
+for (const command of [
+  { type: 'UpdateConfig', id: 'p1', patch: { ratePerSec: 4 } },
+  { type: 'UpdateConfig', id: 'orders', patch: { partitions: 4 } },
+] as const) {
+  const result = engine.dispatch(command);
+  if (!result.ok) throw new Error(result.reason);
+}
 engine.runUntil(until);
 out.push('', ...snapshotTables(engine.getSnapshot()));
 console.log(out.join('\n'));
@@ -74,6 +86,12 @@ function snapshotTables(snap: EngineSnapshot): string[] {
         `Note: ${String(empty.length)} of ${String(topic.partitions.length)} partitions got no records. Each key goes to`,
         `toPositive(murmur2(key)) % partitions, the Java client's rule, and with only a few keys`,
         `the hashes often collide: here A, B and C all map to partition 1 of 3.`,
+      );
+    }
+    if (topic.partitions.length > 3) {
+      lines.push(
+        `Partition 3 was added at ${String(half)} ms but stays empty: clients only see new partitions`,
+        `after their next metadata refresh (metadata.max.age.ms, 5 minutes by default).`,
       );
     }
     lines.push('');

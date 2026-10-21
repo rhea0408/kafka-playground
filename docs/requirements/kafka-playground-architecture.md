@@ -125,7 +125,7 @@ Consumer     { id, groupId, status, position: Map<partition, offset>, config: { 
 Each accepted command is stamped with sim-time and appended to the **command log**, which is used for replay, save files, the failure replay in Fix, and CI playback.
 
 ### 4.5 Domain events (engine → UI and level runtime)
-`RecordProduced`, `RecordAppended`, `RecordReplicated`, `HighWatermarkAdvanced`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss), `RebalanceStarted`, `RebalanceCompleted`, `PartitionAssigned`, `ConsumerIdle`, `DuplicateProcessed`, `LagChanged`.
+`ConfigUpdated` (M2), `RecordProduced`, `RecordAppended`, `RecordReplicated`, `HighWatermarkAdvanced`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss), `RebalanceStarted`, `RebalanceCompleted`, `PartitionAssigned`, `ConsumerIdle`, `DuplicateProcessed`, `LagChanged`.
 Typed as a discriminated union in `packages/engine/events`. This single stream feeds the UI, animations (`docs/ui/animations.md`), tips, objectives, alerts, and later the AI tutor (NFR-8.4).
 
 ### 4.6 Invariants (property tests with fast-check)

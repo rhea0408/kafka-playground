@@ -7,28 +7,43 @@
 import type { Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { StickyState } from '../protocols/partitioner.ts';
-import type { PartitionState } from './partition.ts';
+import type { ClientMetadata } from '../protocols/metadata.ts';
+import type { LogRecord, PartitionState } from './partition.ts';
+import type { FetchRequestTask } from './tasks.ts';
 
 export interface BrokerState {
   readonly config: Broker;
 }
 
 export interface TopicState {
-  readonly config: Topic;
-  readonly partitions: readonly PartitionState[];
+  /** Replaced by UpdateConfig. */
+  config: Topic;
+  /** Grows when partitions are added (UpdateConfig); never shrinks. */
+  readonly partitions: PartitionState[];
 }
 
 export interface ProducerState {
-  readonly config: Producer;
-  /** Distinguishes this life of the producer from earlier ones with the same id. */
+  /** Replaced by UpdateConfig. */
+  config: Producer;
+  /**
+   * Distinguishes this life of the producer (AddComponent → RemoveComponent) from earlier ones
+   * with the same id. Part of every trace id; produce responses for another life are dropped.
+   */
   readonly incarnation: number;
-  /** Sim time the producer started; record n is due at startedAt + floor(n * 1000 / rate). */
-  readonly startedAt: number;
+  /**
+   * The current send schedule. A rate change (UpdateConfig) starts a new schedule from now;
+   * ticks of an older schedule are ignored. In-flight requests are not affected.
+   */
+  schedule: number;
+  /** Sim time the schedule started; record n is due at startedAt + floor(n * 1000 / rate). */
+  startedAt: number;
   /** Seeded streams: one for key choice, one for the sticky partitioner. */
   readonly keyRng: Rng;
   readonly partitionRng: Rng;
   /** Sticky partition per topic, for records without a key. */
   readonly sticky: Map<string, StickyState>;
+  /** The producer's cached cluster metadata (partition counts), refreshed every metadata.max.age.ms. */
+  readonly metadata: ClientMetadata;
   stats: ProducerStats;
 }
 
@@ -41,8 +56,19 @@ export interface ProducerStats {
   failed: number;
 }
 
+/** Records from one partition that a fetch returned and poll() has not handed out yet. */
+export interface BufferedFetch {
+  /** "topic-partition". */
+  readonly key: string;
+  readonly topic: string;
+  readonly partition: number;
+  /** Not yet returned, oldest first. poll() takes from the front. */
+  readonly records: LogRecord[];
+}
+
 export interface ConsumerState {
-  readonly config: Consumer;
+  /** Replaced by UpdateConfig; read at each poll(). */
+  config: Consumer;
   /** Changes on every (re)start, so poll tasks from an earlier life are ignored. */
   incarnation: number;
   /** "stopped" after KillConsumer, until RestartConsumer. */
@@ -51,8 +77,24 @@ export interface ConsumerState {
   readonly positions: Map<string, number>;
   /** Sim time of the last auto-commit (or of the start); the interval counts from here. */
   lastAutoCommitAt: number;
-  /** Rotates which assigned partition is read first, so no partition starves. */
+  /** Rotates which assigned partition comes first in the next fetch request. */
   nextPartitionIndex: number;
+  /**
+   * The client's fetch buffer (completed fetches), oldest first. poll() returns these before it
+   * waits for anything new; leftovers beyond max.poll.records stay for the next poll().
+   */
+  readonly buffer: BufferedFetch[];
+  /** Brokers this consumer has a fetch request in flight to (at most one per broker). */
+  readonly fetchesInFlight: Set<string>;
+  /**
+   * True while the application is blocked inside poll() waiting for data; false while it is
+   * processing the records the last poll() returned.
+   */
+  inPoll: boolean;
+  /** Only the ConsumerPoll task carrying this token is current; older ones are ignored. */
+  pollToken: number;
+  /** The consumer's cached cluster metadata (partition counts per topic). */
+  readonly metadata: ClientMetadata;
   stats: { consumed: number };
 }
 
@@ -73,8 +115,13 @@ export interface EngineState {
   readonly groups: Map<string, GroupState>;
   /** In the order they were made. */
   readonly connections: Connection[];
-  /** Source of incarnation numbers for producers and consumers. */
-  readonly counters: { incarnation: number };
+  /**
+   * Fetch requests the broker is holding (the "fetch purgatory") until fetch.min.bytes are
+   * available or fetch.max.wait.ms passes, by fetch id, oldest first.
+   */
+  readonly parkedFetches: Map<number, FetchRequestTask>;
+  /** Sources of incarnation numbers (producers and consumers) and fetch request ids. */
+  readonly counters: { incarnation: number; fetch: number };
 }
 
 export function createState(): EngineState {
@@ -85,7 +132,8 @@ export function createState(): EngineState {
     consumers: new Map(),
     groups: new Map(),
     connections: [],
-    counters: { incarnation: 0 },
+    parkedFetches: new Map(),
+    counters: { incarnation: 0, fetch: 0 },
   };
 }
 

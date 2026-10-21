@@ -22,6 +22,23 @@ describe('component defaults', () => {
       acks: 'all',
       batchSize: 16384,
       messageSizeBytes: 1024,
+      metadataMaxAgeMs: 300_000,
+    });
+  });
+
+  it('drop the removed pollIntervalMs game setting (fetching is a long poll since M2)', () => {
+    expect(
+      ConsumerSchema.parse({ kind: 'consumer', id: 'c1', pollIntervalMs: 100 }),
+    ).not.toHaveProperty('pollIntervalMs');
+  });
+
+  it('accept fetch.min.bytes and fetch.max.wait.ms of 0, but not negative values', () => {
+    expect(
+      parseComponent({ kind: 'consumer', id: 'c1', fetchMinBytes: 0, fetchMaxWaitMs: 0 }).ok,
+    ).toBe(true);
+    expect(parseComponent({ kind: 'consumer', id: 'c1', fetchMaxWaitMs: -1 })).toEqual({
+      ok: false,
+      errors: ['fetchMaxWaitMs: fetch.max.wait.ms cannot be negative.'],
     });
   });
 
@@ -34,7 +51,9 @@ describe('component defaults', () => {
       enableAutoCommit: true,
       autoCommitIntervalMs: 5000,
       maxPollRecords: 500,
-      pollIntervalMs: 100,
+      fetchMinBytes: 1,
+      fetchMaxWaitMs: 500,
+      metadataMaxAgeMs: 300_000,
       processingTimeMs: 0,
     });
     expect(ConsumerSchema.parse({ kind: 'consumer', id: 'c1', groupId: 'billing' }).groupId).toBe(

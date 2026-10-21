@@ -20,8 +20,16 @@ export interface LogRecord {
   /** CreateTime: when the producer created the record (sim ms). */
   readonly timestamp: SimTime;
   readonly producerId: string;
-  /** Stable id for following one record through the system, e.g. "p1#7". */
+  /**
+   * Id for following one record through the system, unique across producer lives:
+   * "<producerId>@<incarnation>#<n>", e.g. "p1@3#7" (see produce.ts).
+   */
   readonly traceId: string;
+  /**
+   * Serialized size in bytes (the producer's messageSizeBytes game setting). Used where Kafka
+   * counts bytes: fetch.min.bytes and the sticky partitioner's batch.size.
+   */
+  readonly sizeBytes: number;
 }
 
 export interface PartitionState {
@@ -53,19 +61,26 @@ export function appendRecord(
 }
 
 /**
- * Records a consumer may read starting at `fromOffset`: at most `max`, and only below the high
- * watermark (consumers never see records that are not yet fully replicated).
+ * Records a consumer may read starting at `fromOffset`: at most `max` (default: all), and only
+ * below the high watermark (consumers never see records that are not yet fully replicated).
  */
 export function readRecords(
   partition: PartitionState,
   fromOffset: number,
-  max: number,
+  max = Number.POSITIVE_INFINITY,
 ): LogRecord[] {
   const start = Math.max(fromOffset, partition.logStartOffset);
   const end = Math.min(partition.highWatermark, start + max);
   if (end <= start) return [];
   const base = partition.logStartOffset;
   return partition.log.slice(start - base, end - base);
+}
+
+/** Bytes a fetch from `fromOffset` could return now: the records from there up to the HW. */
+export function bytesAvailable(partition: PartitionState, fromOffset: number): number {
+  let bytes = 0;
+  for (const r of readRecords(partition, fromOffset)) bytes += r.sizeBytes;
+  return bytes;
 }
 
 export const partitionName = (topic: string, index: number): string => `${topic}-${String(index)}`;

@@ -80,7 +80,14 @@ export type EngineEventPayload =
   /** The consumer process crashed or was stopped (KillConsumer). Nothing was committed. */
   | { readonly type: 'ConsumerStopped'; readonly consumerId: string }
   /** The consumer process started again (RestartConsumer); it resumes from committed offsets. */
-  | { readonly type: 'ConsumerStarted'; readonly consumerId: string };
+  | { readonly type: 'ConsumerStarted'; readonly consumerId: string }
+  /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */
+  | {
+      readonly type: 'ConfigUpdated';
+      readonly id: string;
+      readonly before: Component;
+      readonly after: Component;
+    };
 
 export type EngineEvent = Stamped<EngineEventPayload>;
 

@@ -83,6 +83,13 @@ describe('producer rate', () => {
     engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
     engine.runUntil(4000);
     expect(ofType(events, 'RecordProduced').map((e) => e.t)).toEqual([500, 1000, 3500, 4000]);
+    // The new life gets a new incarnation, so its trace ids never repeat the old ones.
+    expect(ofType(events, 'RecordProduced').map((e) => e.traceId)).toEqual([
+      'p1@1#1',
+      'p1@1#2',
+      'p1@2#1',
+      'p1@2#2',
+    ]);
   });
 });
 
@@ -107,9 +114,9 @@ describe('event order and acks', () => {
         partition: p,
         offset: 0,
         key: 'A',
-        traceId: 'p1#1',
+        traceId: 'p1@1#1',
       });
-      expect(events[2]).toMatchObject({ partition: p, offset: 0, traceId: 'p1#1' });
+      expect(events[2]).toMatchObject({ partition: p, offset: 0, traceId: 'p1@1#1' });
     },
   );
 
@@ -139,7 +146,7 @@ describe('event order and acks', () => {
     engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
     engine.runUntil(1100);
     expect(ofType(events, 'ProduceFailed')).toEqual([
-      expect.objectContaining({ t: 1002, error: 'UNKNOWN_TOPIC_OR_PARTITION', traceId: 'p1#1' }),
+      expect.objectContaining({ t: 1002, error: 'UNKNOWN_TOPIC_OR_PARTITION', traceId: 'p1@1#1' }),
     ]);
     expect(engine.getSnapshot().producers[0]?.stats).toEqual({ sent: 1, acked: 0, failed: 1 });
   });

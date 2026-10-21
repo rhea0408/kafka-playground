@@ -13,12 +13,21 @@
  * - acks=1: the leader acknowledges after writing to its local log.
  * - acks=all: the leader waits for the full ISR. With one replica (M1) the ISR is the leader
  *   alone, so acks=1 and acks=all behave the same until replication arrives (M4).
+ *
+ * The partition count used by the partitioner is the producer's cached metadata (metadata.ts),
+ * so partitions added to a topic are used only after the next metadata refresh.
+ *
+ * Trace ids are "<producerId>@<incarnation>#<n>": the incarnation is this producer's life
+ * (a removed and re-added producer gets a new one) and n counts its records (it keeps counting
+ * across rate changes), so a trace id is never reused.
  */
 
 import type { KeyStrategy } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { EngineContext } from '../model/context.ts';
 import { appendRecord } from '../model/partition.ts';
+import { onHighWatermarkAdvanced } from './fetch.ts';
+import { createClientMetadata, knownPartitionCount, refreshIfStale } from './metadata.ts';
 import { topicsOfProducer, type ProducerState, type TopicState } from '../model/state.ts';
 import type { EngineTask } from '../model/tasks.ts';
 import {
@@ -42,20 +51,34 @@ export function startProducer(ctx: EngineContext, config: ProducerState['config'
   const producer: ProducerState = {
     config,
     incarnation,
+    schedule: 0,
     startedAt: ctx.kernel.now(),
     keyRng: ctx.kernel.rng.fork(`${label}:keys`),
     partitionRng: ctx.kernel.rng.fork(`${label}:partitions`),
     sticky: new Map(),
+    metadata: createClientMetadata(ctx.kernel.now()),
     stats: { sent: 0, acked: 0, failed: 0 },
   };
   ctx.state.producers.set(config.id, producer);
+  restartSchedule(ctx, producer);
+  return producer;
+}
+
+/**
+ * Starts a new send schedule from now: the first record is due 1000 / rate ms later. Ticks of the
+ * previous schedule are ignored. Used at start and when the rate changes (UpdateConfig); stats,
+ * RNG streams, sticky state and in-flight requests are kept.
+ */
+export function restartSchedule(ctx: EngineContext, producer: ProducerState): void {
+  producer.schedule += 1;
+  producer.startedAt = ctx.kernel.now();
   ctx.kernel.scheduleAt(tickTime(producer, 1), {
     type: 'ProducerTick',
-    producerId: config.id,
-    incarnation,
+    producerId: producer.config.id,
+    incarnation: producer.incarnation,
+    schedule: producer.schedule,
     n: 1,
   });
-  return producer;
 }
 
 const current = (
@@ -70,6 +93,7 @@ const current = (
 export function handleProducerTick(ctx: EngineContext, task: Task<'ProducerTick'>): void {
   const producer = current(ctx, task.producerId, task.incarnation);
   if (producer === undefined) return; // removed: its schedule ends here
+  if (producer.schedule !== task.schedule) return; // the rate changed: a newer schedule runs
   for (const topic of topicsOfProducer(ctx.state, producer.config.id)) {
     const key = chooseKey(producer.config.keyStrategy, producer.keyRng);
     sendRecord(
@@ -92,7 +116,12 @@ export function sendRecord(
   value: string,
 ): void {
   const { config } = producer;
-  const numPartitions = topic.partitions.length;
+  // The partitioner uses the producer's cached metadata. When a refresh shows a new partition
+  // count, the sticky partition for that topic is chosen afresh.
+  for (const changed of refreshIfStale(ctx, producer.metadata, config.metadataMaxAgeMs)) {
+    producer.sticky.delete(changed);
+  }
+  const numPartitions = knownPartitionCount(producer.metadata, topic);
   let partition: number;
   if (key === null) {
     let sticky = producer.sticky.get(topic.config.id);
@@ -113,7 +142,7 @@ export function sendRecord(
   }
 
   producer.stats.sent += 1;
-  const traceId = `${config.id}#${String(producer.stats.sent)}`;
+  const traceId = `${config.id}@${String(producer.incarnation)}#${String(producer.stats.sent)}`;
   const now = ctx.kernel.now();
   ctx.emit({
     type: 'RecordProduced',
@@ -143,7 +172,14 @@ export function sendRecord(
     topic: topic.config.id,
     partition,
     acks: config.acks,
-    record: { key, value, timestamp: now, producerId: config.id, traceId },
+    record: {
+      key,
+      value,
+      timestamp: now,
+      producerId: config.id,
+      traceId,
+      sizeBytes: config.messageSizeBytes,
+    },
   });
 }
 
@@ -177,6 +213,8 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     producerId: appended.producerId,
     traceId: appended.traceId,
   });
+  // With one replica the HW moved with the append: parked fetches may now have enough data.
+  onHighWatermarkAdvanced(ctx, partition);
   respond({ ok: true, offset: appended.offset });
 }
 
@@ -196,6 +234,8 @@ export function handleProduceResponse(ctx: EngineContext, task: Task<'ProduceRes
     });
   } else {
     producer.stats.failed += 1;
+    // A metadata error makes the client refresh its metadata soon (Metadata#requestUpdate).
+    producer.metadata.updateRequested = true;
     ctx.emit({
       type: 'ProduceFailed',
       producerId,
