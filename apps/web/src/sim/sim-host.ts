@@ -23,6 +23,7 @@ import {
   type EngineSnapshot,
 } from '@kp/engine';
 import {
+  EVENT_HISTORY_SIZE,
   MAX_SPEED,
   MIN_SPEED,
   type DiffFrame,
@@ -46,9 +47,6 @@ export const FRAME_INTERVAL_MS = 33;
  * tab is hidden.
  */
 export const MAX_TICK_DELTA_MS = 250;
-
-/** Events kept for history and late subscribers (NFR-2.9). */
-export const EVENT_HISTORY_SIZE = 10_000;
 
 export interface SimHostOptions {
   /** Wall clock in ms (`performance.now` in the worker). Fractions are fine. */
