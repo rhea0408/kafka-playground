@@ -48,6 +48,9 @@ docs/                     requirements, ui, milestones, adr, simplifications
 pnpm install
 pnpm dev                          # web app (Vite dev server, apps/web)
 pnpm test                         # all unit + property tests
+pnpm test:coverage                # same, with coverage into <package>/coverage/
+pnpm --filter @kp/web build       # production build of the web app
+pnpm --filter @kp/web e2e         # Playwright (Chromium) against build + preview
 pnpm test:coverage                # same, with a v8 coverage report in each <package>/coverage
 pnpm lint && pnpm typecheck      # lint = eslint + prettier --check
 pnpm format                       # prettier --write
@@ -105,4 +108,4 @@ When the last task of a milestone is done, write `docs/milestones/M<n>-summary.m
 Also update "Current milestone" below.
 
 ## Current milestone
-M2: Web app shell. See `docs/milestones/M2-web-shell.md`; M1 handover notes are in `docs/milestones/M1-summary.md`. Update this line when a milestone is done.
+M3: Consumer groups, rebalancing and commits. M3 planning pending: see `docs/milestones/M2-summary.md` (M2 handover notes; M2 decisions in `docs/milestones/M2-decisions.md`). Update this line when a milestone is done.

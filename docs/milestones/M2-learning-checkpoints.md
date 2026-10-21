@@ -2,6 +2,12 @@
 
 Short answers to the "Learning checkpoint" questions in `docs/milestones/M2-web-shell.md`. They are written for someone new to Kafka; each one links the Kafka behaviour to what the engine does.
 
+**Contents**
+- [T1 · Message timing](#t1--message-timing): what happens between `send()` and a consumer reading the record
+- [T2 · Engine additions for the UI](#t2--engine-additions-for-the-ui): why partitions can't shrink, and what adding them does to keys
+- [T4 · Worker host and Comlink API](#t4--worker-host-and-comlink-api): why the host may read the clock and speed isn't a command
+- [T11 · Bottom and right panels](#t11--bottom-and-right-panels): why the committed marker trails the position
+
 ## T1 · Message timing
 
 **Q: In real Kafka, what happens between `send()` returning and the record being readable by a consumer? Which of those steps does the engine model, and roughly how long does each one take?**

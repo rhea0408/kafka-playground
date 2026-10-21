@@ -154,9 +154,12 @@ export function EventList() {
               : 'No events of the selected types.'}
           </p>
         ) : (
+          // overflow-clip: an entering row starts 6 px low (kp-row-in's translateY). Unclipped,
+          // that transform adds 6 px to the scroller's scrollHeight, so Follow scrolled past the
+          // last row and the view crept back up as each animation ended (M2-decisions F3).
           <ol
             aria-label="Events, oldest first"
-            className="relative"
+            className="relative overflow-clip"
             style={{ height: shown.length * EVENT_ROW_HEIGHT }}
           >
             {rows}

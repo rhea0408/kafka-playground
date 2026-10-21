@@ -240,3 +240,80 @@ test('worker determinism: UI commands replayed in Node give the same hash', asyn
   expect(history.length).toBe(events.length);
   expect(hashEvents(history)).toBe(hashEvents(events));
 });
+
+test('event list at 10×: Follow keeps the newest row at the bottom and rows cover the view (F3)', async ({
+  page,
+}) => {
+  await open(page);
+  await speed10(page);
+  await page.getByRole('button', { name: 'Play' }).click();
+  const list = page.getByRole('region', { name: 'Event list' });
+  // Enough events to scroll.
+  await expect
+    .poll(() => list.evaluate((el) => el.scrollHeight > el.clientHeight + 100), {
+      timeout: 15_000,
+    })
+    .toBe(true);
+
+  // Check every animation frame for ~2 s wall (~20 s sim, ~80 new rows).
+  const report = await list.evaluate(
+    (el) =>
+      new Promise<{ frames: number; problems: string[]; slowestFadeMs: number }>((resolve) => {
+        const problems: string[] = [];
+        const mounted = new Map<string, { at: number; visibleAt?: number }>();
+        let frames = 0;
+        const start = performance.now();
+        const tick = (): void => {
+          const now = performance.now();
+          frames++;
+          const ol = el.querySelector('ol');
+          if (ol !== null) {
+            const listHeight = Number.parseFloat(ol.style.height);
+            const top = el.scrollTop;
+            const bottom = top + el.clientHeight;
+            // The scroll range is exactly the list: nothing (an entering row's transform)
+            // makes it taller, so Follow sits on the last row's bottom edge.
+            if (Math.abs(el.scrollHeight - listHeight) > 1)
+              problems.push(`scrollHeight ${String(el.scrollHeight)} ≠ list ${String(listHeight)}`);
+            if (Math.abs(bottom - listHeight) > 2)
+              problems.push(`view ends at ${String(bottom)}, list at ${String(listHeight)}`);
+            // The mounted window covers the whole view.
+            const items = [...ol.querySelectorAll<HTMLElement>('li')];
+            const tops = items.map((li) => Number.parseFloat(li.style.top));
+            if (Math.min(...tops) > top + 1 || Math.max(...tops) + 20 < bottom - 1)
+              problems.push(
+                `rows ${String(Math.min(...tops))}–${String(Math.max(...tops) + 20)} vs view ${String(top)}–${String(bottom)}`,
+              );
+            for (const li of items) {
+              const seq = li.dataset['seq'] ?? '';
+              let entry = mounted.get(seq);
+              if (entry === undefined) {
+                entry = { at: now };
+                mounted.set(seq, entry);
+              }
+              if (entry.visibleAt === undefined && Number(getComputedStyle(li).opacity) > 0.9)
+                entry.visibleAt = now;
+            }
+          }
+          if (now - start < 2_000) {
+            requestAnimationFrame(tick);
+            return;
+          }
+          // B7's entry fade is 200 ms; a row that stays faded longer had its animation
+          // restarted (or never got one that ends).
+          const fades = [...mounted.values()].flatMap((m) =>
+            m.visibleAt === undefined ? [] : [m.visibleAt - m.at],
+          );
+          resolve({ frames, problems: problems.slice(0, 5), slowestFadeMs: Math.max(0, ...fades) });
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  expect(report.frames).toBeGreaterThan(30);
+  expect(report.problems).toEqual([]);
+  expect(report.slowestFadeMs).toBeLessThan(300);
+  await expect(page.getByRole('button', { name: 'Follow' }).first()).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
