@@ -312,6 +312,117 @@ describe('committing offsets', () => {
   });
 });
 
+describe('committed offsets when a topic is deleted and re-created', () => {
+  /** Every OffsetCommitted is at most the HW of the topic life it went to, at that moment. */
+  function expectCommitsWithinHw(events: EngineEvent[]): void {
+    const hw = new Map<string, number>();
+    for (const e of events) {
+      if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') hw.clear();
+      if (e.type === 'RecordAppended') hw.set(`${e.topic}-${String(e.partition)}`, e.offset + 1);
+      if (e.type === 'OffsetCommitted') {
+        expect(e.offset).toBeLessThanOrEqual(hw.get(`${e.topic}-${String(e.partition)}`) ?? 0);
+      }
+    }
+  }
+
+  // The counterexample fast-check found (invariants.prop.test.ts, seed -1172367150), shrunk.
+  it('regression: a consumer dropping a deleted topic does not commit into its re-created namesake', () => {
+    const engine = createEngine({
+      seed: 0,
+      topology: {
+        brokers: [{ kind: 'broker', id: 'b1' }],
+        topics: [{ kind: 'topic', id: 't0', partitions: 1 }],
+        producers: [
+          { kind: 'producer', id: 'p0', ratePerSec: 1, keyStrategy: { type: 'fixed', key: 'A' } },
+        ],
+        consumers: [
+          {
+            kind: 'consumer',
+            id: 'c0',
+            autoOffsetReset: 'earliest',
+            autoCommitIntervalMs: 100,
+            maxPollRecords: 1,
+            fetchMinBytes: 0,
+            fetchMaxWaitMs: 0,
+            metadataMaxAgeMs: 0,
+          },
+        ],
+        connections: [
+          { from: 'p0', to: 't0' },
+          { from: 't0', to: 'c0' },
+        ],
+      },
+    });
+    const events = record(engine);
+    engine.runUntil(1002); // offset 0 is appended at 1001 and consumed at 1002: position 1
+    engine.dispatch({ type: 'RemoveComponent', id: 't0' });
+    engine.runUntil(1003);
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'topic', id: 't0', partitions: 1 },
+    });
+    engine.runUntil(1004); // c0 polls, drops t0-0 and tries to commit position 1 on the way out
+
+    expectCommitsWithinHw(events);
+    const reAdded = events.findIndex((e) => e.type === 'ComponentAdded');
+    expect(ofType(events.slice(reAdded), 'OffsetCommitted')).toEqual([]);
+    expect(engine.getSnapshot().groups).toEqual([{ groupId: 'c0-group', committed: [] }]);
+  });
+
+  it('deleting a topic deletes the group’s committed offsets for it', () => {
+    const engine = createEngine({ seed: 5, topology: setup({ autoCommitIntervalMs: 500 }) });
+    engine.runUntil(5000);
+    engine.dispatch({ type: 'RemoveComponent', id: 'c1' }); // close() commits
+    const committed = () => engine.getSnapshot().groups[0]?.committed ?? [];
+    expect(committed().length).toBeGreaterThan(0);
+
+    engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
+    expect(committed()).toEqual([]);
+  });
+
+  it('a re-created topic is read from the start, not from the old topic’s committed offsets', () => {
+    const engine = createEngine({ seed: 5, topology: setup({ autoCommitIntervalMs: 500 }) });
+    const events = record(engine);
+    engine.runUntil(5000);
+    engine.dispatch({ type: 'RemoveComponent', id: 'c1' });
+    engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'topic', id: 'orders', partitions: 3 },
+    });
+    engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
+    engine.runUntil(15_000); // the new topic grows past the old committed offsets
+    const start = events.length;
+    addConsumer(engine, { autoOffsetReset: 'earliest' });
+    engine.runUntil(20_000);
+
+    for (const offsets of consumedOffsets(events.slice(start)).values()) {
+      expect(offsets[0]).toBe(0);
+    }
+    expectCommitsWithinHw(events);
+  });
+
+  it('a consumer still subscribed across the re-creation resets and then commits again', () => {
+    const engine = createEngine({ seed: 5, topology: setup({ autoCommitIntervalMs: 200 }) });
+    const events = record(engine);
+    engine.runUntil(5000);
+    engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'topic', id: 'orders', partitions: 3 },
+    });
+    engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c1' });
+    const start = events.length;
+    engine.runUntil(10_000);
+
+    expectCommitsWithinHw(events);
+    const after = events.slice(start);
+    for (const offsets of consumedOffsets(after).values()) expect(offsets[0]).toBe(0);
+    expect(ofType(after, 'OffsetCommitted').length).toBeGreaterThan(0);
+  });
+});
+
 describe('stopping and restarting a consumer', () => {
   it('a crash loses nothing that was produced while it was down, but replays records after the last commit', () => {
     const engine = createEngine({ seed: 6, topology: setup({ autoCommitIntervalMs: 3000 }) });

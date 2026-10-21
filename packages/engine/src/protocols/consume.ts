@@ -30,6 +30,12 @@
  * OFFSET_OUT_OF_RANGE resets the position with auto.offset.reset; UNKNOWN_TOPIC_OR_PARTITION
  * requests a metadata refresh. The broker side of the long poll is in fetch.ts.
  *
+ * Commits go to the group coordinator, which stores them only for partitions that exist
+ * (KafkaApis#handleOffsetCommitRequest answers UNKNOWN_TOPIC_OR_PARTITION otherwise) and deletes
+ * a topic's offsets when the topic is deleted (GroupCoordinator#onPartitionsDeleted). A position
+ * remembers the topic ID it was read from, and is not committed to a re-created topic with the
+ * same name (simplifications: "Commits after a topic is re-created").
+ *
  * Processing takes processingTimeMs per record (game setting); the next poll() happens after it.
  * close() commits pending offsets when auto-commit is on; a crash (KillConsumer) does not. Both
  * start a new incarnation, so fetch responses and poll tasks of the old life are ignored.
@@ -47,6 +53,19 @@ import {
 } from './metadata.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
+
+/**
+ * A topic was deleted: every group's committed offsets for it go too. In KRaft the broker's
+ * metadata publisher calls GroupCoordinator#onPartitionsDeleted for the deleted partitions, which
+ * removes their offsets, so a topic later re-created with the same name starts with none.
+ */
+export function deleteCommittedOffsets(ctx: EngineContext, topic: string): void {
+  for (const group of ctx.state.groups.values()) {
+    for (const key of [...group.committed.keys()]) {
+      if (key.slice(0, key.lastIndexOf('-')) === topic) group.committed.delete(key);
+    }
+  }
+}
 
 export function groupOf(ctx: EngineContext, groupId: string): GroupState {
   let group = ctx.state.groups.get(groupId);
@@ -203,9 +222,13 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
   }
 
   for (const a of assigned) {
-    const partition = partitionOf(ctx, a);
-    if (partition !== undefined && !consumer.positions.has(a.key)) {
-      consumer.positions.set(a.key, startingOffset(ctx, consumer, a.key, partition));
+    const topic = ctx.state.topics.get(a.topic);
+    const partition = topic?.partitions[a.partition];
+    if (topic !== undefined && partition !== undefined && !consumer.positions.has(a.key)) {
+      consumer.positions.set(a.key, {
+        offset: startingOffset(ctx, consumer, a.key, partition),
+        topicId: topic.topicId,
+      });
     }
   }
 
@@ -269,7 +292,7 @@ function drainBuffer(ctx: EngineContext, consumer: ConsumerState): number {
         value: r.value,
         traceId: r.traceId,
       });
-      consumer.positions.set(chunk.key, r.offset + 1);
+      consumer.positions.set(chunk.key, { offset: r.offset + 1, topicId: chunk.topicId });
     }
     if (chunk.records.length === 0) consumer.buffer.shift();
     budget -= taken.length;
@@ -303,7 +326,7 @@ function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assi
     if (position === undefined || consumer.fetchesInFlight.has(partition.leader)) continue;
     if (consumer.buffer.some((chunk) => chunk.key === a.key)) continue;
     const list = byLeader.get(partition.leader) ?? [];
-    list.push({ topic: a.topic, partition: a.partition, fetchOffset: position });
+    list.push({ topic: a.topic, partition: a.partition, fetchOffset: position.offset });
     byLeader.set(partition.leader, list);
   }
   for (const [broker, partitions] of byLeader) {
@@ -330,21 +353,27 @@ export function handleFetchResponse(ctx: EngineContext, task: Task<'FetchRespons
   for (const result of task.partitions) {
     const key = partitionName(result.topic, result.partition);
     // Discard data for partitions no longer assigned or whose position moved on (stale fetch).
-    if (consumer.positions.get(key) !== result.fetchOffset) continue;
-    if (result.error === 'UNKNOWN_TOPIC_OR_PARTITION') {
+    if (consumer.positions.get(key)?.offset !== result.fetchOffset) continue;
+    if (result.error === 'UNKNOWN_TOPIC_OR_PARTITION' || result.topicId === null) {
       consumer.metadata.updateRequested = true;
       continue;
     }
+    // The broker checked the fetch offset against this topic life: the position belongs to it.
+    const { topicId } = result;
     if (result.error === 'OFFSET_OUT_OF_RANGE') {
       const partition = ctx.state.topics.get(result.topic)?.partitions[result.partition];
-      if (partition !== undefined) consumer.positions.set(key, resetOffset(consumer, partition));
+      if (partition !== undefined) {
+        consumer.positions.set(key, { offset: resetOffset(consumer, partition), topicId });
+      }
       continue;
     }
+    consumer.positions.set(key, { offset: result.fetchOffset, topicId });
     if (result.records.length > 0) {
       consumer.buffer.push({
         key,
         topic: result.topic,
         partition: result.partition,
+        topicId,
         records: [...result.records],
       });
     }
@@ -353,7 +382,13 @@ export function handleFetchResponse(ctx: EngineContext, task: Task<'FetchRespons
   if (consumer.inPoll) poll(ctx, consumer);
 }
 
-/** Commits the consumer's current position for each given partition, if it moved. */
+/**
+ * Commits the consumer's current position for each given partition, if it moved. The coordinator
+ * refuses partitions that do not exist (UNKNOWN_TOPIC_OR_PARTITION, KafkaApis
+ * #handleOffsetCommitRequest); the consumer only logs a failed auto-commit, so nothing is stored
+ * or emitted. A position read from an earlier life of a re-created topic is refused the same way
+ * (simplifications: "Commits after a topic is re-created").
+ */
 function commitPositions(
   ctx: EngineContext,
   consumer: ConsumerState,
@@ -362,16 +397,20 @@ function commitPositions(
   const group = groupOf(ctx, consumer.config.groupId);
   for (const key of keys) {
     const position = consumer.positions.get(key);
-    if (position === undefined || group.committed.get(key) === position) continue;
-    group.committed.set(key, position);
+    if (position === undefined || group.committed.get(key) === position.offset) continue;
     const dash = key.lastIndexOf('-');
+    const topic = key.slice(0, dash);
+    const partition = Number(key.slice(dash + 1));
+    const live = ctx.state.topics.get(topic);
+    if (live?.partitions[partition] === undefined || live.topicId !== position.topicId) continue;
+    group.committed.set(key, position.offset);
     ctx.emit({
       type: 'OffsetCommitted',
       groupId: consumer.config.groupId,
       consumerId: consumer.config.id,
-      topic: key.slice(0, dash),
-      partition: Number(key.slice(dash + 1)),
-      offset: position,
+      topic,
+      partition,
+      offset: position.offset,
     });
   }
 }

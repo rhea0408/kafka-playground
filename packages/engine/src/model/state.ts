@@ -68,8 +68,21 @@ export interface BufferedFetch {
   readonly key: string;
   readonly topic: string;
   readonly partition: number;
+  /** The topic ID (KIP-516) of the topic life these records were read from. */
+  readonly topicId: number;
   /** Not yet returned, oldest first. poll() takes from the front. */
   readonly records: LogRecord[];
+}
+
+/**
+ * A consumer's position in one partition, and the topic ID (KIP-516) of the topic life it was
+ * last checked against: set when the position is initialised or reset, and on every fetch
+ * response the broker answered from that topic. A commit only lands on that same topic life
+ * (see commitPositions in consume.ts).
+ */
+export interface ConsumerPosition {
+  readonly offset: number;
+  readonly topicId: number;
 }
 
 export interface ConsumerState {
@@ -79,8 +92,8 @@ export interface ConsumerState {
   incarnation: number;
   /** "stopped" after KillConsumer, until RestartConsumer. */
   status: 'running' | 'stopped';
-  /** Next offset to fetch, per assigned partition ("topic-partition" → offset). */
-  readonly positions: Map<string, number>;
+  /** Next offset to fetch, per assigned partition ("topic-partition" → position). */
+  readonly positions: Map<string, ConsumerPosition>;
   /** Sim time of the last auto-commit (or of the start); the interval counts from here. */
   lastAutoCommitAt: number;
   /** Rotates which assigned partition comes first in the next fetch request. */

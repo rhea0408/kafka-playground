@@ -12,6 +12,7 @@ import { placePartitions } from '../model/placement.ts';
 import { topicsOfProducer } from '../model/state.ts';
 import {
   closeConsumer,
+  deleteCommittedOffsets,
   killConsumer,
   runConsumer,
   startConsumer,
@@ -147,6 +148,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       component = (state.topics.get(id) as { config: Component }).config;
       state.topics.delete(id);
       onTopicRemoved(ctx, id);
+      deleteCommittedOffsets(ctx, id);
       break;
     case 'producer':
       component = (state.producers.get(id) as { config: Component }).config;
