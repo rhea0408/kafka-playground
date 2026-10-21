@@ -6,6 +6,7 @@
 import { createActions, type Actions } from '../actions/actions.ts';
 import { applySimFrame } from '../stores/sim-store.ts';
 import { watchReducedMotion } from '../stores/ui-store.ts';
+import { simDebugHook, type SimDebugHook } from './debug-hook.ts';
 import { createSimClient, type SimClient } from './sim-client.ts';
 
 /** Seed for the Sandbox; the same one the engine demo uses (`--seed 7`). */
@@ -15,6 +16,8 @@ export interface StartedSim {
   readonly actions: Actions;
   /** Resolves once the worker is subscribed and the engine runs the initial canvas. */
   readonly ready: Promise<void>;
+  /** Read-only view of the worker for `window.__kp.sim` (main.tsx installs it). */
+  readonly debugHook: SimDebugHook;
   readonly dispose: () => void;
 }
 
@@ -43,6 +46,7 @@ export function startSim({ seed = DEFAULT_SEED, client }: StartSimOptions = {}):
   return {
     actions,
     ready,
+    debugHook: simDebugHook(sim.api, seed),
     dispose: () => {
       life.disposed = true;
       stopWatching();

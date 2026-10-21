@@ -39,7 +39,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test('build producer → topic from the palette and connect them', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?scene=empty');
 
   // The Sandbox starts with broker b1.
   await expect(node(page, 'b1')).toBeVisible();
@@ -81,7 +81,7 @@ test('build producer → topic from the palette and connect them', async ({ page
 });
 
 test('producer → consumer is refused with its reason', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Producer', 120, 260);
   await dropFromPalette(page, 'Consumer', 480, 260);
   await expect(node(page, 'c1')).toBeVisible();
@@ -103,7 +103,7 @@ test('producer → consumer is refused with its reason', async ({ page }) => {
 });
 
 test('keyboard add, select, move and delete', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   const producerItem = page
     .getByRole('complementary', { name: 'Palette' })
     .getByRole('button', { name: 'Producer' });
@@ -146,7 +146,7 @@ test('keyboard add, select, move and delete', async ({ page }) => {
 test('minimap shows only when content is off-screen; the map toggle overrides', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   const minimap = page.getByTestId('minimap');
   const nav = page.getByRole('group', { name: 'Canvas navigation' });
   expect(await nav.boundingBox()).toMatchObject({ width: 160, height: 40 });
@@ -182,7 +182,7 @@ test('live state: LEO grows, the consumer position advances, Kill / Restart from
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Producer', 120, 300);
   await dropFromPalette(page, 'Topic', 400, 300);
   await dropFromPalette(page, 'Consumer', 700, 300);

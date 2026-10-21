@@ -36,8 +36,12 @@ export interface OverlayDebug {
 }
 
 declare global {
+  /** Test and debug hooks on `window.__kp`; other modules add their own fields (sim/debug-hook.ts). */
+  interface KpDebugHooks {
+    overlay?: OverlayDebug;
+  }
   interface Window {
-    __kp?: { overlay?: OverlayDebug };
+    __kp?: KpDebugHooks;
   }
 }
 

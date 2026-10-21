@@ -21,7 +21,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test('select a topic and add a partition: the node gets a new row', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await expect(panel(page)).toContainText('Select a component on the canvas');
 
   await dropFromPalette(page, 'Topic', 420, 220);
@@ -52,7 +52,7 @@ test('select a topic and add a partition: the node gets a new row', async ({ pag
 test('edit a consumer field; read-only and not-modelled fields explain themselves', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Consumer', 480, 260);
   await node(page, 'c1').click();
   await expect(panel(page).getByRole('heading', { name: 'c1' })).toBeVisible();
@@ -77,8 +77,11 @@ test('edit a consumer field; read-only and not-modelled fields explain themselve
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: `${SHOTS}properties-consumer.png` });
 
-  // The change reached the engine: the event list shows ConfigUpdated once T11 lands; until then
+  // The change reached the engine: the event list shows its ConfigUpdated event, and
   // re-selecting the consumer shows the stored value.
+  await expect(
+    page.getByTestId('event-list').locator('li', { hasText: 'ConfigUpdated' }),
+  ).toContainText(/consumer c1\s+fetchMaxWaitMs: 500 → 100/);
   await page.getByRole('main', { name: 'Canvas' }).click({ position: { x: 40, y: 400 } });
   await expect(panel(page)).toContainText('Select a component on the canvas');
   await node(page, 'c1').click();
@@ -86,7 +89,7 @@ test('edit a consumer field; read-only and not-modelled fields explain themselve
 });
 
 test('a producer shows game-setting chips', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Producer', 160, 260);
   await node(page, 'p1').click();
   const rate = panel(page).locator('[data-field="ratePerSec"]');
