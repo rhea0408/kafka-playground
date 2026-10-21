@@ -1,10 +1,10 @@
 import type { ComponentKind } from '@kp/schema';
 import * as Tabs from '@radix-ui/react-tabs';
 import { useEffect } from 'react';
+import { PartitionLog } from '../../partition-log/PartitionLog.tsx';
 import { PropertiesPanel } from '../../properties/PropertiesPanel.tsx';
 import { findComponent, useTopologyStore } from '../../stores/topology-store.ts';
-import { setRightTab, useUiStore, type RightTab } from '../../stores/ui-store.ts';
-import { Placeholder } from './Placeholder.tsx';
+import { setLogTarget, setRightTab, useUiStore, type RightTab } from '../../stores/ui-store.ts';
 import { TAB_TRIGGER } from './tab-styles.ts';
 
 const TABS: readonly { value: RightTab; label: string }[] = [
@@ -28,7 +28,7 @@ export function tabOnSelect(current: RightTab, kind: ComponentKind | undefined):
 
 /**
  * Right panel, 360 px wide and full height below the top bar (ui-spec, wireframe 05), with a 40 px
- * tab bar. The Code tab from the wireframe arrives with codegen; the Partition log arrives in T11.
+ * tab bar. The Code tab from the wireframe arrives with codegen.
  */
 export function RightPanel() {
   const tab = useUiStore((s) => s.rightTab);
@@ -40,6 +40,10 @@ export function RightPanel() {
   useEffect(() => {
     if (selectedId === undefined) return;
     const kind = findComponent(useTopologyStore.getState(), selectedId)?.kind;
+    // A selected topic becomes the Partition log's topic (05c), whichever tab is open.
+    if (kind === 'topic' && useUiStore.getState().logTarget?.topicId !== selectedId) {
+      setLogTarget({ topicId: selectedId, partition: 0 });
+    }
     const next = tabOnSelect(useUiStore.getState().rightTab, kind);
     if (next !== null) setRightTab(next);
   }, [selectedId]);
@@ -65,8 +69,9 @@ export function RightPanel() {
       <Tabs.Content value="properties" className="min-h-0 flex-1 overflow-y-auto">
         <PropertiesPanel />
       </Tabs.Content>
-      <Tabs.Content value="partition-log" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>Select a topic to see its partition log.</Placeholder>
+      {/* The log scrolls its own record list under a fixed picker and summary. */}
+      <Tabs.Content value="partition-log" className="min-h-0 flex-1">
+        <PartitionLog />
       </Tabs.Content>
     </Tabs.Root>
   );

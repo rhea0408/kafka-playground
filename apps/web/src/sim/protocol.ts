@@ -27,6 +27,13 @@ export const MAX_SPEED = 10;
  */
 export const EVENT_HISTORY_SIZE = 10_000;
 
+/**
+ * Records per partition the host's snapshots carry (engine `snapshotRecordsPerPartition`): the
+ * Partition log tab's "Show older" reaches back this far (M2-T11). Diff frames only send newly
+ * appended records, so a deeper window costs memory, not bandwidth.
+ */
+export const SNAPSHOT_RECORDS_PER_PARTITION = 200;
+
 /** Result of a host call that can be refused. Same shape as the engine's `DispatchResult`. */
 export type HostResult = DispatchResult;
 

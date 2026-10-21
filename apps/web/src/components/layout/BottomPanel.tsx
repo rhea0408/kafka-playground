@@ -1,4 +1,5 @@
 import * as Tabs from '@radix-ui/react-tabs';
+import { EventList } from '../../events/EventList.tsx';
 import { setBottomTab, useUiStore, type BottomTab } from '../../stores/ui-store.ts';
 import { Placeholder } from './Placeholder.tsx';
 import { TAB_TRIGGER } from './tab-styles.ts';
@@ -13,8 +14,8 @@ const TABS: readonly { value: BottomTab; label: string }[] = [
 const isBottomTab = (value: string): value is BottomTab => TABS.some((t) => t.value === value);
 
 /**
- * Bottom panel: canvas width × 200 with a 36 px tab bar (ui-spec, wireframe 05). The contents
- * arrive in T11.
+ * Bottom panel: canvas width × 200 with a 36 px tab bar (ui-spec, wireframe 05). The event list
+ * is live (T11); the timeline and the lag chart arrive in M4 (M2-decisions T11).
  */
 export function BottomPanel() {
   const tab = useUiStore((s) => s.bottomTab);
@@ -37,13 +38,14 @@ export function BottomPanel() {
         ))}
       </Tabs.List>
       <Tabs.Content value="timeline" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>The event timeline arrives in a later milestone.</Placeholder>
+        <Placeholder>The event timeline arrives in M4.</Placeholder>
       </Tabs.Content>
-      <Tabs.Content value="events" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>The event list arrives later in this milestone.</Placeholder>
+      {/* The list scrolls itself (windowed); its filter panel may overlap the canvas above. */}
+      <Tabs.Content value="events" className="min-h-0 flex-1">
+        <EventList />
       </Tabs.Content>
       <Tabs.Content value="lag" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>The lag chart arrives in a later milestone.</Placeholder>
+        <Placeholder>The lag chart arrives in M4.</Placeholder>
       </Tabs.Content>
     </Tabs.Root>
   );

@@ -7,7 +7,7 @@ import {
 } from '@kp/engine';
 import type { TopologyInput } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
-import { applyFrame, type SimFrame } from './protocol.ts';
+import { applyFrame, SNAPSHOT_RECORDS_PER_PARTITION, type SimFrame } from './protocol.ts';
 import { MAX_TICK_DELTA_MS, SimHost, type SimHostOptions } from './sim-host.ts';
 
 const topology: TopologyInput = {
@@ -165,8 +165,10 @@ describe('SimHost run loop', () => {
     // Replaying the host's command log on a plain engine gives the same events and snapshot.
     const t = host.status().t;
     const replayed: EngineEvent[] = [];
-    const engine = replayCommandLog({ seed: SEED, topology }, host.commandLog(), (e) =>
-      replayed.push(e),
+    const engine = replayCommandLog(
+      { seed: SEED, topology, snapshotRecordsPerPartition: SNAPSHOT_RECORDS_PER_PARTITION },
+      host.commandLog(),
+      (e) => replayed.push(e),
     );
     engine.runUntil(t);
     expect(events).toEqual(replayed);

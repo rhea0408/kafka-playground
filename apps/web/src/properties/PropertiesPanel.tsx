@@ -23,6 +23,7 @@ import {
 import { FieldFrame, helperLine, helpText, KindChip, type FieldError } from './FieldFrame.tsx';
 import { describeDefault, describeValue, toInputText } from './field-value.ts';
 import { KeyStrategyField } from './KeyStrategyField.tsx';
+import { ManualProduce } from './ManualProduce.tsx';
 import { PartitionsStepper } from './PartitionsStepper.tsx';
 import { ConsumedBy, TopicStats } from './TopicSummary.tsx';
 
@@ -107,6 +108,7 @@ function ComponentForm({ component }: { component: Component }) {
       {component.kind === 'topic' && (
         <TopicStats topicId={component.id} partitions={component.partitions} />
       )}
+      {component.kind === 'producer' && <ManualProduce producerId={component.id} />}
       <section aria-labelledby="pp-config" className="flex flex-col gap-3">
         <h3 id="pp-config" className={`${SECTION_TITLE} mt-1`}>
           CONFIGURATION

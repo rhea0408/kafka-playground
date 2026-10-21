@@ -156,6 +156,22 @@
   animation: kp-cell-in 250ms ease-out both;
 }
 
+/* B7 / B9: a new event-list or partition-log row slides up into place at the bottom (200 ms). */
+@keyframes kp-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.kp-row-in {
+  animation: kp-row-in 200ms ease-out both;
+}
+
 /* Reduced motion (uiStore.reducedMotion): no movement, a 150 ms fade only. */
 .kp-cell-fade {
   animation: kp-fade-in 150ms linear both;
@@ -163,7 +179,8 @@
 
 /* Same fallback straight from the media query, in case the store hasn't caught up yet. */
 @media (prefers-reduced-motion: reduce) {
-  .kp-cell-in {
+  .kp-cell-in,
+  .kp-row-in {
     animation: kp-fade-in 150ms linear both;
   }
 }
