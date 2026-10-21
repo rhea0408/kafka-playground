@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens from docs/ui/ui-spec.md ("Color tokens"). Tailwind v4 turns each --color-* entry
+ * into utilities (bg-primary, text-status, border-border, …) and exposes it as a CSS variable.
+ * The default Tailwind palette is cleared so components can only use these tokens. `static`
+ * emits every variable even when no utility uses it yet, so the Canvas2D overlay can read them
+ * with getComputedStyle.
+ */
+@theme static {
+  --color-*: initial;
+
+  --color-primary: #0d6efd;
+  --color-muted: #e9ecef;
+  --color-surface: #ffffff;
+  --color-status: #212529;
+  --color-danger: #c2410c;
+  --color-danger-text: #9a3412;
+  --color-danger-bg: #fff4ec;
+  /* Panel borders. */
+  --color-border: #9a9a9a;
+  /* Dividers inside panels. */
+  --color-divider: #cccccc;
+  /* Needed by Tailwind's preflight and for `transparent` / `currentColor` utilities. */
+  --color-transparent: transparent;
+  --color-current: currentColor;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-status);
+    font-family: system-ui, sans-serif;
+  }
+}

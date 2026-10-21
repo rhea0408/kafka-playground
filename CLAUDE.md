@@ -46,11 +46,15 @@ docs/                     requirements, ui, milestones, adr, simplifications
 ## Commands
 ```
 pnpm install
-pnpm dev                          # web app
+pnpm dev                          # web app (Vite dev server, apps/web)
 pnpm test                         # all unit + property tests
+pnpm test:coverage                # same, with a v8 coverage report in each <package>/coverage
 pnpm lint && pnpm typecheck      # lint = eslint + prettier --check
 pnpm format                       # prettier --write
 pnpm --filter @kp/engine demo     # headless event-log demo (-- --seed 7 --until 12000)
+pnpm --filter @kp/web build       # production build of the web app (apps/web/dist)
+pnpm --filter @kp/web e2e         # Playwright (Chromium); builds + serves via vite preview itself
+pnpm --filter @kp/web exec playwright install chromium   # once, to get the browser locally
 pnpm levels:verify                # replay every level's solution headlessly (from M6)
 docker compose -f docker/compose.kraft-3.yml up -d && pnpm fidelity   # sim vs real Kafka (from M5)
 ```
