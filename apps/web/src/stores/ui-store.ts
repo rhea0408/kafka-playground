@@ -3,6 +3,7 @@
  * active panel tabs, toasts and the reduced-motion setting.
  */
 
+import type { EngineEventType } from '@kp/engine';
 import { create } from 'zustand';
 
 export type RightTab = 'properties' | 'partition-log';
@@ -22,6 +23,12 @@ export interface Toast {
   readonly message: string;
 }
 
+/** The partition the Partition log tab shows (M2-T11). */
+export interface LogTarget {
+  readonly topicId: string;
+  readonly partition: number;
+}
+
 export interface UiState {
   readonly selection: Selection;
   readonly rightTab: RightTab;
@@ -30,6 +37,10 @@ export interface UiState {
   readonly toasts: readonly Toast[];
   /** `prefers-reduced-motion: reduce` (animations.md). */
   readonly reducedMotion: boolean;
+  /** Event types the event list hides (B7). Kept here so the filter survives a tab switch. */
+  readonly hiddenEventTypes: ReadonlySet<EngineEventType>;
+  /** Partition log target; null = the first topic's partition 0. */
+  readonly logTarget: LogTarget | null;
 }
 
 /** Toasts on screen at once; a new one pushes out the oldest. */
@@ -64,6 +75,8 @@ export function initialUiState(): UiState {
     bottomTab: 'events',
     toasts: [],
     reducedMotion: readReducedMotion(),
+    hiddenEventTypes: new Set(),
+    logTarget: null,
   };
 }
 
@@ -97,6 +110,14 @@ export function setRightTab(rightTab: RightTab): void {
 
 export function setBottomTab(bottomTab: BottomTab): void {
   useUiStore.setState({ bottomTab });
+}
+
+export function setHiddenEventTypes(hiddenEventTypes: ReadonlySet<EngineEventType>): void {
+  useUiStore.setState({ hiddenEventTypes });
+}
+
+export function setLogTarget(logTarget: LogTarget | null): void {
+  useUiStore.setState({ logTarget });
 }
 
 let nextToastId = 1;

@@ -26,6 +26,7 @@ import {
   EVENT_HISTORY_SIZE,
   MAX_SPEED,
   MIN_SPEED,
+  SNAPSHOT_RECORDS_PER_PARTITION,
   type DiffFrame,
   type FrameListener,
   type FullFrame,
@@ -99,7 +100,11 @@ export class SimHost implements SimApi {
     const initial = structuredClone(options);
     let engine: Engine;
     try {
-      engine = createEngine({ seed: initial.seed, topology: initial.topology });
+      engine = createEngine({
+        seed: initial.seed,
+        topology: initial.topology,
+        snapshotRecordsPerPartition: SNAPSHOT_RECORDS_PER_PARTITION,
+      });
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
     }
@@ -111,7 +116,13 @@ export class SimHost implements SimApi {
   reset(): void {
     const initial = this.#initial;
     if (initial === null) throw new Error('SimHost: call init() first');
-    this.#install(createEngine({ seed: initial.seed, topology: initial.topology }));
+    this.#install(
+      createEngine({
+        seed: initial.seed,
+        topology: initial.topology,
+        snapshotRecordsPerPartition: SNAPSHOT_RECORDS_PER_PARTITION,
+      }),
+    );
   }
 
   dispatch(command: Command): DispatchResult {
