@@ -40,7 +40,8 @@ const snapshot = engine.getSnapshot(); // plain JSON for the UI
 | `dispatch(command)`                                                               | Validates and applies a command at the current sim time; returns `{ ok }` or `{ ok: false, reason }` |
 | `step()` / `runUntil(t)`                                                          | Runs the next scheduled task / every task up to and including `t`                                    |
 | `on(listener)`                                                                    | Subscribes to the event stream; returns an unsubscribe function                                      |
-| `getSnapshot()`                                                                   | Plain, JSON-serialisable copy of the state (offsets, records, lag, …)                                |
+| `getSnapshot()`                                                                   | Plain, JSON-serialisable copy of the state (offsets, records, lag, …); never changes afterwards      |
+| `diffSnapshot(prev, next)` / `applyDiff(prev, diff)` / `isEmptyDiff(diff)`        | Compact, structured-clone-friendly diff between two snapshots (for worker → UI frames)               |
 | `commandLog`                                                                      | Every accepted command as `{ t, afterStep, command }`                                                |
 | `replayCommandLog(options, log)`                                                  | Rebuilds the exact same run on a fresh engine                                                        |
 
@@ -55,6 +56,24 @@ wording); a producer rate change restarts its schedule from now; consumer change
 next `poll()`; ids, `group.id`, `auto.offset.reset`, the replication factor and `broker.rack` are
 rejected. A patch that changes nothing is accepted without an event and is not logged. Full rules
 in `src/commands/update-config.ts`.
+
+Snapshots are fresh copies, except log records, which are frozen when appended and shared. A
+snapshot diff carries only what changed: changed producers, consumers, brokers and groups by id,
+changed partition summaries with just the records above what `prev` held (logs are append-only),
+removed ids, and the id order when it changed. A topic deleted and re-created with the same name
+gets a new `topicId` (Kafka's topic ID, KIP-516) and is sent whole. `applyDiff` never mutates
+`prev` and shares its unchanged parts; no change gives `{}`. Details in `src/snapshot/diff.ts`.
+
+```ts
+// Worker: send the whole snapshot once, then one diff per frame.
+let prev = engine.getSnapshot();
+postMessage(prev);
+// … every frame:
+const next = engine.getSnapshot();
+postMessage(diffSnapshot(prev, next));
+prev = next;
+// UI: ui = applyDiff(ui, diff)
+```
 
 Trace ids (`RecordProduced.traceId` and onwards) look like `p1@3#7`: producer id, the producer's
 incarnation (one per life; a removed and re-added producer gets a new one) and its record count.
@@ -84,10 +103,11 @@ src/
 │  └─ index.ts        runTask: the single task switch
 ├─ commands/      Command union (index.ts), handlers (apply.ts), UpdateConfig (update-config.ts)
 ├─ events/        Event union (index.ts) and one-line formatting (format.ts)
-├─ snapshot/      getSnapshot() builder, including consumer lag
+├─ snapshot/      getSnapshot() builder (consumer lag) and diff.ts (diffSnapshot / applyDiff)
 ├─ testing/       fast-check generators and scenario runner (tests only)
 └─ engine.ts      createEngine / replayCommandLog: wires the above together
 scripts/demo.ts   headless demo (Node runs the TypeScript directly)
+scripts/snapshot-diff.perf.test.ts   snapshot + diff benchmark (1,000 partitions, < one 33 ms frame)
 ```
 
 ## How an event flows through the engine
