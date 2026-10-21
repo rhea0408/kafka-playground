@@ -36,7 +36,7 @@ const props = (page: Page) => page.getByTestId('properties-panel');
 
 /** Producer → topic (with `partitions`) → consumer, playing. */
 async function build(page: Page, partitions: number): Promise<void> {
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Producer', 120, 300);
   await dropFromPalette(page, 'Topic', 400, 300);
   await dropFromPalette(page, 'Consumer', 700, 300);

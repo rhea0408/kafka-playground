@@ -75,7 +75,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test('message dots: Play draws A1 and A2 dots on the overlay', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/?scene=empty');
   await expect(page.getByTestId('message-overlay')).toBeAttached();
   await expect(page.getByTestId('overlay-legend')).toHaveText(
     /Dots are slowed down so you can see them\. Real delivery takes a few milliseconds\./,
@@ -122,7 +122,7 @@ test('message dots: Play draws A1 and A2 dots on the overlay', async ({ page }) 
 });
 
 test('500 dots: cap, "too many to animate" chip and the FPS meter (?fps)', async ({ page }) => {
-  await page.goto('/?fps');
+  await page.goto('/?fps&scene=empty');
   // A long edge (~500 px, ~4 s per dot at 1×) so the dots are still moving when FPS is read.
   await buildFlow(page, false, 700);
   await expect(page.getByTestId('overlay-fps')).toBeVisible();
