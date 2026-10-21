@@ -5,5 +5,7 @@
     "jsx": "react-jsx",
     "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Workers have their own lib (tsconfig.worker.json).
+  "exclude": ["src/**/*.worker.ts"]
 }
