@@ -169,3 +169,54 @@ test('minimap shows only when content is off-screen; the map toggle overrides', 
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await expect(minimap).toHaveAttribute('data-visible', 'true');
 });
+
+/** Number in a slot's text after `label`, e.g. "LEO 12 · HW 12" → 12 for "LEO". */
+async function numberAfter(locator: Locator, label: string): Promise<number> {
+  const text = (await locator.textContent()) ?? '';
+  const match = new RegExp(`${label} ([\\d,]+)`).exec(text);
+  return match?.[1] === undefined ? Number.NaN : Number(match[1].replaceAll(',', ''));
+}
+
+test('live state: LEO grows, the consumer position advances, Kill / Restart from the toolbar', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await dropFromPalette(page, 'Producer', 120, 300);
+  await dropFromPalette(page, 'Topic', 400, 300);
+  await dropFromPalette(page, 'Consumer', 700, 300);
+  await expect(node(page, 'c1')).toBeVisible();
+
+  await dragHandle(page, handle(page, 'p1', 'out'), handle(page, 't1', 'in'));
+  await page.mouse.up();
+  await dragHandle(page, handle(page, 't1', 'out'), handle(page, 'c1', 'row:c1'));
+  await page.mouse.up();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+
+  await page.getByRole('button', { name: 'Play' }).click();
+
+  const log = node(page, 't1').locator('[data-partition-row="0"] [data-slot="partition-log"]');
+  const offsets = node(page, 'c1').locator('[data-slot="offsets"]');
+  await expect.poll(() => numberAfter(log, 'LEO'), { timeout: 10_000 }).toBeGreaterThan(0);
+  await expect(node(page, 't1').locator('.kp-cell').first()).toBeVisible();
+  await expect(node(page, 't1').getByLabel('Leader: broker b1')).toBeVisible();
+  await expect(node(page, 'p1').locator('[data-stat="sent"]')).not.toHaveText('0');
+
+  await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(0);
+  const first = await numberAfter(offsets, 'pos');
+  await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(first);
+  await expect(node(page, 'c1').getByText('running')).toBeVisible();
+
+  mkdirSync(SHOTS, { recursive: true });
+  await node(page, 'c1').hover();
+  const kill = page.getByRole('button', { name: 'Kill consumer c1' });
+  await expect(kill).toBeVisible();
+  await page.screenshot({ path: `${SHOTS}canvas-live-state.png` });
+
+  await kill.click();
+  await expect(node(page, 'c1').getByText('stopped')).toBeVisible();
+  await page.getByRole('button', { name: 'Restart consumer c1' }).click();
+  await expect(node(page, 'c1').getByText('running')).toBeVisible();
+  expect(errors).toEqual([]);
+});

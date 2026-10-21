@@ -111,3 +111,70 @@
   outline-offset: 6px;
   border-radius: 8px;
 }
+
+/*
+ * Live node state (M2-T8). Log cells are 18 × 18 with the record's key letter (wireframe 02). A
+ * dashed cell is above the high watermark (not readable by consumers yet; from M4).
+ */
+.kp-canvas .kp-cell {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-width: 1px;
+  border-color: var(--color-border);
+  background: var(--color-surface);
+  font:
+    500 9px / 1 ui-monospace,
+    monospace;
+}
+
+/* A4: a new cell slides in from the left and fades in (250 ms ease-out). */
+@keyframes kp-cell-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes kp-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.kp-cell-in {
+  animation: kp-cell-in 250ms ease-out both;
+}
+
+/* Reduced motion (uiStore.reducedMotion): no movement, a 150 ms fade only. */
+.kp-cell-fade {
+  animation: kp-fade-in 150ms linear both;
+}
+
+/* Same fallback straight from the media query, in case the store hasn't caught up yet. */
+@media (prefers-reduced-motion: reduce) {
+  .kp-cell-in {
+    animation: kp-fade-in 150ms linear both;
+  }
+}
+
+/* Consumer row: danger border while its lag badge is above the threshold (wireframe 05); dashed
+   while stopped. Both come with text (the number, "stopped"), never color alone. */
+.kp-canvas .kp-consumer-row:has([data-danger='true']) {
+  border-color: var(--color-danger);
+  border-width: 1.5px;
+}
+
+.kp-canvas .kp-consumer-row:has([data-status='stopped']) {
+  border-style: dashed;
+}
