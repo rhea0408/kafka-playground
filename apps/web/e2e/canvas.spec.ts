@@ -111,31 +111,35 @@ test('keyboard add, select, move and delete', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(node(page, 'p1')).toBeVisible();
 
-  // Drag the node: it lands on the 16 px grid and stays there.
+  // Drag the node: it lands on the 16 px grid and stays there. Every read waits on the DOM state
+  // instead of reading once, so a slow frame under load can't make it flaky (M3-T0, F-d).
+  const transformOf = (): Promise<string> =>
+    node(page, 'p1').evaluate((el) => (el as HTMLElement).style.transform);
+  await expect.poll(transformOf).toMatch(/^translate\(/);
+  const start = await transformOf();
   const before = await centre(node(page, 'p1'));
   await page.mouse.move(before.x, before.y);
   await page.mouse.down();
   await page.mouse.move(before.x + 37, before.y + 21, { steps: 5 });
   await page.mouse.up();
-  const transform = await node(page, 'p1').evaluate((el) => (el as HTMLElement).style.transform);
+  await expect.poll(transformOf).not.toBe(start);
+  const transform = await transformOf();
   const [x, y] = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(transform)?.slice(1) ?? [];
   expect(Number(x) % 16).toBe(0);
   expect(Number(y) % 16).toBe(0);
+  await expect(node(page, 'p1')).toHaveClass(/selected/);
 
   // Arrow keys move the selected node by one grid step; the move is kept.
+  const moved = `translate(${String(Number(x) + 16)}px, ${String(Number(y))}px)`;
   await page.keyboard.press('ArrowRight');
-  await expect
-    .poll(() => node(page, 'p1').evaluate((el) => (el as HTMLElement).style.transform))
-    .toBe(`translate(${String(Number(x) + 16)}px, ${String(Number(y))}px)`);
+  await expect.poll(transformOf).toBe(moved);
   // Another store change re-derives the nodes from topologyStore: p1 keeps its new position.
   await page
     .getByRole('complementary', { name: 'Palette' })
     .getByRole('button', { name: 'Topic' })
     .click();
   await expect(node(page, 't1')).toBeVisible();
-  expect(await node(page, 'p1').evaluate((el) => (el as HTMLElement).style.transform)).toBe(
-    `translate(${String(Number(x) + 16)}px, ${String(Number(y))}px)`,
-  );
+  await expect.poll(transformOf).toBe(moved);
 
   // Selected (clicked) node is removed with Delete.
   await node(page, 'p1').click();

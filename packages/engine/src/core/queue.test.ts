@@ -56,13 +56,17 @@ describe('createEventQueue', () => {
     const n = 100_000;
     // Deterministic pseudo-random times without an Rng dependency in this test.
     for (let i = 0; i < n; i++) q.push((i * 7919) % 10_007, i);
+    // One assertion after the loop: 100k expect() calls cost more than the queue itself and made
+    // this flaky under coverage instrumentation (M3-T0).
     let last = -1;
+    let outOfOrder = 0;
     for (let i = 0; i < n; i++) {
       const e = q.pop();
       if (e === undefined) throw new Error('queue drained early');
-      expect(e.time).toBeGreaterThanOrEqual(last);
+      if (e.time < last) outOfOrder++;
       last = e.time;
     }
+    expect(outOfOrder).toBe(0);
     expect(q.size).toBe(0);
   });
 });

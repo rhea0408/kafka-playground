@@ -84,16 +84,23 @@ function readPartitions(
     const topic = ctx.state.topics.get(p.topic);
     const partition = topic?.partitions[p.partition];
     if (topic === undefined || partition === undefined) {
-      return { ...p, topicId: null, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
+      return { ...p, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
     }
-    const { topicId } = topic;
+    // The topic was deleted and re-created since the consumer's position was set (KIP-516:
+    // FetchRequest v13+ carries topic IDs; the broker answers UNKNOWN_TOPIC_ID on a mismatch).
+    if (topic.topicId !== p.topicId) {
+      return { ...p, error: 'UNKNOWN_TOPIC_ID', records: [], bytes: 0 };
+    }
     // Valid fetch offsets run from the log start offset to the HW (the end for consumers).
+    // TODO(M4): Kafka checks the upper bound against the log end offset, not the HW; an offset
+    // between HW and LEO gets an empty response. They are equal while each partition has one
+    // replica (simplifications: "Fetch offset range").
     if (p.fetchOffset < partition.logStartOffset || p.fetchOffset > partition.highWatermark) {
-      return { ...p, topicId, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
+      return { ...p, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
     }
     const bytes = bytesAvailable(partition, p.fetchOffset);
     const records = withRecords ? readRecords(partition, p.fetchOffset) : [];
-    return { ...p, topicId, error: null, records, bytes };
+    return { ...p, error: null, records, bytes };
   });
 }
 

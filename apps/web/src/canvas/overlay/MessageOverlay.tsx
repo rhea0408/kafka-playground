@@ -9,6 +9,7 @@ import { debugEnabled, newOverlayDebug, testDotSpecs, type OverlayDebug } from '
 import { DotModel } from './dots.ts';
 import { drawDots, readPalette, type DotPalette } from './draw.ts';
 import { FpsMeter } from './fps.ts';
+import { debugHooksEnabled } from '../../sim/debug-hook.ts';
 
 /** NFR-3.3 / ADR 0008: dots are a visual aid, not a timing claim. */
 export const OVERLAY_LEGEND =
@@ -45,7 +46,9 @@ export function MessageOverlay() {
     const model = new DotModel();
     const meter = new FpsMeter();
     const debug: OverlayDebug = newOverlayDebug();
-    window.__kp = { ...window.__kp, overlay: debug };
+    if (debugHooksEnabled(window.location.search, import.meta.env.DEV)) {
+      window.__kp = { ...window.__kp, overlay: debug };
+    }
 
     let palette = readTokens();
     let playing = useSimStore.getState().playing;

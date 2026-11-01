@@ -21,7 +21,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck
-      # Every package writes its own report to <package>/coverage (NFR-4.4). No minimum yet.
+      # Every package writes its own report to <package>/coverage (NFR-4.4) and fails below its
+      # threshold (engine/schema 90 % lines, 85 % branches; web 80 % lines; M3-T0).
       - run: pnpm test:coverage
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}

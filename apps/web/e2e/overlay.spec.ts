@@ -75,7 +75,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test('message dots: Play draws A1 and A2 dots on the overlay', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/?scene=empty');
+  await page.goto('/?debug&scene=empty');
   await expect(page.getByTestId('message-overlay')).toBeAttached();
   await expect(page.getByTestId('overlay-legend')).toHaveText(
     /Dots are slowed down so you can see them\. Real delivery takes a few milliseconds\./,

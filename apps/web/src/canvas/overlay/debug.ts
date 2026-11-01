@@ -1,8 +1,9 @@
 /**
- * Overlay counters for tests and the FPS meter (M2-T9). `window.__kp.overlay` is always present:
- * updating a few numbers on a plain object costs nothing, and the Playwright suite runs against
- * the production build (T12 reads `dotsDrawn`). The visible FPS meter and the stress hook are only
- * enabled in dev builds or with `?fps` in the URL.
+ * Overlay counters for tests and the FPS meter (M2-T9). The counters are always kept (a few
+ * numbers on a plain object cost nothing) but only published on `window.__kp.overlay` when debug
+ * hooks are enabled: dev builds, `?debug` or `?fps` (sim/debug-hook.ts, M3-T0). The Playwright
+ * suite opens the production build with `?debug`. The visible FPS meter and the stress hook are
+ * only enabled in dev builds or with `?fps` in the URL.
  */
 
 import type { TopologyState } from '../../stores/topology-store.ts';

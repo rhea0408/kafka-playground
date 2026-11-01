@@ -12,7 +12,7 @@
     "format": "prettier --write .",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "test:coverage": "pnpm -r --if-present test --coverage"
+    "test:coverage": "pnpm -r --if-present test:coverage"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

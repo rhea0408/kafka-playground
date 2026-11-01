@@ -216,6 +216,13 @@ describe('cap (NFR-2.5) and skip, not delay', () => {
     expect(model.capChipVisible(100 + CAP_CHIP_HOLD_MS)).toBe(false);
   });
 
+  it('reset() hides the "too many" chip at once (F-f)', () => {
+    const model = new DotModel(1);
+    model.ingest([produced('a'), produced('b')], 100);
+    model.reset();
+    expect(model.capChipVisible(101)).toBe(false);
+  });
+
   it('counts records skipped while the tab was hidden', () => {
     const model = new DotModel();
     model.skip(3, 10);

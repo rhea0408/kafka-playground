@@ -8,7 +8,7 @@ The decisions with the most consequences, most important first. Engine semantics
 
 | # | Decision | Why it matters |
 |---|---|---|
-| [P1](#process) | **Stacked PRs, nothing merged.** Every task is a branch on the previous one; review and merge in order from `m2-t0`. | All of M2 is waiting for your review. |
+| [P1](#process) | **Stacked PRs, merged after review.** Every task is a branch on the previous one; they were reviewed and merged in order from `m2-t0` (2026-10-21). | M2 waited for review before anything reached `develop`. |
 | [F1](#fixes) | **Engine bug fixed:** deleting a topic now deletes its committed offsets, and a commit never lands in a re-created topic. Adds the simplification row "Commits after a topic is re-created". | A real engine change found by a property test. The re-create race is our best guess at the classic consumer's behaviour: please check the new row (M5 fidelity should confirm it). |
 | [T2-2](#t2--engine-additions-for-the-ui) | **New partitions reach clients only at their next metadata refresh** (`metadata.max.age.ms`, real default 5 min). | Faithful but surprising in play: after adding a partition it gets no traffic for up to 5 min of sim time, and a `latest` consumer can skip records on it. |
 | [T2-5](#t2--engine-additions-for-the-ui) | **A rate change is not a new producer incarnation** (the milestone text said it was); it starts a new send schedule. | Bumping the incarnation would drop acks of requests in flight. Trace ids stay unique. |
@@ -25,7 +25,7 @@ The decisions with the most consequences, most important first. Engine semantics
 
 | # | Decision | Alternatives | Why |
 |---|---|---|---|
-| P1 | Each task is its own `m2-t<k>` branch, **stacked** on the previous task's branch (`m2-t0` from `develop`, `m2-t1` from `m2-t0`, …). Each has a PR based on the previous branch, and CI must be green. **Nothing is merged**: merging without review was blocked, and the M1 no-review rule was only for M1. | Merge each PR after green CI (as in M1) | Review stays with Rhea. To merge: review the PRs in order, merging `m2-t0` into `develop` first. When a merged branch is deleted, GitHub moves the next PR's base to `develop`. If it doesn't, change the base with `gh api -X PATCH …/pulls/N -f base=develop`, then close and reopen the PR. |
+| P1 | Each task is its own `m2-t<k>` branch, **stacked** on the previous task's branch (`m2-t0` from `develop`, `m2-t1` from `m2-t0`, …). Each has a PR based on the previous branch, and CI must be green. **Nothing was merged until Rhea reviewed** (merging without review was blocked, and the M1 no-review rule was only for M1); PRs #13–#27 were merged in order on 2026-10-21. | Merge each PR after green CI (as in M1) | Review stays with Rhea. How it was merged: `m2-t0` into `develop` first, then each next PR. When a merged branch is deleted, GitHub moves the next PR's base to `develop`. If it doesn't, change the base with `gh api -X PATCH …/pulls/N -f base=develop`, then close and reopen the PR. |
 | P2 | The milestone doc already approves the M2 dependencies. Any other dependency is listed under its task below with the reason. | Stop and ask | Rhea is away. These are small companion packages (test DOM, React types). |
 
 

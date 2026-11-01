@@ -269,3 +269,19 @@ describe('nextComponentId', () => {
     expect(nextComponentId(withGaps, 'topic')).toBe('t1');
   });
 });
+
+describe('addComponent ids', () => {
+  it('two adds sent before either answer get different ids (F-f)', async () => {
+    const { actions } = setup();
+    await actions.init();
+    const [a, b] = await Promise.all([
+      actions.addComponent('producer', { x: 0, y: 0 }),
+      actions.addComponent('producer', { x: 200, y: 0 }),
+    ]);
+    expect([a, b]).toEqual([
+      { ok: true, id: 'p1' },
+      { ok: true, id: 'p2' },
+    ]);
+    expectInSync();
+  });
+});

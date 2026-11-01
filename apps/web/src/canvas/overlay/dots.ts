@@ -186,6 +186,7 @@ export class DotModel {
     this.pendingCount = 0;
     this.arrivedA1.clear();
     this.lastNow = null;
+    this.lastCapSkipAt = Number.NEGATIVE_INFINITY;
   }
 
   /** The animation loop stopped: the next step starts a fresh clock instead of a long gap. */

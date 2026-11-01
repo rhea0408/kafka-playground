@@ -41,10 +41,15 @@ const api: SimApi = {
   },
   subscribe: (onFrame) => {
     // `onFrame` is a Comlink proxy: calling it posts the frame to the main thread and returns a
-    // promise we don't wait for, so a slow main thread never blocks the run loop.
+    // promise we don't wait for, so a slow main thread never blocks the run loop. If the call
+    // fails (the page side is gone or the frame could not be cloned), stop sending to it rather
+    // than failing on every frame; the page re-subscribes when it starts again.
     const remote = onFrame as unknown as Remote<FrameListener>;
-    const token = host.subscribe((frame) => {
-      void remote(frame);
+    const token: number = host.subscribe((frame) => {
+      remote(frame).catch((error: unknown) => {
+        console.error('Sim frame could not be delivered; unsubscribing.', error);
+        api.unsubscribe(token);
+      });
     });
     remotes.set(token, remote);
     return token;

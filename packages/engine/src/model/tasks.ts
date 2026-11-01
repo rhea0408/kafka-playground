@@ -7,10 +7,15 @@
 import type { Acks } from '@kp/schema';
 import type { LogRecord } from './partition.ts';
 
-/** One partition in a fetch request: read from `fetchOffset` (the consumer's position). */
+/**
+ * One partition in a fetch request: read from `fetchOffset` (the consumer's position). Fetch v13+
+ * names topics by topic ID (KIP-516): `topicId` is the topic life the position belongs to, and the
+ * broker answers UNKNOWN_TOPIC_ID when the topic with that name now has another ID.
+ */
 export interface FetchPartition {
   readonly topic: string;
   readonly partition: number;
+  readonly topicId: number;
   readonly fetchOffset: number;
 }
 
@@ -27,11 +32,9 @@ export interface FetchRequestTask {
   readonly maxWaitMs: number;
 }
 
-/**
- * Per-partition result in a fetch response. `topicId` is the ID of the topic the broker read
- * from (Fetch v13+ responses carry topic IDs, KIP-516); null when the topic does not exist.
- */
-export type FetchPartitionResult = FetchPartition & { readonly topicId: number | null } & (
+/** Per-partition result in a fetch response; records only when there is no error. */
+export type FetchPartitionResult = FetchPartition &
+  (
     | { readonly error: null; readonly records: readonly LogRecord[] }
     | { readonly error: FetchError; readonly records: readonly [] }
   );
@@ -94,4 +97,4 @@ export type EngineTask =
 export type ProduceError = 'UNKNOWN_TOPIC_OR_PARTITION';
 
 /** Per-partition fetch errors (Kafka protocol error codes). */
-export type FetchError = 'UNKNOWN_TOPIC_OR_PARTITION' | 'OFFSET_OUT_OF_RANGE';
+export type FetchError = 'UNKNOWN_TOPIC_OR_PARTITION' | 'UNKNOWN_TOPIC_ID' | 'OFFSET_OUT_OF_RANGE';

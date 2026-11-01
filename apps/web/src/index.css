@@ -156,10 +156,12 @@
   animation: kp-cell-in 250ms ease-out both;
 }
 
-/* B7 / B9: a new event-list or partition-log row slides up into place at the bottom (200 ms). */
+/* B7 / B9: a new event-list or partition-log row slides up into place at the bottom (200 ms).
+   It starts partly visible, so at high event rates the newest rows are readable at once instead
+   of the list looking half-empty while they fade in (M3-T0, F-g). */
 @keyframes kp-row-in {
   from {
-    opacity: 0;
+    opacity: 0.4;
     transform: translateY(6px);
   }
   to {

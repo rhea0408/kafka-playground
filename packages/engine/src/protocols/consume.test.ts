@@ -421,6 +421,46 @@ describe('committed offsets when a topic is deleted and re-created', () => {
     for (const offsets of consumedOffsets(after).values()) expect(offsets[0]).toBe(0);
     expect(ofType(after, 'OffsetCommitted').length).toBeGreaterThan(0);
   });
+  it('a position from before a re-creation is reset, not reused (fetch carries the topic ID)', () => {
+    const engine = createEngine({ seed: 5, topology: setup({ autoCommitIntervalMs: 200 }) });
+    const events = record(engine);
+    engine.runUntil(10_000); // positions are ~16 per partition
+    // The next poll() returns one record, then the application is busy for 20 s.
+    engine.dispatch({
+      type: 'UpdateConfig',
+      id: 'c1',
+      patch: { processingTimeMs: 20_000, maxPollRecords: 1 },
+    });
+    engine.runUntil(10_500);
+    expect(engine.getSnapshot().consumers[0]?.partitions.some((p) => p.position !== null)).toBe(
+      true,
+    );
+    // While it is busy, the topic is deleted and re-created, and grows past the old positions.
+    engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'topic', id: 'orders', partitions: 3 },
+    });
+    engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c1' });
+    engine.dispatch({
+      type: 'UpdateConfig',
+      id: 'c1',
+      patch: { processingTimeMs: 0, maxPollRecords: 500 },
+    });
+    const start = events.length;
+    engine.runUntil(40_000);
+
+    // Records the application already had in its fetch buffer from the old topic may still be
+    // returned (the client cannot know yet); everything read from the new topic starts at 0.
+    const newLife = new Set(ofType(events.slice(start), 'RecordAppended').map((e) => e.traceId));
+    const after = consumedOffsets(
+      ofType(events.slice(start), 'RecordConsumed').filter((e) => newLife.has(e.traceId)),
+    );
+    expect(after.size).toBe(2); // keys A–D hash to partitions 0 and 1
+    for (const offsets of after.values()) expect(offsets[0]).toBe(0);
+    expectCommitsWithinHw(events);
+  });
 });
 
 describe('stopping and restarting a consumer', () => {
