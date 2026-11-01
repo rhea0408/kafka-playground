@@ -9,7 +9,10 @@ import type { Rng } from '../core/rng.ts';
 import type { StickyState } from '../protocols/partitioner.ts';
 import type { ClientMetadata } from '../protocols/metadata.ts';
 import type { LogRecord, PartitionState } from './partition.ts';
+import type { GroupState } from './group.ts';
 import type { FetchRequestTask } from './tasks.ts';
+
+export type { GroupState } from './group.ts';
 
 export interface BrokerState {
   readonly config: Broker;
@@ -117,21 +120,21 @@ export interface ConsumerState {
   stats: { consumed: number };
 }
 
-/**
- * Committed offsets of one consumer group (what Kafka stores in __consumer_offsets via the
- * group coordinator). A committed offset is the next offset to read, not the last one read.
- */
-export interface GroupState {
-  readonly committed: Map<string, number>;
-}
-
 export interface EngineState {
   readonly brokers: Map<string, BrokerState>;
   readonly topics: Map<string, TopicState>;
   readonly producers: Map<string, ProducerState>;
   readonly consumers: Map<string, ConsumerState>;
-  /** Survive their consumers: a restarted or re-added consumer resumes from here. */
+  /**
+   * Consumer groups as their group coordinator holds them, with their committed offsets. They
+   * survive their consumers: a restarted or re-added consumer resumes from here.
+   */
   readonly groups: Map<string, GroupState>;
+  /**
+   * Leader broker of each __consumer_offsets partition (offsets.topic.num.partitions = 50), or
+   * null until the first FindCoordinator creates the internal topic (protocols/coordinator.ts).
+   */
+  offsetsTopicLeaders: readonly string[] | null;
   /** In the order they were made. */
   readonly connections: Connection[];
   /**
@@ -139,8 +142,8 @@ export interface EngineState {
    * available or fetch.max.wait.ms passes, by fetch id, oldest first.
    */
   readonly parkedFetches: Map<number, FetchRequestTask>;
-  /** Sources of incarnation numbers (producers and consumers), fetch request ids and topic IDs. */
-  readonly counters: { incarnation: number; fetch: number; topic: number };
+  /** Sources of incarnation numbers (producers and consumers), request ids and topic IDs. */
+  readonly counters: { incarnation: number; fetch: number; topic: number; commit: number };
 }
 
 export function createState(): EngineState {
@@ -150,9 +153,10 @@ export function createState(): EngineState {
     producers: new Map(),
     consumers: new Map(),
     groups: new Map(),
+    offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
-    counters: { incarnation: 0, fetch: 0, topic: 0 },
+    counters: { incarnation: 0, fetch: 0, topic: 0, commit: 0 },
   };
 }
 

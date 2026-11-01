@@ -8,6 +8,12 @@ import type { EngineContext } from '../model/context.ts';
 import type { EngineTask } from '../model/tasks.ts';
 import { handleConsumerPoll, handleFetchResponse } from './consume.ts';
 import { handleFetchExpire, handleFetchRequest } from './fetch.ts';
+import {
+  handleCoordinatorRequest,
+  handleGroupJoinTimer,
+  handleGroupSyncTimer,
+  handleMemberSessionExpire,
+} from './group-coordinator.ts';
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
 
 export function runTask(ctx: EngineContext, task: EngineTask): void {
@@ -32,6 +38,21 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'FetchResponse':
       handleFetchResponse(ctx, task);
+      return;
+    case 'CoordinatorRequest':
+      handleCoordinatorRequest(ctx, task);
+      return;
+    case 'CoordinatorResponse':
+      // Consumers join groups from M3-T4 on; until then no client sends coordinator requests.
+      return;
+    case 'GroupJoinTimer':
+      handleGroupJoinTimer(ctx, task);
+      return;
+    case 'GroupSyncTimer':
+      handleGroupSyncTimer(ctx, task);
+      return;
+    case 'MemberSessionExpire':
+      handleMemberSessionExpire(ctx, task);
       return;
     default:
       assertNever(task);

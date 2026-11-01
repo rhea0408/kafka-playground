@@ -5,6 +5,8 @@
  */
 
 import type { Acks } from '@kp/schema';
+import type { AssignorMember, TopicPartition } from '../protocols/assignors/index.ts';
+import type { JoinReason, MemberMetadata, MemberRemovedReason } from './group.ts';
 import type { LogRecord } from './partition.ts';
 
 /**
@@ -83,6 +85,41 @@ export type EngineTask =
   | FetchRequestTask
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
   | { readonly type: 'FetchExpire'; readonly fetchId: number }
+  /** A consumer's request reaches the coordinator broker of its group. */
+  | {
+      readonly type: 'CoordinatorRequest';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly request: CoordinatorRequest;
+    }
+  /** The coordinator's response reaches the consumer. */
+  | {
+      readonly type: 'CoordinatorResponse';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly response: CoordinatorResponse;
+    }
+  /**
+   * The join phase timer: group.initial.rebalance.delay.ms windows for a new group (`initial`),
+   * or the rebalance timeout otherwise.
+   */
+  | {
+      readonly type: 'GroupJoinTimer';
+      readonly groupId: string;
+      readonly token: number;
+      readonly initial: { readonly delayMs: number; readonly remainingMs: number } | null;
+    }
+  /** The pending-sync timer: members that did not send SyncGroup in time are removed. */
+  | { readonly type: 'GroupSyncTimer'; readonly groupId: string; readonly token: number }
+  /** session.timeout.ms passed since this member's last heartbeat (if the token is current). */
+  | {
+      readonly type: 'MemberSessionExpire';
+      readonly groupId: string;
+      readonly memberId: string;
+      readonly token: number;
+    }
   /** The broker's fetch response reaches the consumer. */
   | {
       readonly type: 'FetchResponse';
@@ -91,6 +128,80 @@ export type EngineTask =
       readonly fetchId: number;
       readonly broker: string;
       readonly partitions: readonly FetchPartitionResult[];
+    };
+
+/** Group coordinator errors (Kafka protocol error codes) a client can get back. */
+export type GroupError =
+  | 'UNKNOWN_MEMBER_ID'
+  | 'ILLEGAL_GENERATION'
+  | 'REBALANCE_IN_PROGRESS'
+  | 'INCONSISTENT_GROUP_PROTOCOL'
+  | 'COORDINATOR_NOT_AVAILABLE';
+
+/** An offset a client asks to commit; `topicId` is the topic life its position belongs to. */
+export interface CommitOffset {
+  readonly topic: string;
+  readonly partition: number;
+  readonly offset: number;
+  readonly topicId: number;
+}
+
+/** Requests from a consumer to its group coordinator (classic protocol). */
+export type CoordinatorRequest =
+  | {
+      readonly api: 'JoinGroup';
+      /** '' for a member joining for the first time. */
+      readonly memberId: string;
+      readonly metadata: MemberMetadata;
+      readonly reason: JoinReason;
+    }
+  | {
+      readonly api: 'SyncGroup';
+      readonly memberId: string;
+      readonly generation: number;
+      /** Only from the leader: every member's partitions. */
+      readonly assignment: readonly (readonly [string, readonly TopicPartition[]])[] | null;
+    }
+  | { readonly api: 'Heartbeat'; readonly memberId: string; readonly generation: number }
+  | {
+      readonly api: 'LeaveGroup';
+      readonly memberId: string;
+      readonly reason: Extract<MemberRemovedReason, 'leave' | 'poll-timeout'>;
+    }
+  | {
+      readonly api: 'OffsetCommit';
+      readonly commitId: number;
+      readonly memberId: string;
+      readonly generation: number;
+      readonly offsets: readonly CommitOffset[];
+    };
+
+/** The coordinator's answers (LeaveGroup gets none here: the client does not wait for it). */
+export type CoordinatorResponse =
+  | {
+      readonly api: 'JoinGroup';
+      readonly error: null;
+      readonly memberId: string;
+      readonly generation: number;
+      readonly protocol: string;
+      readonly leader: string;
+      /** Every member's metadata, only in the leader's response (empty for followers). */
+      readonly members: readonly AssignorMember[];
+    }
+  | { readonly api: 'JoinGroup'; readonly error: GroupError }
+  | {
+      readonly api: 'SyncGroup';
+      readonly error: null;
+      readonly generation: number;
+      readonly assignment: readonly TopicPartition[];
+    }
+  | { readonly api: 'SyncGroup'; readonly error: GroupError }
+  | { readonly api: 'Heartbeat'; readonly error: GroupError | null }
+  | {
+      readonly api: 'OffsetCommit';
+      readonly commitId: number;
+      /** A whole-request error; per-partition UNKNOWN_TOPIC_OR_PARTITION is silent (not stored). */
+      readonly error: GroupError | null;
     };
 
 /** Kafka protocol error names, as the client reports them. */
