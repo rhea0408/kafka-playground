@@ -69,9 +69,114 @@ export function defaultSceneState(): TopologyState {
   };
 }
 
-/** The canvas the Sandbox opens with: the default scene, or the bare canvas for `?scene=empty`. */
+// ── M3 scene presets (M3-T12) ───────────────────────────────────────────────────────────────
+// The same producer → orders (3 partitions, keys D/E/F) flow, with a consumer group set up for
+// one lesson each. Members of a group share their config, as instances of one application do.
+
+function parsed(inputs: readonly Record<string, unknown>[]): Component[] {
+  return inputs.map((input): Component => {
+    const result = parseComponent(input);
+    if (!result.ok) throw new Error(`Scene is invalid: ${result.errors.join(' ')}`);
+    return result.value;
+  });
+}
+
+function groupScene(
+  members: readonly Record<string, unknown>[],
+  producer: Record<string, unknown> = {},
+): TopologyState {
+  const ids = members.map((m) => String(m.id));
+  return {
+    components: parsed([
+      { kind: 'broker', id: INITIAL_BROKER_ID },
+      { kind: 'topic', id: DEFAULT_TOPIC, partitions: DEFAULT_PARTITIONS },
+      {
+        kind: 'producer',
+        id: DEFAULT_PRODUCER,
+        ratePerSec: DEFAULT_RATE_PER_SEC,
+        keyStrategy: { type: 'random', keys: [...DEFAULT_KEYS] },
+        ...producer,
+      },
+      ...members.map((m) => ({ kind: 'consumer', groupId: DEFAULT_GROUP, ...m })),
+    ]),
+    connections: [
+      { from: DEFAULT_PRODUCER, to: DEFAULT_TOPIC },
+      ...ids.map((id) => ({ from: DEFAULT_TOPIC, to: id })),
+    ],
+    positions: { ...POSITIONS, [`group:${DEFAULT_GROUP}`]: { x: 512, y: 112 } },
+  };
+}
+
+export type SceneId = 'default' | 'idle' | 'crash' | 'slow' | 'empty';
+
+export interface Scene {
+  readonly id: SceneId;
+  readonly label: string;
+  /** One sentence: what to do and what to look for. */
+  readonly hint: string;
+  readonly state: () => TopologyState;
+}
+
+/** The scenes the Sandbox offers (top bar "Scene", or `?scene=<id>`). */
+export const SCENES: readonly Scene[] = [
+  {
+    id: 'default',
+    label: 'Default',
+    hint: 'One producer, one topic, one consumer.',
+    state: defaultSceneState,
+  },
+  {
+    id: 'idle',
+    label: 'Idle consumer',
+    hint: 'Four members share three partitions: one member gets none and stays idle.',
+    state: () => groupScene(['c1', 'c2', 'c3', 'c4'].map((id) => ({ id }))),
+  },
+  {
+    id: 'crash',
+    label: 'Crash and duplicates',
+    hint: 'Auto-commit every 5 s. Kill a member while it processes: after session.timeout.ms its partitions move and the new owner reads some records again (DuplicateProcessed).',
+    state: () =>
+      groupScene(
+        // earliest: a partition whose owner crashed before its first commit is read from the
+        // start (duplicates) instead of from the end (skips).
+        ['c1', 'c2'].map((id) => ({
+          id,
+          autoOffsetReset: 'earliest',
+          processingTimeMs: 100,
+          maxPollRecords: 10,
+        })),
+        { ratePerSec: 5 },
+      ),
+  },
+  {
+    id: 'slow',
+    label: 'Slow consumer',
+    hint: 'c2 needs 20 × 2 s = 40 s per poll(), more than max.poll.interval.ms (30 s): it is removed, its partitions move, and it keeps processing as a zombie.',
+    state: () =>
+      groupScene(
+        [
+          { id: 'c1', autoOffsetReset: 'earliest' },
+          { id: 'c2', autoOffsetReset: 'earliest', processingTimeMs: 2000, maxPollRecords: 20 },
+        ],
+        { ratePerSec: 5 },
+      ),
+  },
+  {
+    id: 'empty',
+    label: 'Empty (broker only)',
+    hint: 'Build your own flow from the palette.',
+    state: () => INITIAL_TOPOLOGY_STATE,
+  },
+];
+
+export function sceneById(id: string | null): Scene | undefined {
+  return SCENES.find((scene) => scene.id === id);
+}
+
+/** The canvas the Sandbox opens with: `?scene=<id>` (idle, crash, slow, empty) or the default. */
 export function initialSceneFor(search: string): TopologyState {
-  return new URLSearchParams(search).get('scene') === 'empty'
-    ? INITIAL_TOPOLOGY_STATE
-    : defaultSceneState();
+  return (
+    (sceneById(new URLSearchParams(search).get('scene')) ?? SCENES[0])?.state() ??
+    defaultSceneState()
+  );
 }
