@@ -1,7 +1,7 @@
 /**
- * Engine invariants (architecture §4.6) checked over random topologies and command sequences.
- * M1/M2 have one replica per partition and no groups with several members, so the ISR and
- * group-assignment invariants join in M3/M4. The generated commands include UpdateConfig.
+ * Engine invariants (architecture §4.6) checked over random topologies and command sequences,
+ * including consumer groups with several members, crashes, stops, restarts, group.id and
+ * assignor changes, partition increases and slow consumers (M3-T6). The ISR invariants join in M4.
  */
 
 import fc from 'fast-check';
@@ -17,7 +17,7 @@ const NUM_RUNS = 150;
 type Ev<T extends EngineEvent['type']> = Extract<EngineEvent, { type: T }>;
 const tp = (e: { topic: string; partition: number }) => `${e.topic}-${String(e.partition)}`;
 
-describe('engine invariants (fast-check)', () => {
+describe('engine invariants (fast-check)', { timeout: 30_000 }, () => {
   it('offsets in every partition are contiguous from 0, in append order', () => {
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
@@ -229,6 +229,128 @@ describe('engine invariants (fast-check)', () => {
         expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
       }),
       { numRuns: 50 },
+    );
+  });
+
+  // ── Consumer groups (M3-T6) ─────────────────────────────────────────────────────────────────
+
+  it('within one generation, each partition is assigned to at most one member', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        for (const e of events) {
+          if (e.type !== 'RebalanceCompleted') continue;
+          const all = e.members.flatMap((m) => m.partitions.map(tp));
+          expect(new Set(all).size).toBe(all.length);
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('an eager assignment gives every partition of an assigned topic an owner (no gaps)', () => {
+    // The leader assigns from its own metadata, which may not know the newest partitions yet, so
+    // each assigned topic must be covered from partition 0 up without holes. Cooperative
+    // assignments leave moving partitions unowned for one round on purpose (KIP-429).
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        for (const e of events) {
+          if (e.type !== 'RebalanceCompleted' || e.protocol === 'cooperative-sticky') continue;
+          const byTopic = new Map<string, number[]>();
+          for (const m of e.members) {
+            for (const p of m.partitions) {
+              byTopic.set(p.topic, [...(byTopic.get(p.topic) ?? []), p.partition]);
+            }
+          }
+          for (const parts of byTopic.values()) {
+            expect(parts.sort((a, b) => a - b)).toEqual(parts.map((_, i) => i));
+          }
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('an accepted commit comes from a member of the current generation that owns the partition', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        /** Per group: the last completed generation and who owns what in it. */
+        const current = new Map<string, { generation: number; owner: Map<string, string> }>();
+        for (const e of events) {
+          if (e.type === 'RebalanceCompleted') {
+            const owner = new Map<string, string>();
+            for (const m of e.members) for (const p of m.partitions) owner.set(tp(p), m.memberId);
+            current.set(e.groupId, { generation: e.generation, owner });
+          }
+          if (e.type === 'OffsetCommitted') {
+            const g = current.get(e.groupId);
+            expect(e.memberId).not.toBeNull();
+            expect(e.generation).toBe(g?.generation);
+            expect(g?.owner.get(tp(e))).toBe(e.memberId);
+          }
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('generations only increase', () => {
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        // A generation can also end without RebalanceCompleted (CompletingRebalance → a member
+        // never syncs → a new rebalance), so check order only: never backwards, and every
+        // completion is newer than the generation its rebalance started from.
+        const lastStarted = new Map<string, number>();
+        const lastCompleted = new Map<string, number>();
+        for (const e of events) {
+          if (e.type === 'RebalanceStarted') {
+            expect(e.generation).toBeGreaterThanOrEqual(lastStarted.get(e.groupId) ?? 0);
+            expect(e.generation).toBeGreaterThanOrEqual(lastCompleted.get(e.groupId) ?? 0);
+            lastStarted.set(e.groupId, e.generation);
+          }
+          if (e.type === 'RebalanceCompleted') {
+            expect(e.generation).toBeGreaterThan(lastCompleted.get(e.groupId) ?? 0);
+            expect(e.generation).toBeGreaterThan(lastStarted.get(e.groupId) ?? -1);
+            lastCompleted.set(e.groupId, e.generation);
+          }
+        }
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('a member only reads partitions it owns in its current generation', () => {
+    // Not "two consumers never read one partition at the same time": a zombie can (that is why
+    // commits are checked by generation). What holds is that every record poll() returns comes
+    // from a partition the rebalance listener gave this consumer and has not taken back.
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        const { events } = runScenario(seed, topology, steps);
+        const owned = new Map<string, Set<string>>();
+        const reset = (id: string) => owned.set(id, new Set());
+        for (const e of events) {
+          if (e.type === 'PartitionsAssigned') {
+            const set = owned.get(e.consumerId) ?? new Set<string>();
+            for (const p of e.partitions) set.add(tp(p));
+            owned.set(e.consumerId, set);
+          } else if (e.type === 'PartitionsRevoked' || e.type === 'PartitionsLost') {
+            for (const p of e.partitions) owned.get(e.consumerId)?.delete(tp(p));
+          } else if (e.type === 'ConsumerStopped' || e.type === 'ConsumerStarted') {
+            reset(e.consumerId);
+          } else if (
+            (e.type === 'ComponentRemoved' || e.type === 'ComponentAdded') &&
+            e.component.kind === 'consumer'
+          ) {
+            reset(e.component.id);
+          } else if (e.type === 'RecordConsumed') {
+            expect(owned.get(e.consumerId)?.has(tp(e))).toBe(true);
+          }
+        }
+      }),
+      { numRuns: NUM_RUNS },
     );
   });
 });

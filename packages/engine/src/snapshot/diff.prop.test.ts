@@ -38,7 +38,7 @@ function snapshotsOf(run: Run): EngineSnapshot[] {
   return snapshots;
 }
 
-describe('snapshot diff properties', () => {
+describe('snapshot diff properties', { timeout: 30_000 }, () => {
   it('applyDiff(prev, diffSnapshot(prev, next)) equals next for any two snapshots of a run', () => {
     fc.assert(
       fc.property(runArb, (run) => {

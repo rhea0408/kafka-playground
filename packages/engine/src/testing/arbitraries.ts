@@ -79,18 +79,33 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
         fetchMinBytes: fc.oneof(fc.constant(1), fc.integer({ min: 0, max: 5000 })),
         fetchMaxWaitMs: fc.oneof(fc.constant(500), fc.integer({ min: 0, max: 1000 })),
         metadataMaxAgeMs: fc.oneof(fc.constant(300_000), fc.integer({ min: 0, max: 3000 })),
-        processingTimeMs: fc.integer({ min: 0, max: 200 }),
+        // Sometimes slow enough to exceed a short max.poll.interval.ms (a zombie).
+        processingTimeMs: fc.oneof(
+          { weight: 4, arbitrary: fc.integer({ min: 0, max: 200 }) },
+          { weight: 1, arbitrary: fc.integer({ min: 500, max: 3000 }) },
+        ),
         ...groupFields,
+        // Most consumers share group "g", so groups with several members are common.
+        groupId: fc.constantFrom('g', 'g', 'h'),
+        /** Use the topology's shared group settings (most of the time) or this consumer's own. */
+        ownGroupSettings: fc.oneof(
+          { weight: 1, arbitrary: fc.constant(true) },
+          { weight: 4, arbitrary: fc.constant(false) },
+        ),
         topicMask: fc.integer({ min: 1, max: 3 }),
       }),
-      { maxLength: 2 },
+      { maxLength: 3 },
     ),
+    // Members of one group usually share the assignor list and timeouts, as instances of one
+    // application do; otherwise most groups end in INCONSISTENT_GROUP_PROTOCOL.
+    shared: fc.record(groupFields),
+    initialDelay: fc.constantFrom(0, 0, 3000),
   })
-  .map(({ topics, producers, consumers }) => {
+  .map(({ topics, producers, consumers, shared, initialDelay }) => {
     const topicIds = topics.map((_, i) => `t${String(i)}`);
     const picked = (mask: number) => topicIds.filter((_, i) => (mask & (1 << i)) !== 0);
     return {
-      brokers: [{ kind: 'broker' as const, id: 'b1' }],
+      brokers: [{ kind: 'broker' as const, id: 'b1', groupInitialRebalanceDelayMs: initialDelay }],
       topics: topics.map((partitions, i) => ({
         kind: 'topic' as const,
         id: `t${String(i)}`,
@@ -101,10 +116,11 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
         id: `p${String(i)}`,
         ...p,
       })),
-      consumers: consumers.map(({ topicMask, ...c }, i) => ({
+      consumers: consumers.map(({ topicMask, ownGroupSettings, ...c }, i) => ({
         kind: 'consumer' as const,
         id: `c${String(i)}`,
         ...c,
+        ...(ownGroupSettings ? {} : shared),
       })),
       connections: [
         ...producers.flatMap((p, i) =>
@@ -117,12 +133,24 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     };
   });
 
-const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 't0', 't1', 'b1', 'ghost');
+const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 'c2', 't0', 't1', 'b1', 'ghost');
 
 const commandArb: fc.Arbitrary<Command> = fc.oneof(
   ids.map((id): Command => ({ type: 'KillConsumer', id })),
   ids.map((id): Command => ({ type: 'RestartConsumer', id })),
   ids.map((id): Command => ({ type: 'StopConsumer', id })),
+  // Aimed at consumers, so crashes, stops and restarts of group members are common.
+  fc
+    .record({
+      type: fc.constantFrom(
+        'KillConsumer' as const,
+        'KillConsumer' as const,
+        'StopConsumer' as const,
+        'RestartConsumer' as const,
+      ),
+      id: fc.constantFrom('c0', 'c1', 'c2'),
+    })
+    .map(({ type, id }): Command => ({ type, id })),
   fc
     .record({ producerId: ids, key: fc.option(fc.constantFrom('A', 'B', 'Z'), { nil: null }) })
     .map(({ producerId, key }): Command => ({
@@ -136,10 +164,26 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
     .record({ from: ids, to: ids })
     .map(({ from, to }): Command => ({ type: 'Disconnect', from, to })),
   ids.map((id): Command => ({ type: 'RemoveComponent', id })),
-  fc.constantFrom('c0', 'c1').map((id): Command => ({
-    type: 'AddComponent',
-    component: { kind: 'consumer', id, autoOffsetReset: 'earliest' },
-  })),
+  fc
+    .record({
+      id: fc.constantFrom('c0', 'c1', 'c2', 'c3'),
+      groupId: fc.constantFrom('g', 'h'),
+      partitionAssignmentStrategy: assignors.map((list) => [...list]),
+    })
+    .map(({ id, groupId, partitionAssignmentStrategy }): Command => ({
+      type: 'AddComponent',
+      component: {
+        kind: 'consumer',
+        id,
+        groupId,
+        autoOffsetReset: 'earliest',
+        partitionAssignmentStrategy,
+      },
+    })),
+  // Joining a member to a topic (a subscription change).
+  fc
+    .record({ from: fc.constantFrom('t0', 't1'), to: fc.constantFrom('c0', 'c1', 'c2', 'c3') })
+    .map(({ from, to }): Command => ({ type: 'Connect', from, to })),
   // UpdateConfig: growing (or, rejected, shrinking) topics, producer and consumer settings,
   // and changes that must be rejected (group.id, broker.rack, unknown ids).
   fc
@@ -163,7 +207,7 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
     .map(({ id, patch }): Command => ({ type: 'UpdateConfig', id, patch })),
   fc
     .record({
-      id: fc.constantFrom('c0', 'c1'),
+      id: fc.constantFrom('c0', 'c1', 'c2'),
       patch: fc.record(
         {
           maxPollRecords: fc.integer({ min: 1, max: 50 }),
@@ -173,7 +217,8 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
           enableAutoCommit: fc.boolean(),
           autoCommitIntervalMs: fc.integer({ min: 100, max: 3000 }),
           metadataMaxAgeMs: fc.integer({ min: 0, max: 3000 }),
-          groupId: fc.constant('other-group'),
+          groupId: fc.constantFrom('g', 'h', 'other-group'),
+          autoOffsetReset: fc.constantFrom('earliest' as const, 'latest' as const),
           ...groupFields,
         },
         { requiredKeys: [] },
@@ -207,7 +252,15 @@ export const stepsArb: fc.Arbitrary<Step[]> = fc.array(
       weight: 3,
       arbitrary: fc.integer({ min: 0, max: 2000 }).map((ms): Step => ({ kind: 'advance', ms })),
     },
+    // Now and then long enough for a session or poll timeout to expire.
+    {
+      weight: 1,
+      arbitrary: fc
+        .integer({ min: 5000, max: 12_000 })
+        .map((ms): Step => ({ kind: 'advance', ms })),
+    },
     { weight: 2, arbitrary: commandArb.map((command): Step => ({ kind: 'command', command })) },
   ),
-  { maxLength: 25 },
+  // fast-check's default "small" size keeps arrays at about ten steps; groups need longer runs.
+  { minLength: 5, maxLength: 30, size: 'medium' },
 );
