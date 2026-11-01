@@ -54,7 +54,7 @@ test('edit a consumer field; read-only and not-modelled fields explain themselve
 }) => {
   await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Consumer', 480, 260);
-  await node(page, 'c1').click();
+  await node(page, 'group:c1-group').locator('[data-consumer-row="c1"]').click();
   await expect(panel(page).getByRole('heading', { name: 'c1' })).toBeVisible();
 
   const wait = panel(page).getByLabel('Fetch max wait', { exact: true });
@@ -88,7 +88,7 @@ test('edit a consumer field; read-only and not-modelled fields explain themselve
   ).toContainText(/consumer c1\s+fetchMaxWaitMs: 500 → 100/);
   await page.getByRole('main', { name: 'Canvas' }).click({ position: { x: 40, y: 400 } });
   await expect(panel(page)).toContainText('Select a component on the canvas');
-  await node(page, 'c1').click();
+  await node(page, 'group:c1-group').locator('[data-consumer-row="c1"]').click();
   await expect(panel(page).getByLabel('Fetch max wait', { exact: true })).toHaveValue('100');
 });
 

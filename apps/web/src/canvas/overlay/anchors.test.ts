@@ -64,7 +64,7 @@ describe('endpoint refs', () => {
     expect(producerOut('p1')).toEqual({ nodeId: 'p1', handleId: 'out' });
     expect(partitionIn('t1', 2)).toEqual({ nodeId: 't1', handleId: 'p2:in' });
     expect(partitionOut('t1', 2)).toEqual({ nodeId: 't1', handleId: 'p2:out' });
-    expect(consumerRow('c1')).toEqual({ nodeId: 'c1', handleId: 'row:c1' });
+    expect(consumerRow('g', 'c1')).toEqual({ nodeId: 'group:g', handleId: 'row:c1' });
   });
 
   it('resolve through a node lookup', () => {

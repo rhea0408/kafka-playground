@@ -6,7 +6,7 @@
  * snapshots and never waits for message dots (animations.md, ADR 0008).
  */
 
-import type { LogRecord, ConsumerSnapshot } from '@kp/engine';
+import type { ConsumerSnapshot, GroupSnapshot, LogRecord } from '@kp/engine';
 import { NodeToolbar, Position } from '@xyflow/react';
 import {
   useCallback,
@@ -33,6 +33,7 @@ import {
   useConsumer,
   useConsumerStatus,
   useCountUp,
+  useGroup,
   usePartition,
   useProducerStats,
 } from './use-live.ts';
@@ -220,17 +221,107 @@ export const isRunning = (status: ConsumerSnapshot['status']): boolean =>
 
 const dash = (n: number | null): string => (n === null ? '-' : formatCount(n));
 
-/** Live part of a consumer row: status, position, committed offset and the lag badge. */
+/** A12: how long a partition chip takes to fade out (revoked) or in (assigned). */
+export const CHIP_FADE_MS = 200;
+
+interface ChipState {
+  readonly label: string;
+  readonly phase: 'in' | 'out' | 'steady';
+}
+
+/**
+ * A12 (animations.md): a member's partition chips. A chip that disappears from the snapshot
+ * (revoked or lost) stays for `CHIP_FADE_MS` while it fades out; a new one fades in. Eager
+ * rebalances revoke everything, so every chip fades; cooperative ones only the partitions that
+ * move. Driven by snapshots (which follow PartitionsRevoked / PartitionsAssigned at once), not by
+ * dots. Instant under reduced motion. UI timing, not scaled by sim speed.
+ */
+export function PartitionChips({ labels }: { labels: readonly string[] }) {
+  const reduced = useReducedMotion();
+  const [chips, setChips] = useState<readonly ChipState[]>(() =>
+    labels.map((label) => ({ label, phase: 'steady' })),
+  );
+  const key = labels.join(' ');
+  useEffect(() => {
+    const now = new Set(key === '' ? [] : key.split(' '));
+    setChips((prev) => {
+      const prevLabels = new Set(prev.map((c) => c.label));
+      const kept = prev
+        .filter((c) => !reduced || now.has(c.label))
+        .map((c): ChipState => {
+          if (now.has(c.label)) return c.phase === 'out' ? { ...c, phase: 'in' } : c;
+          return { ...c, phase: 'out' };
+        });
+      const added = [...now]
+        .filter((l) => !prevLabels.has(l))
+        .map((label): ChipState => ({ label, phase: reduced ? 'steady' : 'in' }));
+      return [...kept, ...added];
+    });
+    if (reduced) return undefined;
+    const timer = setTimeout(() => {
+      setChips((prev) => prev.filter((c) => c.phase !== 'out'));
+    }, CHIP_FADE_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [key, reduced]);
+  return (
+    <span className="flex min-w-0 shrink-0 gap-0.5" data-slot="partition-chips">
+      {chips.map((c) => (
+        <span
+          key={c.label}
+          className={`rounded-sm bg-muted px-1 font-mono text-[10px] font-semibold ${
+            c.phase === 'in' ? 'kp-chip-in' : c.phase === 'out' ? 'kp-chip-out' : ''
+          }`}
+          data-chip={c.label}
+          data-phase={c.phase}
+          aria-hidden={c.phase === 'out'}
+        >
+          {c.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** "P0", or "orders-0" when the member reads more than one topic. */
+export function chipLabels(consumer: ConsumerSnapshot): string[] {
+  const topics = new Set(consumer.partitions.map((p) => p.topic)).size;
+  return consumer.partitions.map((p) =>
+    topics > 1 ? `${p.topic}-${String(p.partition)}` : `P${String(p.partition)}`,
+  );
+}
+
+/** The flat muted chip of an idle member (icon + words, never color alone). */
+function IdleChip() {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1 text-[10px]"
+      data-slot="idle"
+      title="This member got no partition in the current generation: the group has more members than partitions it can share out. It stays idle until a rebalance gives it one."
+    >
+      <span aria-hidden="true">◇</span>Idle: no partition
+    </span>
+  );
+}
+
+/** Live part of a member row: status, owned partitions, position, committed offset, lag. */
 export function ConsumerLive({ consumerId }: { consumerId: string }) {
   const consumer = useConsumer(consumerId);
   const s = consumer === undefined ? undefined : summarizeConsumer(consumer);
   const many = s !== undefined && s.partitions > 1;
   const total = many ? 'Σ ' : '';
+  const status =
+    consumer === undefined
+      ? ''
+      : `${consumer.status}${consumer.stopping ? ' (stopping)' : ''}${
+          consumer.generation === null ? '' : ` in generation ${String(consumer.generation)}`
+        }`;
   const title =
     consumer === undefined || s === undefined
       ? `${consumerId}: not in the simulation yet`
       : [
-          `${consumerId} · ${consumer.status} · ${formatCount(consumer.consumed)} records consumed`,
+          `${consumerId} · ${status} · ${formatCount(consumer.consumed)} records consumed`,
           `Position: next offset to read. Committed: saved for the group.${
             many ? ` Totals over ${String(s.partitions)} partitions:` : ''
           }`,
@@ -247,10 +338,17 @@ export function ConsumerLive({ consumerId }: { consumerId: string }) {
         {consumer !== undefined && <ConsumerStatus status={consumer.status} />}
         {s !== undefined && <LagBadge lag={s.lag} />}
       </div>
-      <div className="truncate font-mono text-[10px] text-status/70" data-slot="offsets">
-        {s === undefined
-          ? 'no offsets yet'
-          : `${total}pos ${dash(s.position)} · ${total}committed ${dash(s.committed)}`}
+      <div className="flex min-w-0 items-center gap-1 font-mono text-[10px] text-status/70">
+        {consumer?.status === 'idle' ? (
+          <IdleChip />
+        ) : (
+          consumer !== undefined && <PartitionChips labels={chipLabels(consumer)} />
+        )}
+        <span className="min-w-0 truncate" data-slot="offsets">
+          {s === undefined || s.partitions === 0
+            ? ''
+            : `${total}pos ${dash(s.position)} · ${total}committed ${dash(s.committed)}`}
+        </span>
       </div>
       {s !== undefined && s.breakdown.length > 0 && (
         <ul className="sr-only">
@@ -260,6 +358,58 @@ export function ConsumerLive({ consumerId }: { consumerId: string }) {
         </ul>
       )}
     </div>
+  );
+}
+
+/** The coordinator's state, as the header chip says it (icon + words, never color alone). */
+export function groupStateLabel(group: GroupSnapshot | undefined): {
+  readonly icon: string;
+  readonly text: string;
+} {
+  switch (group?.state) {
+    case undefined:
+      return { icon: '…', text: 'Joining' };
+    case 'Stable':
+      return { icon: '✓', text: 'Stable' };
+    case 'PreparingRebalance':
+    case 'CompletingRebalance':
+      return { icon: '↻', text: 'Rebalancing…' };
+    case 'Empty':
+      return { icon: '∅', text: 'Empty' };
+    case 'Dead':
+      return { icon: '✕', text: 'Dead' };
+  }
+}
+
+/**
+ * Live part of the group header: the state chip ("Rebalancing…" from RebalanceStarted until the
+ * group is Stable again, A12) and the generation.
+ */
+export function GroupHeaderLive({ groupId }: { groupId: string }) {
+  const group = useGroup(groupId);
+  const state = groupStateLabel(group);
+  const detail =
+    group === undefined
+      ? 'The group coordinator creates the group when its first member joins.'
+      : `Coordinator state ${group.state}, generation ${String(group.generation)}${
+          group.protocol === null ? '' : `, assignor ${group.protocol}`
+        }. Lag over the group: ${formatCount(group.totalLag)}.`;
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1" title={detail}>
+      <span
+        className="inline-flex items-center gap-0.5 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-semibold"
+        data-slot="group-state"
+        data-state={group?.state ?? 'none'}
+      >
+        <span aria-hidden="true">{state.icon}</span>
+        {state.text}
+      </span>
+      {group !== undefined && (
+        <span className="font-mono text-[10px] font-normal text-status/70" data-slot="generation">
+          gen {group.generation}
+        </span>
+      )}
+    </span>
   );
 }
 

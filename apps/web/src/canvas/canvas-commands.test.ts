@@ -1,3 +1,4 @@
+import { parseComponent } from '@kp/schema';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Actions } from '../actions/actions.ts';
 import { resetTopologyStore, INITIAL_TOPOLOGY_STATE } from '../stores/topology-store.ts';
@@ -61,6 +62,74 @@ describe('deleteSelection', () => {
     };
     await deleteSelection(actions, ['c1', 'p2'], ['p1→t1', 't1→c1', 'garbage']);
     expect(calls).toEqual(['disconnect p1 t1', 'remove c1', 'remove p2']);
+  });
+});
+
+describe('consumer groups (M3-T8)', () => {
+  const consumer = (id: string, groupId: string) => {
+    const parsed = parseComponent({ kind: 'consumer', id, groupId });
+    if (!parsed.ok) throw new Error(parsed.errors.join(' '));
+    return parsed.value;
+  };
+  beforeEach(() => {
+    resetUiStore();
+    resetTopologyStore({
+      ...INITIAL_TOPOLOGY_STATE,
+      components: [
+        ...INITIAL_TOPOLOGY_STATE.components,
+        { kind: 'topic', id: 't1', partitions: 1, replicationFactor: 1, minInsyncReplicas: 1 },
+        consumer('c1', 'g'),
+        consumer('c2', 'g'),
+        consumer('c3', 'other'),
+      ],
+      connections: [{ from: 't1', to: 'c1' }],
+    });
+  });
+
+  const recorder = () => {
+    const calls: string[] = [];
+    return {
+      calls,
+      actions: {
+        connect: (from: string, to: string) => {
+          calls.push(`connect ${from} ${to}`);
+          return Promise.resolve(OK);
+        },
+        disconnect: (from: string, to: string) => {
+          calls.push(`disconnect ${from} ${to}`);
+          return Promise.resolve(OK);
+        },
+        removeComponent: (id: string) => {
+          calls.push(`remove ${id}`);
+          return Promise.resolve(OK);
+        },
+      },
+    };
+  };
+
+  it('a topic dropped on a group connects every member that does not read it yet', async () => {
+    const { calls, actions } = recorder();
+    expect(await connectChecked(actions, 't1', 'group:g')).toEqual(OK);
+    expect(calls).toEqual(['connect t1 c2']);
+  });
+
+  it('deleting a group removes every member; with a focused row, only that member', async () => {
+    const all = recorder();
+    await deleteSelection(all.actions, ['group:g'], []);
+    expect(all.calls).toEqual(['remove c1', 'remove c2']);
+    const one = recorder();
+    await deleteSelection(one.actions, ['group:g'], [], 'c2');
+    expect(one.calls).toEqual(['remove c2']);
+    // A focused member of another group does not narrow it.
+    const other = recorder();
+    await deleteSelection(other.actions, ['group:g'], [], 'c3');
+    expect(other.calls).toEqual(['remove c1', 'remove c2']);
+  });
+
+  it('deleting a topic → group edge disconnects every member that reads the topic', async () => {
+    const { calls, actions } = recorder();
+    await deleteSelection(actions, [], ['t1→group:g']);
+    expect(calls).toEqual(['disconnect t1 c1']);
   });
 });
 

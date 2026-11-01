@@ -40,9 +40,9 @@ async function build(page: Page, partitions: number): Promise<void> {
   await dropFromPalette(page, 'Producer', 120, 300);
   await dropFromPalette(page, 'Topic', 400, 300);
   await dropFromPalette(page, 'Consumer', 700, 300);
-  await expect(node(page, 'c1')).toBeVisible();
+  await expect(node(page, 'group:c1-group')).toBeVisible();
   await connect(page, handle(page, 'p1', 'out'), handle(page, 't1', 'in'));
-  await connect(page, handle(page, 't1', 'out'), handle(page, 'c1', 'row:c1'));
+  await connect(page, handle(page, 't1', 'out'), handle(page, 'group:c1-group', 'in'));
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
   if (partitions > 1) {
     await node(page, 't1').click();

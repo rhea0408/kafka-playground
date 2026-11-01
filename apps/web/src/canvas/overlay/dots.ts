@@ -129,7 +129,7 @@ export function a2Spec(e: Extract<EngineEvent, { type: 'RecordConsumed' }>): Dot
     traceId: e.traceId,
     key: e.key,
     from: partitionOut(e.topic, e.partition),
-    to: consumerRow(e.consumerId),
+    to: consumerRow(e.groupId, e.consumerId),
   };
 }
 

@@ -19,7 +19,7 @@ import {
 import { useCallback, useEffect, useState, type DragEvent } from 'react';
 import { useActions } from '../actions/actions-context.tsx';
 import { useTopologyStore } from '../stores/topology-store.ts';
-import { select } from '../stores/ui-store.ts';
+import { select, useUiStore } from '../stores/ui-store.ts';
 import {
   connectChecked,
   deleteSelection,
@@ -112,6 +112,8 @@ export function Canvas() {
         toDelete.map((n) => n.id),
         // React Flow adds the edges of deleted nodes; only explicitly selected edges matter.
         edgesToDelete.filter((e) => e.selected === true).map((e) => e.id),
+        // A focused member row deletes only that member of the group (M3-T8).
+        useUiStore.getState().focusedMember,
       );
       return false;
     },

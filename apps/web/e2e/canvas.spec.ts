@@ -84,9 +84,9 @@ test('producer → consumer is refused with its reason', async ({ page }) => {
   await page.goto('/?scene=empty');
   await dropFromPalette(page, 'Producer', 120, 260);
   await dropFromPalette(page, 'Consumer', 480, 260);
-  await expect(node(page, 'c1')).toBeVisible();
+  await expect(node(page, 'group:c1-group')).toBeVisible();
 
-  await dragHandle(page, handle(page, 'p1', 'out'), handle(page, 'c1', 'row:c1'));
+  await dragHandle(page, handle(page, 'p1', 'out'), handle(page, 'group:c1-group', 'in'));
   // While dragging over the consumer: the reason next to the pointer.
   const hint = page.getByTestId('connection-reason');
   await expect(hint).toContainText("A producer can't send straight to a consumer.");
@@ -190,18 +190,18 @@ test('live state: LEO grows, the consumer position advances, Kill / Restart from
   await dropFromPalette(page, 'Producer', 120, 300);
   await dropFromPalette(page, 'Topic', 400, 300);
   await dropFromPalette(page, 'Consumer', 700, 300);
-  await expect(node(page, 'c1')).toBeVisible();
+  await expect(node(page, 'group:c1-group')).toBeVisible();
 
   await dragHandle(page, handle(page, 'p1', 'out'), handle(page, 't1', 'in'));
   await page.mouse.up();
-  await dragHandle(page, handle(page, 't1', 'out'), handle(page, 'c1', 'row:c1'));
+  await dragHandle(page, handle(page, 't1', 'out'), handle(page, 'group:c1-group', 'in'));
   await page.mouse.up();
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Play' }).click();
 
   const log = node(page, 't1').locator('[data-partition-row="0"] [data-slot="partition-log"]');
-  const offsets = node(page, 'c1').locator('[data-slot="offsets"]');
+  const offsets = node(page, 'group:c1-group').locator('[data-slot="offsets"]');
   await expect.poll(() => numberAfter(log, 'LEO'), { timeout: 10_000 }).toBeGreaterThan(0);
   await expect(node(page, 't1').locator('.kp-cell').first()).toBeVisible();
   await expect(node(page, 't1').getByLabel('Leader: broker b1')).toBeVisible();
@@ -210,18 +210,24 @@ test('live state: LEO grows, the consumer position advances, Kill / Restart from
   await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(0);
   const first = await numberAfter(offsets, 'pos');
   await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(first);
-  await expect(node(page, 'c1').getByText('stable')).toBeVisible();
+  await expect(
+    node(page, 'group:c1-group').locator('[data-slot="status"]', { hasText: 'stable' }),
+  ).toBeVisible();
 
   mkdirSync(SHOTS, { recursive: true });
-  await node(page, 'c1').hover();
+  await node(page, 'group:c1-group').hover();
   const kill = page.getByRole('button', { name: 'Kill consumer c1' });
   await expect(kill).toBeVisible();
   await page.screenshot({ path: `${SHOTS}canvas-live-state.png` });
 
   await kill.click();
-  await expect(node(page, 'c1').getByText('crashed')).toBeVisible();
+  await expect(
+    node(page, 'group:c1-group').locator('[data-slot="status"]', { hasText: 'crashed' }),
+  ).toBeVisible();
   await page.getByRole('button', { name: 'Restart consumer c1' }).click();
   // A restarted consumer is a new member: it waits for the crashed one's session to time out.
-  await expect(node(page, 'c1').getByText('joining')).toBeVisible();
+  await expect(
+    node(page, 'group:c1-group').locator('[data-slot="status"]', { hasText: 'joining' }),
+  ).toBeVisible();
   expect(errors).toEqual([]);
 });

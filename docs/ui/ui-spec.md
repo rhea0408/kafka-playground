@@ -25,7 +25,7 @@ Sandbox (screen 05): same, minus the objectives strip; palette and right panel a
 |---|---|
 | Producer | 150 × 72 |
 | Topic | 230 wide × (36 header + 48 per partition) |
-| Consumer group | 220–240 wide; header 36; consumer row 196 × 40 |
+| Consumer group | 220 wide (220–240); header 36 with group id, state chip and generation; one 196 × 40 row per member (8 px gap): line 1 consumer id, status (icon + word) and lag badge; line 2 partition chips (`P0 P2`, or "◇ Idle: no partition") and position / committed. Height 36 + 48 × members + 8 |
 | Cluster frame | ≈ 778 × 150; broker 226 × 92 (84 in sandbox) |
 | Message dot | 16 px circle with key letter (A/B/C); replication dot 10 px |
 | Log cell | 18 × 18 |

@@ -31,6 +31,11 @@ export interface LogTarget {
 
 export interface UiState {
   readonly selection: Selection;
+  /**
+   * The member row clicked inside the selected consumer group node (M3-T8): the properties panel
+   * shows that consumer, and Delete removes only it. Null: the group itself.
+   */
+  readonly focusedMember: string | null;
   readonly rightTab: RightTab;
   readonly bottomTab: BottomTab;
   /** Oldest first, at most `MAX_TOASTS`. */
@@ -71,6 +76,7 @@ export function readReducedMotion(
 export function initialUiState(): UiState {
   return {
     selection: EMPTY_SELECTION,
+    focusedMember: null,
     rightTab: 'properties',
     bottomTab: 'events',
     toasts: [],
@@ -89,12 +95,22 @@ export function resetUiStore(): void {
 // ── Updates ───────────────────────────────────────────────────────────────────────────────────
 
 export function select(selection: Selection): void {
-  useUiStore.setState({ selection });
+  const [only] = selection.nodeIds;
+  const groupSelected =
+    selection.nodeIds.length === 1 && selection.edgeIds.length === 0 && only?.startsWith('group:');
+  // A focused member row only means something while its group node is the selection.
+  useUiStore.setState(groupSelected === true ? { selection } : { selection, focusedMember: null });
+}
+
+/** A member row (or, with null, the group header) was clicked inside a consumer group node. */
+export function focusMember(consumerId: string | null): void {
+  useUiStore.setState({ focusedMember: consumerId });
 }
 
 /** Removes ids that no longer exist (e.g. after a component was removed). */
 export function deselect(id: string): void {
-  const { selection } = useUiStore.getState();
+  const { selection, focusedMember } = useUiStore.getState();
+  if (focusedMember === id) useUiStore.setState({ focusedMember: null });
   if (!selection.nodeIds.includes(id) && !selection.edgeIds.includes(id)) return;
   useUiStore.setState({
     selection: {

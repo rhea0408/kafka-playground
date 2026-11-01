@@ -19,6 +19,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { HostStatus } from '../src/sim/protocol.ts';
 import {
+  DEFAULT_GROUP,
   DEFAULT_PARTITIONS,
   DEFAULT_TOPIC,
   defaultSceneState,
@@ -104,7 +105,7 @@ test('the default scene plays: dots drawn, every partition filled, lag bounded',
   page.on('pageerror', (error) => errors.push(error.message));
   await open(page);
   await expect(node(page, 'p1')).toBeVisible();
-  await expect(node(page, 'c1')).toBeVisible();
+  await expect(node(page, `group:${DEFAULT_GROUP}`)).toBeVisible();
   await expect(node(page, 'b1')).toBeVisible();
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
   // The minimap stays hidden: the scene fits the canvas.
@@ -127,7 +128,7 @@ test('the default scene plays: dots drawn, every partition filled, lag bounded',
     .not.toContain('0');
 
   // Sample the lag badge for ~3 s wall (~30 s sim at 10×, six auto-commit cycles).
-  const lag = node(page, 'c1').locator('[data-slot="lag"]');
+  const lag = node(page, `group:${DEFAULT_GROUP}`).locator('[data-slot="lag"]');
   const samples: number[] = [];
   for (let i = 0; i < 15; i++) {
     const value = await lag.getAttribute('data-lag');

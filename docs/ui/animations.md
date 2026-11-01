@@ -13,7 +13,7 @@ Every orange "ANIM" tag in the wireframes is listed here with its trigger and ti
 | # | Element | Trigger (engine event) | Animation | Timing | Screens |
 |---|---|---|---|---|---|
 | A1 | Message dot on producer → topic edge (decorative, see below) | `RecordProduced` (it already carries the partition the partitioner chose) | 16 px dot with key letter (`∅` for a null key) travels from the producer's handle to the target **partition row** of the topic, so its last stretch leaves the edge line and curves into the row | path length ÷ (120 px/s × sim speed); px are flow px, see below | 02, 05 |
-| A2 | Message dot on topic → consumer edge (decorative, see below) | `RecordConsumed` (when `poll()` returns the record) | Same as A1, from partition row to consumer row; starts only after the A1 dot with the same trace id has arrived | same | 02, 05 |
+| A2 | Message dot on topic → consumer group edge (decorative, see below) | `RecordConsumed` (when `poll()` returns the record) | Same as A1, from the partition row to the **row of the member that consumed it** in its group node (M3-T8); starts only after the A1 dot with the same trace id has arrived | same | 02, 05 |
 | A3 | Replication dot between brokers | `RecordReplicated` | 10 px grey dot along dashed edge | ~1.6 s at 1× | 02, 05 |
 | A4 | New offset cell in partition row | `RecordAppended` | Cell slides in from left + fades in; never waits for dots | 250 ms ease-out | 02 |
 | A5 | Lag badge | Lag derived from each snapshot (sum of HW − committed per partition); there is no `LagChanged` event (M2 Q2, architecture §4.5) | Number counts to new value; badge widens; turns danger color above threshold; never waits for dots | 300 ms | 02, 05 |
@@ -23,6 +23,7 @@ Every orange "ANIM" tag in the wireframes is listed here with its trigger and ti
 | A9 | Follower leaving ISR | `IsrShrunk` | Broker border fades solid → dashed | 300 ms | 03b |
 | A10 | Auto-pause | failure event defined by level | Sim pauses; banner slides down from top of canvas; uninvolved nodes dim to 70% | 250 ms | 03 |
 | A11 | Flow mode (high load) | rate above threshold (v0.2) | Dots cross-fade into aggregated flow lines | 400 ms | — |
+| A12 | Rebalance (M3-T8) | `RebalanceStarted` → `PartitionsRevoked` / `PartitionsLost` → `PartitionsAssigned` → `RebalanceCompleted` (followed through snapshots, which change with these events) | The group header chip changes to "↻ Rebalancing…" until the group is Stable again ("✓ Stable", or "∅ Empty"). Partition chips on a member row fade out when revoked or lost: an eager rebalance fades every chip of every member, a cooperative one only the chips that move. Chips fade in on the row of the member they are assigned to. An idle member shows the flat "◇ Idle: no partition" chip. Never waits for dots | chips 200 ms (UI time, not scaled by sim speed); header chip instant | 05 |
 
 ### Message dots are decorative (A1, A2)
 

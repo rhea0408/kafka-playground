@@ -174,6 +174,24 @@
   animation: kp-row-in 200ms ease-out both;
 }
 
+/* A12: partition chips fade in when assigned and out when revoked (200 ms). */
+@keyframes kp-chip-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.kp-chip-in {
+  animation: kp-fade-in 200ms ease-out both;
+}
+
+.kp-chip-out {
+  animation: kp-chip-out 200ms ease-in both;
+}
+
 /* Reduced motion (uiStore.reducedMotion): no movement, a 150 ms fade only. */
 .kp-cell-fade {
   animation: kp-fade-in 150ms linear both;
@@ -181,6 +199,11 @@
 
 /* Same fallback straight from the media query, in case the store hasn't caught up yet. */
 @media (prefers-reduced-motion: reduce) {
+  .kp-chip-in,
+  .kp-chip-out {
+    animation: none;
+  }
+
   .kp-cell-in,
   .kp-row-in {
     animation: kp-fade-in 150ms linear both;

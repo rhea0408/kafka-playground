@@ -64,8 +64,8 @@ async function buildFlow(page: Page, withConsumer: boolean, topicX = 480): Promi
   await connect(page, handle(page, 'p1', 'out'), handle(page, 't1', 'in'));
   if (withConsumer) {
     await dropFromPalette(page, 'Consumer', 820, 300);
-    await expect(node(page, 'c1')).toBeVisible();
-    await connect(page, handle(page, 't1', 'out'), handle(page, 'c1', 'row:c1'));
+    await expect(node(page, 'group:c1-group')).toBeVisible();
+    await connect(page, handle(page, 't1', 'out'), handle(page, 'group:c1-group', 'in'));
   }
   await expect(page.locator('.react-flow__edge')).toHaveCount(withConsumer ? 2 : 1);
 }
