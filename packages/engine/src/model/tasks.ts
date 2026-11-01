@@ -120,6 +120,20 @@ export type EngineTask =
       readonly memberId: string;
       readonly token: number;
     }
+  /** The consumer's heartbeat thread wakes up to send a Heartbeat (every heartbeat.interval.ms). */
+  | {
+      readonly type: 'ConsumerHeartbeat';
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly token: number;
+    }
+  /** max.poll.interval.ms passed since the application last called poll() (heartbeat thread). */
+  | {
+      readonly type: 'ConsumerPollTimeout';
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly token: number;
+    }
   /** The broker's fetch response reaches the consumer. */
   | {
       readonly type: 'FetchResponse';

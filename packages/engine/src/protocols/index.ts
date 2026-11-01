@@ -6,7 +6,13 @@
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import type { EngineTask } from '../model/tasks.ts';
-import { handleConsumerPoll, handleFetchResponse } from './consume.ts';
+import {
+  handleConsumerCoordinatorResponse,
+  handleConsumerPoll,
+  handleFetchResponse,
+  handleHeartbeatTask,
+  handlePollTimeoutTask,
+} from './consume.ts';
 import { handleFetchExpire, handleFetchRequest } from './fetch.ts';
 import {
   handleCoordinatorRequest,
@@ -43,7 +49,13 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       handleCoordinatorRequest(ctx, task);
       return;
     case 'CoordinatorResponse':
-      // Consumers join groups from M3-T4 on; until then no client sends coordinator requests.
+      handleConsumerCoordinatorResponse(ctx, task);
+      return;
+    case 'ConsumerHeartbeat':
+      handleHeartbeatTask(ctx, task);
+      return;
+    case 'ConsumerPollTimeout':
+      handlePollTimeoutTask(ctx, task);
       return;
     case 'GroupJoinTimer':
       handleGroupJoinTimer(ctx, task);

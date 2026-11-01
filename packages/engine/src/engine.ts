@@ -44,9 +44,14 @@ export function createEngine(options: EngineOptions): Engine {
   return createEngineInternal(options).engine;
 }
 
-function createEngineInternal(options: EngineOptions): {
+/**
+ * The engine plus its kernel and context. Internal: used by replay and by tests that need to
+ * inject a task (e.g. a coordinator answer); not exported from the package.
+ */
+export function createEngineInternal(options: EngineOptions): {
   engine: Engine;
   kernel: Kernel<EngineTask, EngineEventPayload>;
+  context: EngineContext;
 } {
   const networkDelayMs = options.networkDelayMs ?? 1;
   assertSimTime(networkDelayMs);
@@ -93,7 +98,7 @@ function createEngineInternal(options: EngineOptions): {
     on: kernel.on,
     commandLog,
   };
-  return { engine, kernel };
+  return { engine, kernel, context };
 }
 
 /** Builds the initial topology through the same handlers as commands, so the same rules apply. */
