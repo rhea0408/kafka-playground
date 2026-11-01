@@ -201,7 +201,7 @@ describe('live node state (M2-T8)', () => {
     renderCanvas([toFlowNode(C1, { x: 0, y: 0 })]);
     const r = nodeEl('c1').querySelector<HTMLElement>('[data-consumer-row="c1"]');
     if (r === null) throw new Error('no row');
-    expect(within(r).getByText('running')).toBeTruthy();
+    expect(within(r).getByText('stable')).toBeTruthy();
     expect(r.querySelector('[data-slot="offsets"]')?.textContent).toBe('Σ pos 15 · Σ committed 13');
     expect(r.querySelector('[data-slot="lag"]')?.getAttribute('data-lag')).toBe('2');
     expect(within(r).getByText('Lag 2')).toBeTruthy();

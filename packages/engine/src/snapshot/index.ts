@@ -7,10 +7,12 @@
  * Diffs between two snapshots, for sending frames across the worker boundary: diff.ts.
  */
 
-import type { Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
+import type { Assignor, Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
 import type { SimTime } from '../core/clock.ts';
+import type { GroupStateName } from '../model/group.ts';
 import { partitionName, type LogRecord } from '../model/partition.ts';
-import { topicsOfConsumer, type EngineState, type ProducerStats } from '../model/state.ts';
+import type { ConsumerState, EngineState, GroupState, ProducerStats } from '../model/state.ts';
+import type { TopicPartition } from '../protocols/assignors/index.ts';
 
 export interface PartitionSnapshot {
   readonly index: number;
@@ -37,7 +39,7 @@ export interface ProducerSnapshot {
   readonly stats: ProducerStats;
 }
 
-/** One assigned partition, from one consumer's point of view. */
+/** One partition this consumer owns, from its own point of view. */
 export interface ConsumerPartitionSnapshot {
   readonly topic: string;
   readonly partition: number;
@@ -57,22 +59,73 @@ export interface ConsumerPartitionSnapshot {
   readonly fetchLag: number | null;
 }
 
+/**
+ * - `joining`: running, but not (or no longer) in a stable generation: its JoinGroup or SyncGroup
+ *   is pending, or it must rejoin.
+ * - `stable`: in a stable generation with partitions; `idle`: in one without any.
+ * - `stopped`: closed gracefully (StopConsumer); `crashed`: killed or died on an error.
+ */
+export type ConsumerStatus = 'joining' | 'stable' | 'idle' | 'stopped' | 'crashed';
+
 export interface ConsumerSnapshot {
   readonly config: Consumer;
-  readonly status: 'running' | 'stopped';
+  readonly status: ConsumerStatus;
+  /** StopConsumer was asked: it closes once it has processed its current batch. */
+  readonly stopping: boolean;
+  /** Its member id in the group, null before the coordinator gave it one. */
+  readonly memberId: string | null;
+  /** The generation of its current assignment, null outside one. */
+  readonly generation: number | null;
   readonly consumed: number;
+  /** The partitions it owns now, sorted. */
   readonly partitions: readonly ConsumerPartitionSnapshot[];
-  /** Sum of the known per-partition lags. */
+  /** Sum of the known lags of its partitions. */
   readonly totalLag: number;
+}
+
+/** One partition of a topic the group reads. */
+export interface GroupPartitionSnapshot {
+  readonly topic: string;
+  readonly partition: number;
+  /** Consumer id of the member that owns it in the group's current assignment, or null. */
+  readonly owner: string | null;
+  readonly committed: number | null;
+  readonly highWatermark: number;
+  readonly logEndOffset: number;
+  /** HW − committed (kafka-consumer-groups.sh LAG); null without a committed offset. */
+  readonly lag: number | null;
+}
+
+export interface GroupMemberSnapshot {
+  readonly memberId: string;
+  readonly consumerId: string;
+  /** Its partitions in the current generation (empty while a rebalance is in progress). */
+  readonly partitions: readonly TopicPartition[];
 }
 
 export interface GroupSnapshot {
   readonly groupId: string;
+  /** The coordinator's state (ClassicGroupState). */
+  readonly state: GroupStateName;
+  readonly generation: number;
+  /** The assignor chosen for this generation; null while Empty. */
+  readonly protocol: Assignor | null;
+  /** Member id of the leader; null without members. */
+  readonly leader: string | null;
+  /** In join order. */
+  readonly members: readonly GroupMemberSnapshot[];
   readonly committed: readonly {
     readonly topic: string;
     readonly partition: number;
     readonly offset: number;
   }[];
+  /**
+   * Every partition of the topics the members subscribe to, and of topics the group has committed
+   * offsets for, with owner, committed offset and lag (FR-2.9).
+   */
+  readonly partitions: readonly GroupPartitionSnapshot[];
+  /** Sum of the known partition lags. */
+  readonly totalLag: number;
 }
 
 export interface BrokerSnapshot {
@@ -133,41 +186,103 @@ export function buildSnapshot(
       config: copyPlain(p.config),
       stats: { ...p.stats },
     })),
-    consumers: [...state.consumers.values()].map((consumer) => {
-      const committed = state.groups.get(consumer.config.groupId)?.committed;
-      const partitions = topicsOfConsumer(state, consumer.config.id).flatMap((topic) =>
-        topic.partitions.map((p): ConsumerPartitionSnapshot => {
-          const key = partitionName(topic.config.id, p.index);
-          const position = consumer.positions.get(key)?.offset ?? null;
-          const saved = committed?.get(key) ?? null;
-          return {
-            topic: topic.config.id,
-            partition: p.index,
-            position,
-            committed: saved,
-            highWatermark: p.highWatermark,
-            lag: saved === null ? null : Math.max(0, p.highWatermark - saved),
-            fetchLag: position === null ? null : Math.max(0, p.highWatermark - position),
-          };
-        }),
-      );
+    consumers: [...state.consumers.values()].map((c) => consumerSnapshot(state, c)),
+    groups: [...state.groups.values()].map((g) => groupSnapshot(state, g)),
+    connections: state.connections.map(copyPlain),
+  };
+}
+
+function consumerStatus(consumer: ConsumerState): ConsumerStatus {
+  if (consumer.status === 'stopped') return 'stopped';
+  if (consumer.status === 'crashed') return 'crashed';
+  const { group } = consumer;
+  if (group.state !== 'stable' || group.pendingAssignment !== null) return 'joining';
+  return group.owned.length === 0 ? 'idle' : 'stable';
+}
+
+function consumerSnapshot(state: EngineState, consumer: ConsumerState): ConsumerSnapshot {
+  const committed = state.groups.get(consumer.config.groupId)?.committed;
+  const partitions = consumer.group.owned.flatMap((tp): ConsumerPartitionSnapshot[] => {
+    const p = state.topics.get(tp.topic)?.partitions[tp.partition];
+    if (p === undefined) return [];
+    const key = partitionName(tp.topic, tp.partition);
+    const position = consumer.positions.get(key)?.offset ?? null;
+    const saved = committed?.get(key) ?? null;
+    return [
+      {
+        topic: tp.topic,
+        partition: tp.partition,
+        position,
+        committed: saved,
+        highWatermark: p.highWatermark,
+        lag: saved === null ? null : Math.max(0, p.highWatermark - saved),
+        fetchLag: position === null ? null : Math.max(0, p.highWatermark - position),
+      },
+    ];
+  });
+  const { group } = consumer;
+  return {
+    config: copyPlain(consumer.config),
+    status: consumerStatus(consumer),
+    stopping: consumer.stopRequested,
+    memberId: group.memberId === '' ? null : group.memberId,
+    generation: group.generation < 0 ? null : group.generation,
+    consumed: consumer.stats.consumed,
+    partitions,
+    totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+  };
+}
+
+const splitKey = (key: string): TopicPartition => {
+  const dash = key.lastIndexOf('-');
+  return { topic: key.slice(0, dash), partition: Number(key.slice(dash + 1)) };
+};
+
+function groupSnapshot(state: EngineState, group: GroupState): GroupSnapshot {
+  const members = [...group.members.values()];
+  const owner = new Map<string, string>();
+  for (const m of members) {
+    for (const tp of m.assignment) owner.set(partitionName(tp.topic, tp.partition), m.consumerId);
+  }
+  // Topics: what the members subscribe to, then topics with committed offsets, in that order.
+  const topics = [
+    ...new Set([
+      ...members.flatMap((m) => m.metadata.subscription),
+      ...[...group.committed.keys()].map((k) => splitKey(k).topic),
+    ]),
+  ];
+  const partitions = topics.flatMap((topic) =>
+    (state.topics.get(topic)?.partitions ?? []).map((p): GroupPartitionSnapshot => {
+      const key = partitionName(topic, p.index);
+      const committed = group.committed.get(key) ?? null;
       return {
-        config: copyPlain(consumer.config),
-        // Until the M3-T7 snapshot statuses: a crashed consumer shows as stopped.
-        status: consumer.status === 'running' ? ('running' as const) : ('stopped' as const),
-        consumed: consumer.stats.consumed,
-        partitions,
-        totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+        topic,
+        partition: p.index,
+        owner: owner.get(key) ?? null,
+        committed,
+        highWatermark: p.highWatermark,
+        logEndOffset: p.logEndOffset,
+        lag: committed === null ? null : Math.max(0, p.highWatermark - committed),
       };
     }),
-    groups: [...state.groups.entries()].map(([groupId, group]) => ({
-      groupId,
-      committed: [...group.committed.entries()].map(([key, offset]) => {
-        const dash = key.lastIndexOf('-');
-        return { topic: key.slice(0, dash), partition: Number(key.slice(dash + 1)), offset };
-      }),
+  );
+  return {
+    groupId: group.groupId,
+    state: group.state,
+    generation: group.generation,
+    protocol: group.protocol,
+    leader: group.leader,
+    members: members.map((m) => ({
+      memberId: m.memberId,
+      consumerId: m.consumerId,
+      partitions: m.assignment.map((tp) => ({ topic: tp.topic, partition: tp.partition })),
     })),
-    connections: state.connections.map(copyPlain),
+    committed: [...group.committed.entries()].map(([key, offset]) => ({
+      ...splitKey(key),
+      offset,
+    })),
+    partitions,
+    totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
   };
 }
 

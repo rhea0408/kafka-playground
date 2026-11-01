@@ -18,7 +18,12 @@ const GROUPS = [
     label: 'Records',
     types: ['RecordProduced', 'RecordAppended', 'ProduceAcked', 'ProduceFailed', 'RecordConsumed'],
   },
-  { label: 'Offsets', types: ['OffsetCommitted', 'CommitFailed'] },
+  // Commits and what they mean for delivery (FR-2.8): duplicates and skipped records.
+  {
+    label: 'Commit',
+    types: ['OffsetCommitted', 'CommitFailed', 'DuplicateProcessed', 'RecordsSkipped'],
+  },
+  // Group membership and rebalancing (FR-2.7), named after the rebalance listener callbacks.
   {
     label: 'Group',
     types: [
@@ -32,10 +37,7 @@ const GROUPS = [
       'ConsumerIdle',
     ],
   },
-  {
-    label: 'Consumers',
-    types: ['ConsumerStarted', 'ConsumerStopped', 'DuplicateProcessed', 'RecordsSkipped'],
-  },
+  { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
   {
     label: 'Topology',
     types: ['ComponentAdded', 'ComponentRemoved', 'Connected', 'Disconnected', 'ConfigUpdated'],

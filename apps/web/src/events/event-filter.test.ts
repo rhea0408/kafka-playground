@@ -44,7 +44,7 @@ describe('event types', () => {
     expect(ALL_EVENT_TYPES).toHaveLength(24);
     expect(EVENT_TYPE_GROUPS.map((g) => g.label)).toEqual([
       'Records',
-      'Offsets',
+      'Commit',
       'Group',
       'Consumers',
       'Topology',

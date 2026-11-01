@@ -6,7 +6,7 @@
  * snapshots and never waits for message dots (animations.md, ADR 0008).
  */
 
-import type { LogRecord } from '@kp/engine';
+import type { LogRecord, ConsumerSnapshot } from '@kp/engine';
 import { NodeToolbar, Position } from '@xyflow/react';
 import {
   useCallback,
@@ -196,14 +196,27 @@ export function LagBadge({ lag }: { lag: number | null }) {
   );
 }
 
-function ConsumerStatus({ status }: { status: 'running' | 'stopped' }) {
+/** Icon per consumer status; the status word is always shown next to it (never icon alone). */
+const STATUS_ICON: { readonly [S in ConsumerSnapshot['status']]: string } = {
+  joining: '↻',
+  stable: '▶',
+  idle: '◇',
+  stopped: '■',
+  crashed: '✕',
+};
+
+function ConsumerStatus({ status }: { status: ConsumerSnapshot['status'] }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px]" data-slot="status">
-      <span aria-hidden="true">{status === 'running' ? '▶' : '■'}</span>
+      <span aria-hidden="true">{STATUS_ICON[status]}</span>
       {status}
     </span>
   );
 }
+
+/** Whether the consumer process is running (any status but stopped / crashed). */
+export const isRunning = (status: ConsumerSnapshot['status']): boolean =>
+  status !== 'stopped' && status !== 'crashed';
 
 const dash = (n: number | null): string => (n === null ? '-' : formatCount(n));
 
@@ -361,7 +374,7 @@ function ConsumerAction({ consumerId }: { consumerId: string }) {
   const actions = useActions();
   const status = useConsumerStatus(consumerId);
   if (status === undefined) return null;
-  const running = status === 'running';
+  const running = isRunning(status);
   return (
     <button
       type="button"

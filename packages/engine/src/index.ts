@@ -14,6 +14,8 @@ export { createEventHasher, hashEvents, type EventHasher } from './events/hash.t
 export { partitionName, type LogRecord } from './model/partition.ts';
 export * from './snapshot/index.ts';
 export { murmur2, partitionForKey, toPositive, utf8Bytes } from './protocols/partitioner.ts';
-export type { ProduceError } from './model/tasks.ts';
+export type { CommitOffset, GroupError, ProduceError } from './model/tasks.ts';
+export type { GroupStateName, MemberRemovedReason, RebalanceReason } from './model/group.ts';
+export type { TopicPartition } from './protocols/assignors/index.ts';
 export type { ProducerStats } from './model/state.ts';
 export { createEngine, replayCommandLog, type Engine, type EngineOptions } from './engine.ts';
