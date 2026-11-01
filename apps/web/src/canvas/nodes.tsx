@@ -13,6 +13,7 @@ import {
   ConsumerLive,
   ConsumerToolbar,
   GroupHeaderLive,
+  GroupHeaderStats,
   PartitionLive,
   ProducerCounters,
   useHoverToolbar,
@@ -229,18 +230,23 @@ export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlo
     >
       <ConsumerToolbar consumerId={active ?? undefined} toolbar={toolbar} />
       <div
-        className="flex items-center gap-1.5 border-b border-divider text-[13px] font-semibold"
+        className="flex flex-col justify-center border-b border-divider"
         style={{ height: GROUP_HEADER_HEIGHT }}
         data-slot="group-header"
         onClick={() => {
           focusMember(null);
         }}
       >
-        <span className="min-w-0 truncate" title={`Consumer group ${data.groupId}`}>
-          <span className="sr-only">Group: </span>
-          {data.groupId}
-        </span>
-        <GroupHeaderLive groupId={data.groupId} />
+        <div className="flex min-w-0 items-center gap-1.5 text-[13px] leading-4 font-semibold">
+          <span className="min-w-0 truncate" title={`Consumer group ${data.groupId}`}>
+            <span className="sr-only">Group: </span>
+            {data.groupId}
+          </span>
+          <GroupHeaderLive groupId={data.groupId} />
+        </div>
+        <div className="leading-3">
+          <GroupHeaderStats groupId={data.groupId} />
+        </div>
       </div>
       <Handle
         type="target"

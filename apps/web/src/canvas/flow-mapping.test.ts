@@ -51,7 +51,7 @@ describe('toFlowNodes / toFlowEdges', () => {
       ['b1', 'broker', 226, 84],
       ['p1', 'producer', 150, 72],
       ['orders', 'topic', 230, 36 + 3 * 48],
-      ['group:c1-group', 'consumerGroup', 220, 92],
+      ['group:c1-group', 'consumerGroup', 240, 92],
     ]);
     // A missing position falls back to the origin.
     expect(nodes[3]?.position).toEqual({ x: 0, y: 0 });

@@ -22,7 +22,7 @@ describe('node sizes (ui-spec "Canvas node sizes")', () => {
     expect(nodeSize('broker')).toEqual({ width: 226, height: 84 });
     expect(nodeSize('topic', 1)).toEqual({ width: 230, height: 36 + 48 });
     expect(nodeSize('topic', 4)).toEqual({ width: 230, height: 228 }); // wireframe 05
-    expect(nodeSize('consumer')).toEqual({ width: 220, height: 92 });
+    expect(nodeSize('consumer')).toEqual({ width: 240, height: 92 });
   });
 
   it('a consumer group grows by 48 px per row (wireframe 05: 2 rows → 140)', () => {

@@ -83,7 +83,7 @@ test('manual record with key D lands in partition 0 of a 3-partition topic', asy
   await page.getByRole('tab', { name: 'Partition log' }).click();
   const log = page.getByTestId('partition-log');
   await log.getByLabel('Topic', { exact: true }).selectOption('t1');
-  await log.getByLabel('Partition', { exact: true }).selectOption('0');
+  await log.getByRole('radio', { name: 'P0' }).click();
   await expect(keyDRow(page)).toHaveCount(1);
   await expect(keyDRow(page).locator('td').nth(1)).toHaveText('D');
   await expect(log.locator('[data-marker="hw"]')).toBeVisible();
@@ -117,8 +117,8 @@ test('with one partition, key D is simply in partition 0', async ({ page }) => {
   await produceD(page);
   await page.getByRole('tab', { name: 'Partition log' }).click();
   await expect(
-    page.getByTestId('partition-log').getByLabel('Partition', { exact: true }),
-  ).toHaveValue('0');
+    page.getByTestId('partition-log').getByRole('radio', { name: 'P0' }),
+  ).toHaveAttribute('aria-checked', 'true');
   await expect(keyDRow(page)).toHaveCount(1);
 });
 

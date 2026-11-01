@@ -198,3 +198,13 @@ Checked on apache/kafka trunk (2026-11-01): `GroupMetadataManager`, `ClassicGrou
 | T10-2 | Group panel (header selected): state line (icon + words, assignor), stat tiles **Members · Generation · Total lag** (104 × 48 like the topic tiles), the assignor select, a **partition table** (partition, owner, committed, LEO, lag; lag above 100 gets ⚠ and the danger color, never color alone), and the members with the topics each reads (click to edit one). | Separate tab | One place for FR-2.9. |
 | T10-3 | The group's assignor select sends one `UpdateConfig` per member (the list is per consumer in Kafka); when members differ the help text says so. It applies at the next rebalance (Q5). | Group-level config | `partition.assignment.strategy` is a client config. |
 | T10-4 | Subscription-mismatch chip (Q6): a flat muted chip with ⚠ when members read different topic sets: "Members read different topics. Kafka allows it, but range assignment then looks uneven." | Refuse mismatched subscriptions | Kafka allows it. |
+
+## T11 · Partition log and lag per group
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T11-1 | Partition log: with two or more groups reading the partition, a "Marker for" select picks the group whose committed line is drawn (default: the first group by id; kept in `uiStore.logGroup`). The summary still lists every group's committed offset, lag and member positions. | Draw every group's line | One committed line per group made the log hard to read with several groups (milestone T11). |
+| T11-2 | The partition picker is now a **segmented control** (radio group P0 P1 …, arrow keys move) as in wireframe 05c; topics with more than 8 partitions fall back to the select. Closes the F-g item deferred in T0-7. | Keep the select | Wireframe. |
+| T11-3 | Member rows' lag badges already show only that member's partitions (T7-1). The **group total** is on a second header line: `gen N · group lag M` (⚠ and danger color above 100). The header is now two lines (id + state chip, then the stats). | Total in the chip | It fits, and the id no longer truncates. |
+| T11-4 | **The group node is 240 wide** (ui-spec allows 220–240) with 216 px rows, so the id, state and stats fit; the default scene's group moved to x = 512 so it still fits the smallest canvas (766 px). ui-spec updated. | Keep 220 / 196 | "orders-app" was truncated next to the chip. |
+| T11-5 | **Lag chart (stretch) not done**: it stays a placeholder until M4, as the milestone allows. | uPlot chart now | Time went to the engine and group UI. |

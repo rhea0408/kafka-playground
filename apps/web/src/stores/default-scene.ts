@@ -48,7 +48,7 @@ const INPUTS: readonly Record<string, unknown>[] = [
 const POSITIONS: Readonly<Record<string, XYPosition>> = {
   [DEFAULT_PRODUCER]: { x: 16, y: 112 },
   [DEFAULT_TOPIC]: { x: 240, y: 64 },
-  [DEFAULT_CONSUMER]: { x: 544, y: 112 },
+  [DEFAULT_CONSUMER]: { x: 512, y: 112 },
   [INITIAL_BROKER_ID]: { x: 240, y: 288 },
 };
 
