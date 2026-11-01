@@ -99,10 +99,16 @@ Partition    { id, leader: BrokerId|null, replicas: BrokerId[], isr: BrokerId[],
 Record       { offset, key, value, ts, producerId, traceId }
 Producer     { id, config: { acks, retries, idempotence, partitioner, linger, rate, keyStrategy },
                inflight, stats }
-ConsumerGroup{ id, generation, coordinator, members, assignment: Map<partition, memberId>,
-               committed: Map<partition, offset>, state: 'Stable'|'PreparingRebalance'|… }
-Consumer     { id, groupId, status, position: Map<partition, offset>, config: { autoCommit,
-               commitInterval, maxPollRecords, processingTimeMs, sessionTimeout } }
+ConsumerGroup{ id, state: 'Empty'|'PreparingRebalance'|'CompletingRebalance'|'Stable'|'Dead',
+               generation, protocol (assignor), leader (member id), members (join order),
+               committed: Map<partition, offset>, timers }            // coordinator side, M3
+GroupMember  { memberId, consumerId, metadata: { protocols, subscription, ownedPartitions,
+               sessionTimeoutMs, rebalanceTimeoutMs }, awaitingJoin, awaitingSync, assignment }
+Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map<partition, offset>,
+               group: { memberId, generation, state: 'unjoined'|'preparing'|'completing'|'stable',
+                        owned, rejoinNeeded }, batch, config: { autoCommit, commitInterval,
+               commitMode, maxPollRecords, processingTimeMs, sessionTimeout, heartbeatInterval,
+               maxPollInterval, partitionAssignmentStrategy } }
 ```
 
 ### 4.3 Protocols modelled in MVP (simplified, documented)
@@ -115,27 +121,30 @@ Consumer     { id, groupId, status, position: Map<partition, offset>, config: { 
 | ISR | Follower removed if it hasn't caught up within `replica.lag.time.max.ms`; re-added once caught up | |
 | Controller & election | On broker down, the controller picks the new leader from the ISR (clean election only); leader epoch++ | Election delay is a fixed configurable value |
 | Data loss | Records that exist only on a failed leader are truncated when it rejoins as a follower. Happens with acks=0/1, **and with acks=all when the ISR had shrunk to the leader alone and min.insync.replicas = 1** | Truncation to HW, epoch-based |
-| Group coordinator | Join/Sync/Heartbeat, session timeout, generations; range / round-robin / sticky / cooperative-sticky assignors | Classic protocol modelled first; the new KIP-848 consumer protocol is noted for later |
-| Commits | Auto (interval) vs manual sync/async; on crash the new owner resumes from the last committed offset → duplicates or skips | |
+| Group coordinator | Classic protocol (ADR 0004): FindCoordinator via `__consumer_offsets` partition, JoinGroup / SyncGroup / Heartbeat / LeaveGroup, initial rebalance delay, rebalance and session timeouts, generations, the client leader running range / round-robin / sticky / cooperative-sticky; eager vs cooperative rebalancing; the poll timeout (zombies) | KIP-848 later; no static membership or rack-aware assignment; MEMBER_ID_REQUIRED round trip not modelled (simplifications) |
+| Commits | Auto (interval) or the `commitMode` game setting (commitSync / commitAsync after processing, commitSync before processing); OffsetCommit validated by member and generation; on crash the new owner resumes from the last committed offset → `DuplicateProcessed` / `RecordsSkipped` (teaching aid) | Commits stored in coordinator memory, not a replicated `__consumer_offsets` |
 
 **Game-time defaults:** real defaults (e.g. `session.timeout.ms` = 45 s) are too slow for gameplay. Levels can use shortened values, always shown as "game-tuned" with the real default beside them (NFR-3.3).
 
 ### 4.4 Commands (UI → engine)
-Built (M1–M2): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer`, `RestartConsumer`, `ProduceManual`. Planned: `KillBroker`, `RestartBroker` (M4).
+Built (M1–M3): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer` (a crash, M3), `StopConsumer` (graceful close, M3), `RestartConsumer` (a new member, M3), `ProduceManual`. Planned: `KillBroker`, `RestartBroker` (M4).
 **Not commands:** `SetSpeed`, `Step`, `Pause` / `Play` and `Reset` are calls on the worker host (`setSpeed`, `step` / `stepBy`, `pause` / `play`, `init`); Reset re-initialises the engine from the current canvas. They never change what happens in the simulation, so they stay out of the command log. Rewind (`RewindTo`, scrubber / "Try again", §4.7, M4) replays the command log and so is expected to be a host operation too.
-`UpdateConfig { id, patch }` is validated with `@kp/schema` on the merged config: topic partitions can only grow (the KRaft controller's `InvalidPartitionsException` text otherwise), producer changes apply to the next record (a rate change restarts the send schedule), consumer changes apply from the next `poll()`; ids, `group.id`, `auto.offset.reset`, the replication factor and `broker.rack` can't change (see `docs/simplifications.md`, "Config changes at run time"). A patch that changes nothing is accepted without an event or log entry.
+`UpdateConfig { id, patch }` is validated with `@kp/schema` on the merged config: topic partitions can only grow (the KRaft controller's `InvalidPartitionsException` text otherwise), producer changes apply to the next record (a rate change restarts the send schedule), consumer changes apply from the next `poll()` (a `group.id` change closes the consumer and joins the other group, M3); ids, the replication factor and the broker configs can't change (see `docs/simplifications.md`, "Config changes at run time"). A patch that changes nothing is accepted without an event or log entry.
 Each accepted command is appended to the **command log** as `{ t, afterStep, command }` (sim time plus the number of tasks already processed, so a command dispatched between two tasks of the same millisecond replays at the same place). The log is used for replay, save files, the failure replay in Fix, and CI playback.
 
 ### 4.5 Domain events (engine → UI and level runtime)
-Built (M1–M2): `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated` (M2, `{ id, before, after }`), `RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `ConsumerStopped`, `ConsumerStarted`.
-Planned: `RecordReplicated`, `HighWatermarkAdvanced`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss), `RebalanceStarted`, `RebalanceCompleted`, `PartitionAssigned`, `ConsumerIdle`, `DuplicateProcessed`.
+Built (M1–M2): `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated` (M2, `{ id, before, after }`), `RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted` (with `memberId`, `generation` since M3), `ConsumerStopped` (with `reason: crash | close | error` since M3), `ConsumerStarted`.
+Built (M3, groups): `MemberJoined`, `MemberRemoved {reason}`, `RebalanceStarted {generation, reason}`, `RebalanceCompleted {generation, protocol, leader, members}`, `PartitionsAssigned`, `PartitionsRevoked`, `PartitionsLost` (named after `ConsumerRebalanceListener`), `ConsumerIdle`, `CommitFailed {error}`, and the teaching-aid events `DuplicateProcessed` and `RecordsSkipped {from, to}`.
+Planned: `RecordReplicated`, `HighWatermarkAdvanced`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss).
 **No `LagChanged` event** (decided in M2, Q2): lag moves on almost every append, so one event per change would roughly double the event stream. The UI derives lag from snapshots (sum of HW − committed offset per partition, as `kafka-consumer-groups.sh` reports it) and drives the lag badge (A5) from that. When the level runtime (M6) needs a trigger, add a threshold event such as `LagThresholdCrossed`, emitted only when lag crosses a level-defined value.
 Typed as a discriminated union in `packages/engine/events`. This single stream feeds the UI, animations (`docs/ui/animations.md`), tips, objectives, alerts, and later the AI tutor (NFR-8.4).
 
 ### 4.6 Invariants (property tests with fast-check)
 - For every partition: `hw ≤ leo(leader)` and `hw ≤ leo(r)` for every r in the ISR
 - The leader is always in the ISR; the ISR is a subset of the replicas
-- Within one group generation, each partition is assigned to at most one consumer
+- Within one group generation, each partition is assigned to at most one consumer (M3)
+- An eager assignment covers every partition of an assigned topic from 0 without gaps (M3; the leader's metadata may not know the newest partitions yet, and cooperative rounds leave moving partitions unowned on purpose)
+- An accepted commit comes from a member of the current generation that owns the partition; generations never go backwards; a member only reads partitions the rebalance listener gave it (M3). Deliberately not an invariant: "two consumers never read one partition at the same time" (zombies can)
 - With `acks=all` and `ISR ≥ minIsr ≥ 2` at ack time, an acknowledged record is never truncated after a single broker failure
 - Per partition, offsets are contiguous and records with the same key keep produce order
 
@@ -293,3 +302,6 @@ packages/fidelity/scenarios/*.json   ← shared scenario definitions
 5. murmur2 partitioner everywhere for cross-language consistency
 6. Fidelity harness in MVP as an engine correctness check
 7. Rewind by deterministic replay from checkpoints
+
+Written so far: 0001–0003 (M2), 0008 message timing (M2), **0004 classic consumer group protocol (M3**, numbered as the M3 task list asked; this takes the number planned above for the level-YAML ADR, which gets the next free number when it is written).
+
