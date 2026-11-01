@@ -68,7 +68,7 @@ export function KindChip({ meta }: { meta: FieldMeta }) {
     case 'not-modelled':
       return (
         <span className={CHIP} data-chip="not-modelled">
-          coming in {meta.arrives}
+          {meta.arrives === 'later' ? 'not modelled' : `coming in ${meta.arrives}`}
         </span>
       );
   }

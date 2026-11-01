@@ -261,7 +261,7 @@ describe('nextComponentId', () => {
       ...state,
       components: [
         ...state.components,
-        { kind: 'broker', id: 'b7', rack: null },
+        { kind: 'broker', id: 'b7', rack: null, groupInitialRebalanceDelayMs: 3000 },
         { kind: 'topic', id: 'orders', partitions: 1, replicationFactor: 1, minInsyncReplicas: 1 },
       ],
     };

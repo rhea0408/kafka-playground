@@ -61,6 +61,7 @@ export function describeValue(value: unknown, control: Control): string {
   }
   if (typeof value === 'boolean') return value ? 'true' : 'false';
   if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(String).join(', ');
   return JSON.stringify(value);
 }
 
@@ -73,6 +74,7 @@ export function toInputText(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(String).join(', ');
   return JSON.stringify(value);
 }
 

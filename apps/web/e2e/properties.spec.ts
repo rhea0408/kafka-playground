@@ -68,7 +68,12 @@ test('edit a consumer field; read-only and not-modelled fields explain themselve
   const group = panel(page).getByLabel('Group', { exact: true });
   await expect(group).toHaveAttribute('readonly', '');
   await expect(panel(page)).toContainText('Consumer groups arrive in M3');
-  await expect(panel(page).getByLabel('Session timeout', { exact: true })).toBeDisabled();
+  await expect(panel(page).getByLabel('Group instance id', { exact: true })).toBeDisabled();
+  // M3: the session timeout is game-tuned and shows Kafka's default beside it.
+  await expect(panel(page).getByLabel('Session timeout', { exact: true })).toBeEditable();
+  await expect(panel(page).locator('[data-field="sessionTimeoutMs"]')).toContainText(
+    'Kafka default: 45000 ms (45 s)',
+  );
 
   // The (i) tooltip on keyboard focus.
   await panel(page).getByRole('img', { name: 'About Fetch max wait' }).focus();

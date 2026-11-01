@@ -24,8 +24,10 @@
 
 import {
   AcksSchema,
+  AssignorSchema,
   AutoOffsetResetSchema,
   BrokerSchema,
+  CommitModeSchema,
   ConsumerSchema,
   ProducerSchema,
   TopicSchema,
@@ -43,8 +45,11 @@ export type FieldKind = 'kafka' | 'game-tuned' | 'game-setting' | 'not-modelled'
 /** Units the panel knows how to print ("300000 ms (5 min)", "16384 bytes (16 KiB)"). */
 export type Unit = 'ms' | 'bytes' | 'records' | 'msg/s' | 'replicas';
 
-/** Where a not-modelled feature arrives (architecture §11 and the roadmap). */
-export type Milestone = 'M3' | 'M4' | 'v0.4';
+/**
+ * Where a not-modelled feature arrives (architecture §11 and the roadmap); `later` for configs
+ * with no planned milestone yet (e.g. static membership, M3 out of scope).
+ */
+export type Milestone = 'M3' | 'M4' | 'v0.4' | 'later';
 
 export type Control =
   | { readonly type: 'int'; readonly unit?: Unit }
@@ -55,11 +60,14 @@ export type Control =
   /** Topic partitions: a stepper that can only grow, applied with an explicit button. */
   | { readonly type: 'partitions' }
   /** Producer key strategy: a strategy picker plus its keys. */
-  | { readonly type: 'keyStrategy' };
+  | { readonly type: 'keyStrategy' }
+  /** An ordered list chosen from presets (partition.assignment.strategy). */
+  | { readonly type: 'presetList'; readonly presets: readonly (readonly string[])[] };
 
 /** A Kafka default: a value (compared with the schema default in tests) or "no default". */
 export type KafkaDefault =
-  { readonly value: string | number | boolean | null } | { readonly none: string };
+  | { readonly value: string | number | boolean | null | readonly string[] }
+  | { readonly none: string };
 
 interface BaseMeta {
   /** Plain-language label. */
@@ -116,6 +124,16 @@ export const FIELD_META = {
       help: 'Which rack or availability zone the broker is in. Kafka uses it to spread replicas over racks.',
       readOnly:
         'broker.rack is a static broker config: Kafka reads it only when the broker starts. Broker restarts arrive in M4.',
+    },
+    groupInitialRebalanceDelayMs: {
+      label: 'Initial rebalance delay',
+      kafkaName: 'group.initial.rebalance.delay.ms',
+      kind: 'kafka',
+      kafkaDefault: { value: 3000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'When a new (empty) group gets its first member, the group coordinator waits this long for more members before the first rebalance, and waits again while members keep joining.',
+      readOnly:
+        'group.initial.rebalance.delay.ms is a static broker config: Kafka reads it only when the broker starts. Broker restarts arrive in M4.',
     },
   },
   topic: {
@@ -272,6 +290,50 @@ export const FIELD_META = {
       control: { type: 'int', unit: 'ms' },
       help: 'Time the application spends on each record before it calls poll() again. Raise it to make a slow consumer.',
     },
+    sessionTimeoutMs: {
+      label: 'Session timeout',
+      kafkaName: 'session.timeout.ms',
+      kind: 'game-tuned',
+      // 45 s since Kafka 3.0 (KIP-735).
+      kafkaDefault: { value: 45_000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'If the group coordinator hears no heartbeat for this long, it removes the consumer from the group and rebalances. This is how a crashed consumer is noticed. Must be between the broker’s group.min.session.timeout.ms (6 s) and group.max.session.timeout.ms (30 min).',
+    },
+    heartbeatIntervalMs: {
+      label: 'Heartbeat interval',
+      kafkaName: 'heartbeat.interval.ms',
+      kind: 'kafka',
+      kafkaDefault: { value: 3000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'How often the consumer’s background heartbeat thread tells the group coordinator it is alive, and hears about rebalances. Must be lower than session.timeout.ms (usually at most a third).',
+    },
+    maxPollIntervalMs: {
+      label: 'Max poll interval',
+      kafkaName: 'max.poll.interval.ms',
+      kind: 'game-tuned',
+      kafkaDefault: { value: 300_000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'The longest your code may take between two poll() calls. After that the consumer leaves the group and its partitions go to others. Also how long a rebalance waits for members to rejoin.',
+    },
+    partitionAssignmentStrategy: {
+      label: 'Assignment strategy',
+      kafkaName: 'partition.assignment.strategy',
+      kind: 'kafka',
+      kafkaDefault: { value: ['range', 'cooperative-sticky'] },
+      control: {
+        type: 'presetList',
+        presets: [['range', 'cooperative-sticky'], ...AssignorSchema.options.map((name) => [name])],
+      },
+      help: 'Assignors this consumer supports, in preference order; the group uses one every member supports. Rebalancing is cooperative only when every listed assignor is cooperative, so the default list rebalances eagerly with range. Applies at the next rebalance.',
+    },
+    commitMode: {
+      label: 'Commit mode',
+      kind: 'game-setting',
+      standsFor:
+        'Stands in for how your code commits: nothing (auto), commitSync() or commitAsync() after processing, or commitSync() before processing.',
+      control: { type: 'enum', options: CommitModeSchema.options },
+      help: 'auto: rely on enable.auto.commit. sync/async-after-processing: commit after each poll()’s records are processed (at-least-once). sync-before-processing: commit right after poll() (at-most-once).',
+    },
   },
 } as const satisfies MetaTable;
 
@@ -319,25 +381,14 @@ export const EXTRA_FIELDS: { readonly [K in ComponentKind]: readonly ExtraFieldM
   ],
   consumer: [
     {
-      key: 'sessionTimeoutMs',
-      label: 'Session timeout',
-      kafkaName: 'session.timeout.ms',
+      key: 'groupInstanceId',
+      label: 'Group instance id',
+      kafkaName: 'group.instance.id',
       kind: 'not-modelled',
-      // 45 s since Kafka 3.0 (KIP-735).
-      kafkaDefault: { value: 45_000 },
-      arrives: 'M3',
-      control: { type: 'int', unit: 'ms' },
-      help: 'If the group coordinator hears no heartbeat for this long, it removes the consumer from the group and rebalances.',
-    },
-    {
-      key: 'heartbeatIntervalMs',
-      label: 'Heartbeat interval',
-      kafkaName: 'heartbeat.interval.ms',
-      kind: 'not-modelled',
-      kafkaDefault: { value: 3000 },
-      arrives: 'M3',
-      control: { type: 'int', unit: 'ms' },
-      help: 'How often the consumer tells the group coordinator it is alive.',
+      kafkaDefault: { value: null },
+      arrives: 'later',
+      control: { type: 'text' },
+      help: 'Static membership (KIP-345): a consumer that restarts with the same id gets its partitions back without a rebalance, as long as it returns within session.timeout.ms.',
     },
   ],
 };

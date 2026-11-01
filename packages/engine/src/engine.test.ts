@@ -25,7 +25,9 @@ describe('createEngine', () => {
     });
     const snap = engine.getSnapshot();
     expect(snap.t).toBe(0);
-    expect(snap.brokers).toEqual([{ config: { kind: 'broker', id: 'b1', rack: null } }]);
+    expect(snap.brokers).toEqual([
+      { config: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 } },
+    ]);
     expect(snap.topics[0]?.partitions.map((p) => [p.index, p.leader, p.logEndOffset])).toEqual([
       [0, 'b1', 0],
       [1, 'b1', 0],
@@ -218,7 +220,7 @@ describe('command log and replay', () => {
     component.id = 'changed';
     expect(engine.commandLog[0]?.command).toEqual({
       type: 'AddComponent',
-      component: { kind: 'broker', id: 'b1', rack: null },
+      component: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 },
     });
   });
 });

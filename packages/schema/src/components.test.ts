@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { ConsumerSchema, ProducerSchema, TopicNameSchema, TopicSchema } from './components.ts';
+import {
+  BrokerSchema,
+  ConsumerSchema,
+  ProducerSchema,
+  TopicNameSchema,
+  TopicSchema,
+} from './components.ts';
 import { parseComponent } from './topology.ts';
 
 describe('component defaults', () => {
@@ -55,6 +61,11 @@ describe('component defaults', () => {
       fetchMaxWaitMs: 500,
       metadataMaxAgeMs: 300_000,
       processingTimeMs: 0,
+      sessionTimeoutMs: 10_000, // game-tuned; Kafka 45000
+      heartbeatIntervalMs: 3000,
+      maxPollIntervalMs: 30_000, // game-tuned; Kafka 300000
+      partitionAssignmentStrategy: ['range', 'cooperative-sticky'],
+      commitMode: 'auto',
     });
     expect(ConsumerSchema.parse({ kind: 'consumer', id: 'c1', groupId: 'billing' }).groupId).toBe(
       'billing',
@@ -85,7 +96,7 @@ describe('parseComponent', () => {
   it('parses by kind and applies defaults', () => {
     expect(parseComponent({ kind: 'broker', id: 'b1' })).toEqual({
       ok: true,
-      value: { kind: 'broker', id: 'b1', rack: null },
+      value: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 },
     });
   });
 
@@ -122,5 +133,60 @@ describe('parseComponent', () => {
       ok: false,
       errors: ['keyStrategy.keys: Random key strategy needs at least one key.'],
     });
+  });
+});
+
+describe('group and commit configs (M3)', () => {
+  const consumer = (extra: Record<string, unknown>) =>
+    parseComponent({ kind: 'consumer', id: 'c1', ...extra });
+
+  it('give the broker the real group.initial.rebalance.delay.ms', () => {
+    expect(BrokerSchema.parse({ kind: 'broker', id: 'b1' })).toEqual({
+      kind: 'broker',
+      id: 'b1',
+      rack: null,
+      groupInitialRebalanceDelayMs: 3000,
+    });
+  });
+
+  it('keep session.timeout.ms within the broker’s group.min/max.session.timeout.ms', () => {
+    expect(consumer({ sessionTimeoutMs: 6000, heartbeatIntervalMs: 2000 }).ok).toBe(true);
+    expect(consumer({ sessionTimeoutMs: 1_800_000 }).ok).toBe(true);
+    expect(consumer({ sessionTimeoutMs: 5999 })).toEqual({
+      ok: false,
+      errors: [
+        "sessionTimeoutMs: INVALID_SESSION_TIMEOUT: session.timeout.ms must be at least the broker's group.min.session.timeout.ms (6000).",
+      ],
+    });
+    expect(consumer({ sessionTimeoutMs: 1_800_001 }).ok).toBe(false);
+  });
+
+  it('need heartbeat.interval.ms below session.timeout.ms', () => {
+    expect(consumer({ sessionTimeoutMs: 6000, heartbeatIntervalMs: 5999 }).ok).toBe(true);
+    expect(consumer({ sessionTimeoutMs: 6000, heartbeatIntervalMs: 6000 })).toEqual({
+      ok: false,
+      errors: ['heartbeatIntervalMs: heartbeat.interval.ms must be lower than session.timeout.ms.'],
+    });
+  });
+
+  it('take an ordered, non-empty list of known assignors without repeats', () => {
+    expect(consumer({ partitionAssignmentStrategy: ['cooperative-sticky'] }).ok).toBe(true);
+    expect(consumer({ partitionAssignmentStrategy: ['roundrobin', 'range'] }).ok).toBe(true);
+    expect(consumer({ partitionAssignmentStrategy: [] }).ok).toBe(false);
+    expect(consumer({ partitionAssignmentStrategy: ['range', 'range'] }).ok).toBe(false);
+    expect(consumer({ partitionAssignmentStrategy: ['uniform'] }).ok).toBe(false);
+  });
+
+  it('take a commit mode and a positive max.poll.interval.ms', () => {
+    for (const commitMode of [
+      'auto',
+      'sync-after-processing',
+      'async-after-processing',
+      'sync-before-processing',
+    ]) {
+      expect(consumer({ commitMode }).ok).toBe(true);
+    }
+    expect(consumer({ commitMode: 'manual' }).ok).toBe(false);
+    expect(consumer({ maxPollIntervalMs: 0 }).ok).toBe(false);
   });
 });

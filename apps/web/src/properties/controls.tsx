@@ -184,3 +184,36 @@ export function FixedField(props: {
     />
   );
 }
+
+/**
+ * An ordered list picked from presets (partition.assignment.strategy). Each option shows the list
+ * as Kafka prints it ("range, cooperative-sticky"); saving sends the list. Saves on change.
+ */
+export function PresetListField(
+  props: ChoiceFieldProps & { readonly presets: readonly (readonly string[])[] },
+) {
+  const { inputId, value, describedBy, invalid, commit, presets } = props;
+  const current = toInputText(value);
+  const options = presets.map((p) => p.join(', '));
+  return (
+    <select
+      id={inputId}
+      className={INPUT}
+      value={current}
+      aria-describedby={describedBy}
+      aria-invalid={invalid}
+      onChange={(event) => {
+        const preset = presets[options.indexOf(event.target.value)];
+        if (preset !== undefined) commit([...preset]);
+      }}
+    >
+      {/* A list set elsewhere (a level file) that is not a preset still shows as it is. */}
+      {options.includes(current) ? null : <option value={current}>{current}</option>}
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}

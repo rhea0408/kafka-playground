@@ -24,7 +24,9 @@ export interface TopologyState {
 export const INITIAL_BROKER_ID = 'b1';
 
 export const INITIAL_TOPOLOGY_STATE: TopologyState = {
-  components: [{ kind: 'broker', id: INITIAL_BROKER_ID, rack: null }],
+  components: [
+    { kind: 'broker', id: INITIAL_BROKER_ID, rack: null, groupInitialRebalanceDelayMs: 3000 },
+  ],
   connections: [],
   positions: { [INITIAL_BROKER_ID]: { x: 40, y: 40 } },
 };

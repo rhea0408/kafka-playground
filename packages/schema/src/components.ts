@@ -45,7 +45,22 @@ export const BrokerSchema = z.object({
   id: ComponentIdSchema,
   /** broker.rack. Unused until rack-aware placement (v0.5). */
   rack: z.string().nullable().default(null),
+  /**
+   * group.initial.rebalance.delay.ms, default 3000: "The amount of time the group coordinator will
+   * wait for more consumers to join a new group before performing the first rebalance. A longer
+   * delay means potentially fewer rebalances, but increases the time until processing begins."
+   * A static broker config (read-only in M3).
+   */
+  groupInitialRebalanceDelayMs: nonNegativeInt('group.initial.rebalance.delay.ms').default(3000),
 });
+
+/**
+ * The broker's group.min.session.timeout.ms (6000) and group.max.session.timeout.ms (1800000)
+ * defaults. A JoinGroup whose session.timeout.ms is outside them fails with
+ * INVALID_SESSION_TIMEOUT (GroupMetadataManager#classicGroupJoin).
+ */
+export const GROUP_MIN_SESSION_TIMEOUT_MS = 6000;
+export const GROUP_MAX_SESSION_TIMEOUT_MS = 1_800_000;
 
 // ── Topic ─────────────────────────────────────────────────────────────────────────────────────
 
@@ -118,6 +133,30 @@ export const AutoOffsetResetSchema = z.enum(['earliest', 'latest'], {
   error: 'auto.offset.reset must be "earliest" or "latest".',
 });
 
+/**
+ * partition.assignment.strategy values, by the names the assignors register under
+ * (ConsumerPartitionAssignor#name): RangeAssignor "range", RoundRobinAssignor "roundrobin",
+ * StickyAssignor "sticky", CooperativeStickyAssignor "cooperative-sticky".
+ */
+export const AssignorSchema = z.enum(['range', 'roundrobin', 'sticky', 'cooperative-sticky'], {
+  error: 'Assignor must be "range", "roundrobin", "sticky" or "cooperative-sticky".',
+});
+
+/**
+ * Game setting (M3 Q7): how the simulated application commits, standing in for its code.
+ * - auto: no commit calls; enable.auto.commit decides.
+ * - sync-after-processing: commitSync() after processing each poll()'s records (at-least-once).
+ * - async-after-processing: commitAsync() after processing; a failure is only logged.
+ * - sync-before-processing: commitSync() right after poll(), before processing (at-most-once).
+ */
+export const CommitModeSchema = z.enum(
+  ['auto', 'sync-after-processing', 'async-after-processing', 'sync-before-processing'],
+  {
+    error:
+      'Commit mode must be "auto", "sync-after-processing", "async-after-processing" or "sync-before-processing".',
+  },
+);
+
 export const ConsumerSchema = z
   .object({
     kind: z.literal('consumer'),
@@ -148,6 +187,44 @@ export const ConsumerSchema = z
     metadataMaxAgeMs: nonNegativeInt('metadata.max.age.ms').default(300_000),
     /** Game setting: time the application spends on each record before polling again. */
     processingTimeMs: nonNegativeInt('Processing time').default(0),
+    /**
+     * session.timeout.ms. Kafka's default is 45000 (KIP-735); the game default is 10000
+     * (game-tuned, M3 Q2), still above the broker's group.min.session.timeout.ms.
+     */
+    sessionTimeoutMs: z
+      .int({ error: 'session.timeout.ms must be a whole number.' })
+      .min(GROUP_MIN_SESSION_TIMEOUT_MS, {
+        error: `INVALID_SESSION_TIMEOUT: session.timeout.ms must be at least the broker's group.min.session.timeout.ms (${String(GROUP_MIN_SESSION_TIMEOUT_MS)}).`,
+      })
+      .max(GROUP_MAX_SESSION_TIMEOUT_MS, {
+        error: `INVALID_SESSION_TIMEOUT: session.timeout.ms must be at most the broker's group.max.session.timeout.ms (${String(GROUP_MAX_SESSION_TIMEOUT_MS)}).`,
+      })
+      .default(10_000),
+    /** heartbeat.interval.ms, default 3000 (the real default). */
+    heartbeatIntervalMs: positiveInt('heartbeat.interval.ms').default(3000),
+    /**
+     * max.poll.interval.ms. Kafka's default is 300000; the game default is 30000 (game-tuned).
+     * Also the group's rebalance timeout.
+     */
+    maxPollIntervalMs: positiveInt('max.poll.interval.ms').default(30_000),
+    /**
+     * partition.assignment.strategy, in preference order. Kafka 4.x default: RangeAssignor then
+     * CooperativeStickyAssignor (ConsumerConfig).
+     */
+    partitionAssignmentStrategy: z
+      .array(AssignorSchema)
+      .min(1, { error: 'partition.assignment.strategy needs at least one assignor.' })
+      .refine((list) => new Set(list).size === list.length, {
+        error: 'partition.assignment.strategy lists an assignor twice.',
+      })
+      .default(['range', 'cooperative-sticky']),
+    /** Game setting: how the application commits (see CommitModeSchema). */
+    commitMode: CommitModeSchema.default('auto'),
+  })
+  // ConsumerConfig / GroupRebalanceConfig: "Heartbeat must be set lower than the session timeout".
+  .refine((c) => c.heartbeatIntervalMs < c.sessionTimeoutMs, {
+    error: 'heartbeat.interval.ms must be lower than session.timeout.ms.',
+    path: ['heartbeatIntervalMs'],
   })
   .transform(({ groupId, ...rest }) => ({ ...rest, groupId: groupId ?? `${rest.id}-group` }));
 
@@ -161,6 +238,8 @@ export type KeyStrategy = z.output<typeof KeyStrategySchema>;
 export type Acks = z.output<typeof AcksSchema>;
 export type Producer = z.output<typeof ProducerSchema>;
 export type AutoOffsetReset = z.output<typeof AutoOffsetResetSchema>;
+export type Assignor = z.output<typeof AssignorSchema>;
+export type CommitMode = z.output<typeof CommitModeSchema>;
 export type Consumer = z.output<typeof ConsumerSchema>;
 export type Component = z.output<typeof ComponentSchema>;
 /** What a level file or the UI may write: optional fields fall back to their defaults. */

@@ -12,6 +12,31 @@ export type Step =
   | { readonly kind: 'advance'; readonly ms: number }
   | { readonly kind: 'command'; readonly command: Command };
 
+const assignors = fc.constantFrom(
+  ['range', 'cooperative-sticky'] as const,
+  ['range'] as const,
+  ['roundrobin'] as const,
+  ['sticky'] as const,
+  ['cooperative-sticky'] as const,
+  ['cooperative-sticky', 'range'] as const,
+);
+
+const commitMode = fc.constantFrom(
+  'auto' as const,
+  'sync-after-processing' as const,
+  'async-after-processing' as const,
+  'sync-before-processing' as const,
+);
+
+/** Consumer group settings (M3). Always valid: heartbeat < 6000 ≤ session timeout. */
+const groupFields = {
+  sessionTimeoutMs: fc.integer({ min: 6000, max: 20_000 }),
+  heartbeatIntervalMs: fc.integer({ min: 500, max: 5000 }),
+  maxPollIntervalMs: fc.integer({ min: 1000, max: 40_000 }),
+  partitionAssignmentStrategy: assignors.map((list) => [...list]),
+  commitMode,
+};
+
 const keyStrategy = fc.oneof(
   fc.constant({ type: 'null' as const }),
   fc.record({ type: fc.constant('fixed' as const), key: fc.constantFrom('A', 'B', 'é') }),
@@ -55,6 +80,7 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
         fetchMaxWaitMs: fc.oneof(fc.constant(500), fc.integer({ min: 0, max: 1000 })),
         metadataMaxAgeMs: fc.oneof(fc.constant(300_000), fc.integer({ min: 0, max: 3000 })),
         processingTimeMs: fc.integer({ min: 0, max: 200 }),
+        ...groupFields,
         topicMask: fc.integer({ min: 1, max: 3 }),
       }),
       { maxLength: 2 },
@@ -147,6 +173,7 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
           autoCommitIntervalMs: fc.integer({ min: 100, max: 3000 }),
           metadataMaxAgeMs: fc.integer({ min: 0, max: 3000 }),
           groupId: fc.constant('other-group'),
+          ...groupFields,
         },
         { requiredKeys: [] },
       ),
