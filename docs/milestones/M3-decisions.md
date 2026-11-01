@@ -189,3 +189,12 @@ Checked on apache/kafka trunk (2026-11-01): `GroupMetadataManager`, `ClassicGrou
 | T9-1 | Dropping a consumer from the palette **onto a group node** adds a member: a new consumer with a **copy of the first member's config** (same `group.id`, assignors, timeouts, commit mode) under a new id, connected to every topic any member reads. Dropped anywhere else (or added with the keyboard), it starts its own group `<id>-group`. | Schema defaults for the new member | Members of a group are normally instances of one application with one config; defaults could give a member assignors the group doesn't share (INCONSISTENT_GROUP_PROTOCOL). |
 | T9-2 | The hover toolbar acts on one member: the row under the pointer, else the focused row, else the first member. Running: **Kill (crash)** and **Stop (leave)**; stopped or crashed: **Restart**. Each button's tooltip says what happens to commits and the group (session timeout vs immediate rebalance vs a new member). | One toolbar per row | React Flow toolbars belong to nodes; following the pointer gives the same result. |
 | T9-3 | Removing the last member removes the group node (it is derived from the members); the group's committed offsets stay with the coordinator until its topics are deleted, as in Kafka. | — | Milestone T9. |
+
+## T10 · Properties
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T10-1 | The consumer fields (game-tuned chips with the Kafka default line, the `commitMode` game-setting chip, the assignor presets) landed in T1; T10 adds the group panel. | — | — |
+| T10-2 | Group panel (header selected): state line (icon + words, assignor), stat tiles **Members · Generation · Total lag** (104 × 48 like the topic tiles), the assignor select, a **partition table** (partition, owner, committed, LEO, lag; lag above 100 gets ⚠ and the danger color, never color alone), and the members with the topics each reads (click to edit one). | Separate tab | One place for FR-2.9. |
+| T10-3 | The group's assignor select sends one `UpdateConfig` per member (the list is per consumer in Kafka); when members differ the help text says so. It applies at the next rebalance (Q5). | Group-level config | `partition.assignment.strategy` is a client config. |
+| T10-4 | Subscription-mismatch chip (Q6): a flat muted chip with ⚠ when members read different topic sets: "Members read different topics. Kafka allows it, but range assignment then looks uneven." | Refuse mismatched subscriptions | Kafka allows it. |

@@ -27,7 +27,15 @@ export const selectTopicLag =
     return lag;
   };
 
-function StatTile({ label, value, title }: { label: string; value: string; title?: string }) {
+export function StatTile({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
   return (
     <div
       className="flex h-12 w-[104px] flex-col justify-center rounded-md bg-muted px-2"

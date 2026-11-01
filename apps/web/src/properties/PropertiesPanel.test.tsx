@@ -440,3 +440,59 @@ describe('labels and selection rules', () => {
     expect(tabOnSelect('partition-log', undefined)).toBeNull();
   });
 });
+
+describe('<PropertiesPanel> for a consumer group (M3-T10)', () => {
+  let ctx: Awaited<ReturnType<typeof setup>>;
+  beforeEach(async () => {
+    ctx = await setup();
+    await ctx.actions.addComponent('consumer', { x: 600, y: 300 }, { groupId: 'c1-group' });
+    await ctx.actions.addComponent('topic', { x: 300, y: 400 });
+    await ctx.actions.connect('t1', 'c2');
+    await ctx.actions.connect('t2', 'c2');
+    ctx.host.stepBy(8000); // both members join and the group becomes Stable
+    ctx.dispatch.mockClear();
+  });
+  afterEach(cleanup);
+
+  it('shows tiles, state, the partition table and the subscription mismatch chip', () => {
+    renderPanel(ctx.actions);
+    selectNode('group:c1-group');
+    expect(screen.getByRole('heading', { name: 'c1-group' })).toBeTruthy();
+    const tiles = screen.getByRole('group', { name: 'Group stats' });
+    expect(within(tiles).getByText('Members').nextSibling?.textContent).toBe('2');
+    expect(within(tiles).getByText('Generation').nextSibling?.textContent).toBe('1');
+    expect(screen.getByTestId('group-state').textContent).toContain('Stable');
+    const rows = within(screen.getByTestId('group-partitions')).getAllByRole('row');
+    // Header + t1-0..2 + t2-0.
+    expect(rows).toHaveLength(5);
+    expect(document.querySelector('[data-slot="subscription-mismatch"]')).not.toBeNull();
+  });
+
+  it('applies the assignor list to every member', async () => {
+    renderPanel(ctx.actions);
+    selectNode('group:c1-group');
+    fireEvent.change(screen.getByRole('combobox', { name: 'ASSIGNMENT STRATEGY (EVERY MEMBER)' }), {
+      target: { value: 'cooperative-sticky' },
+    });
+    await flush();
+    expect(updates(ctx.dispatch)).toEqual([
+      {
+        type: 'UpdateConfig',
+        id: 'c1',
+        patch: { partitionAssignmentStrategy: ['cooperative-sticky'] },
+      },
+      {
+        type: 'UpdateConfig',
+        id: 'c2',
+        patch: { partitionAssignmentStrategy: ['cooperative-sticky'] },
+      },
+    ]);
+  });
+
+  it('a member link (or row) focuses that consumer’s config', () => {
+    renderPanel(ctx.actions);
+    selectNode('group:c1-group');
+    fireEvent.click(screen.getByRole('button', { name: 'c2' }));
+    expect(screen.getByRole('heading', { name: 'c2' })).toBeTruthy();
+  });
+});
