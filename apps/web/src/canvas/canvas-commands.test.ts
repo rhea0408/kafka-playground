@@ -3,7 +3,12 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Actions } from '../actions/actions.ts';
 import { resetTopologyStore, INITIAL_TOPOLOGY_STATE } from '../stores/topology-store.ts';
 import { resetUiStore, useUiStore } from '../stores/ui-store.ts';
-import { connectChecked, deleteSelection, isComponentKind } from './canvas-commands.ts';
+import {
+  addGroupMember,
+  connectChecked,
+  deleteSelection,
+  isComponentKind,
+} from './canvas-commands.ts';
 
 const OK = { ok: true } as const;
 
@@ -124,6 +129,25 @@ describe('consumer groups (M3-T8)', () => {
     const other = recorder();
     await deleteSelection(other.actions, ['group:g'], [], 'c3');
     expect(other.calls).toEqual(['remove c1', 'remove c2']);
+  });
+
+  it('a consumer dropped on a group copies the first member’s config and reads its topics', async () => {
+    const calls: string[] = [];
+    const actions = {
+      addComponent: (kind: string, _position: unknown, config?: Record<string, unknown>) => {
+        calls.push(
+          `add ${kind} ${String(config?.groupId)} ${JSON.stringify(config?.partitionAssignmentStrategy)}`,
+        );
+        expect(config).not.toHaveProperty('id');
+        return Promise.resolve({ ok: true, id: 'c9' } as const);
+      },
+      connect: (from: string, to: string) => {
+        calls.push(`connect ${from} ${to}`);
+        return Promise.resolve(OK);
+      },
+    };
+    await addGroupMember(actions, 'g', { x: 0, y: 0 });
+    expect(calls).toEqual(['add consumer g ["range","cooperative-sticky"]', 'connect t1 c9']);
   });
 
   it('deleting a topic → group edge disconnects every member that reads the topic', async () => {
