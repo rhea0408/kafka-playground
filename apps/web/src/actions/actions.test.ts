@@ -180,11 +180,11 @@ describe('actions → SimHost round trips', () => {
     expect(useSimStore.getState().events.some((e) => e.type === 'RecordProduced')).toBe(true);
 
     expect(await ctx.actions.killConsumer('c1')).toEqual({ ok: true });
-    expect(snapshot().consumers[0]?.status).toBe('stopped');
+    expect(snapshot().consumers[0]?.status).toBe('crashed');
     expect((await ctx.actions.killConsumer('c1')).ok).toBe(false);
     expect(toasts()[0]?.message).toBe('Consumer c1 is not running (crashed).');
     expect(await ctx.actions.restartConsumer('c1')).toEqual({ ok: true });
-    expect(snapshot().consumers[0]?.status).toBe('running');
+    expect(snapshot().consumers[0]?.status).toBe('joining');
   });
 
   it('sim controls: play/pause/step/speed show up in frames; a bad speed is refused', async () => {

@@ -335,7 +335,7 @@ function Summary(props: ViewProps) {
                     {' '}
                     · <span className="font-mono">{m.consumerId}</span> position{' '}
                     <span className="font-mono">{dash(m.position)}</span>
-                    {m.status === 'stopped' && ' (stopped)'}
+                    {(m.status === 'stopped' || m.status === 'crashed') && ` (${m.status})`}
                   </span>
                 ))}
               </li>

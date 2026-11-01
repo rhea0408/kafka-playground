@@ -382,7 +382,7 @@ describe('committed offsets when a topic is deleted and re-created', () => {
     expectCommitsWithinHw(events);
     const reAdded = events.findIndex((e) => e.type === 'ComponentAdded');
     expect(ofType(events.slice(reAdded), 'OffsetCommitted')).toEqual([]);
-    expect(engine.getSnapshot().groups).toEqual([{ groupId: 'c0-group', committed: [] }]);
+    expect(engine.getSnapshot().groups).toMatchObject([{ groupId: 'c0-group', committed: [] }]);
   });
 
   it('deleting a topic deletes the group’s committed offsets for it', () => {

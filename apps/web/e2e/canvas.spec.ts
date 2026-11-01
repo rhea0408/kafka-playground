@@ -210,7 +210,7 @@ test('live state: LEO grows, the consumer position advances, Kill / Restart from
   await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(0);
   const first = await numberAfter(offsets, 'pos');
   await expect.poll(() => numberAfter(offsets, 'pos'), { timeout: 10_000 }).toBeGreaterThan(first);
-  await expect(node(page, 'c1').getByText('running')).toBeVisible();
+  await expect(node(page, 'c1').getByText('stable')).toBeVisible();
 
   mkdirSync(SHOTS, { recursive: true });
   await node(page, 'c1').hover();
@@ -219,8 +219,9 @@ test('live state: LEO grows, the consumer position advances, Kill / Restart from
   await page.screenshot({ path: `${SHOTS}canvas-live-state.png` });
 
   await kill.click();
-  await expect(node(page, 'c1').getByText('stopped')).toBeVisible();
+  await expect(node(page, 'c1').getByText('crashed')).toBeVisible();
   await page.getByRole('button', { name: 'Restart consumer c1' }).click();
-  await expect(node(page, 'c1').getByText('running')).toBeVisible();
+  // A restarted consumer is a new member: it waits for the crashed one's session to time out.
+  await expect(node(page, 'c1').getByText('joining')).toBeVisible();
   expect(errors).toEqual([]);
 });

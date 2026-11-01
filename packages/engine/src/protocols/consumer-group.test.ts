@@ -286,7 +286,7 @@ describe('subscriptions and metadata', () => {
     engine.runUntil(11_000);
     expect(ofType(events, 'ConsumerStopped')).toMatchObject([{ consumerId: 'c2' }]);
     expect(engine.getSnapshot().consumers.find((c) => c.config.id === 'c2')?.status).toBe(
-      'stopped',
+      'crashed',
     );
   });
 
@@ -307,5 +307,35 @@ describe('subscriptions and metadata', () => {
       ok: false,
       reason: /__consumer_offsets/,
     });
+  });
+});
+
+describe('snapshots of groups and members (M3-T7)', () => {
+  it('shows state, generation, protocol, leader, owners and lag; member statuses', () => {
+    const engine = createEngine({ seed: 1, topology: group(4) });
+    engine.runUntil(10_000);
+    const snap = engine.getSnapshot();
+    const g = snap.groups.find((x) => x.groupId === 'g');
+    expect(g).toMatchObject({ state: 'Stable', generation: 1, protocol: 'range' });
+    expect(g?.members.map((m) => m.consumerId)).toEqual(['c1', 'c2', 'c3', 'c4']);
+    expect(g?.leader).toBe(g?.members[0]?.memberId);
+    expect(g?.partitions.map((p) => [p.partition, p.owner])).toEqual([
+      [0, 'c1'],
+      [1, 'c2'],
+      [2, 'c3'],
+    ]);
+    expect(g?.totalLag).toBe(g?.partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0));
+    const status = Object.fromEntries(snap.consumers.map((c) => [c.config.id, c.status]));
+    expect(status).toEqual({ c1: 'stable', c2: 'stable', c3: 'stable', c4: 'idle' });
+    const c1 = snap.consumers.find((c) => c.config.id === 'c1');
+    expect(c1).toMatchObject({ generation: 1, partitions: [{ topic: 'orders', partition: 0 }] });
+
+    engine.dispatch({ type: 'KillConsumer', id: 'c1' });
+    engine.dispatch({ type: 'StopConsumer', id: 'c4' });
+    const after = engine.getSnapshot();
+    const byId = Object.fromEntries(after.consumers.map((c) => [c.config.id, c]));
+    expect(byId.c1).toMatchObject({ status: 'crashed', memberId: null, partitions: [] });
+    // c4 is blocked in poll() (it owns nothing), so it closes at once.
+    expect(byId.c4).toMatchObject({ status: 'stopped' });
   });
 });

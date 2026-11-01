@@ -64,17 +64,17 @@ describe('snapshot and lag', () => {
     engine.runUntil(6000);
     // Records reached the broker at 501, 1001, …, 5501: 11 records, HW = 11. Committed is still 5.
     const snap = engine.getSnapshot();
-    expect(snap.consumers[0]).toMatchObject({ status: 'stopped', totalLag: 6 });
-    expect(snap.consumers[0]?.partitions[0]).toMatchObject({
-      position: null,
-      committed: 5,
-      highWatermark: 11,
-      lag: 6,
-      fetchLag: null,
+    // A crashed consumer owns nothing; the group (still holding the dead member until its session
+    // times out) shows the lag, as kafka-consumer-groups.sh --describe does.
+    expect(snap.consumers[0]).toMatchObject({ status: 'crashed', partitions: [], totalLag: 0 });
+    expect(snap.groups[0]).toMatchObject({
+      groupId: 'c1-group',
+      committed: [{ topic: 'orders', partition: 0, offset: 5 }],
+      partitions: [
+        { topic: 'orders', partition: 0, committed: 5, highWatermark: 11, lag: 6, owner: 'c1' },
+      ],
+      totalLag: 6,
     });
-    expect(snap.groups).toEqual([
-      { groupId: 'c1-group', committed: [{ topic: 'orders', partition: 0, offset: 5 }] },
-    ]);
   });
 
   it('reports lag as null (shown as "-") before the group has committed anything', () => {
@@ -118,6 +118,14 @@ describe('snapshot and lag', () => {
     engine.runUntil(2999);
     const snap = engine.getSnapshot();
     expect(snap.producers[0]?.stats).toEqual({ sent: 5, acked: 5, failed: 0 });
-    expect(snap.consumers[0]).toMatchObject({ status: 'running', consumed: 5 });
+    expect(snap.consumers[0]).toMatchObject({ status: 'stable', consumed: 5, generation: 1 });
+    expect(snap.consumers[0]?.memberId).toMatch(/^c1-/);
+    expect(snap.groups[0]).toMatchObject({
+      state: 'Stable',
+      generation: 1,
+      protocol: 'range',
+      leader: snap.consumers[0]?.memberId,
+      members: [{ consumerId: 'c1', partitions: [{ topic: 'orders', partition: 0 }] }],
+    });
   });
 });

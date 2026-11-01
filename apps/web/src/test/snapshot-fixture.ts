@@ -9,6 +9,7 @@ import type {
   EngineSnapshot,
   LogRecord,
   PartitionSnapshot,
+  GroupSnapshot,
 } from '@kp/engine';
 import {
   parseComponent,
@@ -79,14 +80,36 @@ export function consumerPartition(
 export function consumer(
   id: string,
   partitions: readonly ConsumerPartitionSnapshot[],
-  status: 'running' | 'stopped' = 'running',
+  status: ConsumerSnapshot['status'] = 'stable',
 ): ConsumerSnapshot {
+  const inGroup = status === 'stable' || status === 'idle';
   return {
     config: parse({ kind: 'consumer', id }) as Consumer,
     status,
+    stopping: false,
+    memberId: inGroup ? `${id}-0000000a` : null,
+    generation: inGroup ? 1 : null,
     consumed: 0,
     partitions,
     totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+  };
+}
+
+/** A group with committed offsets only (no members), for partition-log tests. */
+export function groupWithCommits(
+  groupId: string,
+  committed: readonly { topic: string; partition: number; offset: number }[],
+): GroupSnapshot {
+  return {
+    groupId,
+    state: 'Empty',
+    generation: 0,
+    protocol: null,
+    leader: null,
+    members: [],
+    committed,
+    partitions: [],
+    totalLag: 0,
   };
 }
 

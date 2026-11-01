@@ -8,6 +8,7 @@ import {
   consumer,
   consumerPartition,
   fixtureSnapshot,
+  groupWithCommits,
   partition,
 } from '../test/snapshot-fixture.ts';
 import { LOG_PAGE, PartitionLog } from './PartitionLog.tsx';
@@ -30,7 +31,7 @@ function snapshotWith(p0: PartitionSnapshot, groups: GroupSnapshot[] = []): Engi
 }
 
 const committed = (offset: number): GroupSnapshot[] => [
-  { groupId: 'c1-group', committed: [{ topic: 't1', partition: 0, offset }] },
+  groupWithCommits('c1-group', [{ topic: 't1', partition: 0, offset }]),
 ];
 
 function show(snapshot: EngineSnapshot): void {

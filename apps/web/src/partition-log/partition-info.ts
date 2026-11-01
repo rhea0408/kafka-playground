@@ -3,14 +3,19 @@
  * per consumer group, its committed offset and each member's position. Pure: unit-tested in Node.
  */
 
-import type { EngineSnapshot, PartitionSnapshot, TopicSnapshot } from '@kp/engine';
+import type {
+  ConsumerSnapshot,
+  EngineSnapshot,
+  PartitionSnapshot,
+  TopicSnapshot,
+} from '@kp/engine';
 import type { LogTarget } from '../stores/ui-store.ts';
 
 export interface MemberPosition {
   readonly consumerId: string;
   /** Next offset this consumer will fetch; null before its first poll or while stopped. */
   readonly position: number | null;
-  readonly status: 'running' | 'stopped';
+  readonly status: ConsumerSnapshot['status'];
 }
 
 export interface GroupOffsets {

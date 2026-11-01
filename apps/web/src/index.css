@@ -194,6 +194,7 @@
   border-width: 1.5px;
 }
 
-.kp-canvas .kp-consumer-row:has([data-status='stopped']) {
+.kp-canvas .kp-consumer-row:has([data-status='stopped']),
+.kp-canvas .kp-consumer-row:has([data-status='crashed']) {
   border-style: dashed;
 }

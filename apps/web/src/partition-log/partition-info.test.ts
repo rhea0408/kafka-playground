@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { consumer, consumerPartition, fixtureSnapshot } from '../test/snapshot-fixture.ts';
+import {
+  consumer,
+  consumerPartition,
+  fixtureSnapshot,
+  groupWithCommits,
+} from '../test/snapshot-fixture.ts';
 import { groupOffsets, resolveTarget } from './partition-info.ts';
 
 describe('resolveTarget', () => {
@@ -26,14 +31,14 @@ describe('groupOffsets', () => {
   it('joins the group committed offsets with member positions', () => {
     // The fixture consumer c1 is in group "c1-group" (the schema default).
     const snapshot = fixtureSnapshot({
-      groups: [{ groupId: 'c1-group', committed: [{ topic: 't1', partition: 0, offset: 10 }] }],
+      groups: [groupWithCommits('c1-group', [{ topic: 't1', partition: 0, offset: 10 }])],
     });
     expect(groupOffsets(snapshot, 't1', 0, 12)).toEqual([
       {
         groupId: 'c1-group',
         committed: 10,
         lag: 2,
-        members: [{ consumerId: 'c1', position: 12, status: 'running' }],
+        members: [{ consumerId: 'c1', position: 12, status: 'stable' }],
       },
     ]);
   });
@@ -41,7 +46,7 @@ describe('groupOffsets', () => {
   it('lists a group with no commit yet, and a group with a commit but no member', () => {
     const snapshot = fixtureSnapshot({
       consumers: [consumer('c1', [consumerPartition(0, 12, 4, null)], 'stopped')],
-      groups: [{ groupId: 'old', committed: [{ topic: 't1', partition: 0, offset: 3 }] }],
+      groups: [groupWithCommits('old', [{ topic: 't1', partition: 0, offset: 3 }])],
     });
     const groups = groupOffsets(snapshot, 't1', 0, 12);
     expect(groups.map((g) => [g.groupId, g.committed, g.lag, g.members.length])).toEqual([
