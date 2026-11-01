@@ -520,35 +520,83 @@ export function useHoverToolbar(selected: boolean): HoverToolbar {
   };
 }
 
-function ConsumerAction({ consumerId }: { consumerId: string }) {
+const TOOL_BUTTON =
+  'flex h-7 items-center gap-1.5 rounded px-2 text-xs text-surface hover:bg-surface/15 focus-visible:outline-2 focus-visible:outline-surface';
+
+/** What each action does, for its tooltip (M3 Q8): the difference matters for the lesson. */
+export const MEMBER_ACTION_HELP = {
+  kill: 'Crash the process: no commit, no LeaveGroup. The group only notices after session.timeout.ms, then rebalances; records since the last commit are read again.',
+  stop: 'Graceful close(): finish the current batch, commit (auto-commit), send LeaveGroup. The group rebalances at once.',
+  restart:
+    'Start a new consumer process. It joins as a new member and resumes from the committed offsets.',
+} as const;
+
+/** Kill / Stop / Restart for one member (engine commands KillConsumer, StopConsumer, RestartConsumer). */
+function MemberActions({ consumerId }: { consumerId: string }) {
   const actions = useActions();
   const status = useConsumerStatus(consumerId);
   if (status === undefined) return null;
-  const running = isRunning(status);
+  const label = (
+    <span className="px-1 font-mono text-[11px] text-surface/80" aria-hidden="true">
+      {consumerId}
+    </span>
+  );
+  if (!isRunning(status)) {
+    return (
+      <>
+        {label}
+        <button
+          type="button"
+          className={TOOL_BUTTON}
+          title={MEMBER_ACTION_HELP.restart}
+          aria-label={`Restart consumer ${consumerId}`}
+          onClick={() => {
+            void actions.restartConsumer(consumerId);
+          }}
+        >
+          <span aria-hidden="true">▶</span>Restart
+        </button>
+      </>
+    );
+  }
   return (
-    <button
-      type="button"
-      className="flex h-7 items-center gap-1.5 rounded px-2 text-xs text-surface hover:bg-surface/15 focus-visible:outline-2 focus-visible:outline-surface"
-      onClick={() => {
-        void (running ? actions.killConsumer(consumerId) : actions.restartConsumer(consumerId));
-      }}
-      aria-label={running ? `Kill consumer ${consumerId}` : `Restart consumer ${consumerId}`}
-    >
-      <span aria-hidden="true">{running ? '■' : '▶'}</span>
-      {running ? 'Kill consumer' : 'Restart consumer'}
-    </button>
+    <>
+      {label}
+      <button
+        type="button"
+        className={TOOL_BUTTON}
+        title={MEMBER_ACTION_HELP.kill}
+        aria-label={`Kill consumer ${consumerId}`}
+        onClick={() => {
+          void actions.killConsumer(consumerId);
+        }}
+      >
+        <span aria-hidden="true">✕</span>Kill (crash)
+      </button>
+      <button
+        type="button"
+        className={TOOL_BUTTON}
+        title={MEMBER_ACTION_HELP.stop}
+        aria-label={`Stop consumer ${consumerId}`}
+        onClick={() => {
+          void actions.stopConsumer(consumerId);
+        }}
+      >
+        <span aria-hidden="true">■</span>Stop (leave)
+      </button>
+    </>
   );
 }
 
 /**
- * Kill / Restart for the consumers of a group node (engine commands KillConsumer /
- * RestartConsumer, M1). Dark like the ui-spec hover toolbar (status color, 36 high).
+ * The group node's hover toolbar (M3-T9): actions for the member whose row is under the pointer
+ * (or focused, or the first member). Dark like the ui-spec hover toolbar (status color, 36 high).
  */
 export function ConsumerToolbar({
-  consumerIds,
+  consumerId,
   toolbar,
 }: {
-  consumerIds: readonly string[];
+  consumerId: string | undefined;
   toolbar: HoverToolbar;
 }) {
   return (
@@ -556,7 +604,9 @@ export function ConsumerToolbar({
       <div
         ref={toolbar.toolbarRef}
         role="toolbar"
-        aria-label="Consumer actions"
+        aria-label={
+          consumerId === undefined ? 'Consumer actions' : `Actions for consumer ${consumerId}`
+        }
         className="nodrag nopan flex h-9 items-center gap-1 rounded-md bg-status px-1"
         onPointerEnter={toolbar.onPointerEnter}
         onPointerLeave={toolbar.onPointerLeave}
@@ -567,9 +617,7 @@ export function ConsumerToolbar({
           event.stopPropagation();
         }}
       >
-        {consumerIds.map((id) => (
-          <ConsumerAction key={id} consumerId={id} />
-        ))}
+        {consumerId !== undefined && <MemberActions consumerId={consumerId} />}
       </div>
     </NodeToolbar>
   );

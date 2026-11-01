@@ -21,6 +21,7 @@ import { useActions } from '../actions/actions-context.tsx';
 import { useTopologyStore } from '../stores/topology-store.ts';
 import { select, useUiStore } from '../stores/ui-store.ts';
 import {
+  addGroupMember,
   connectChecked,
   deleteSelection,
   isComponentKind,
@@ -29,7 +30,7 @@ import {
 import { CanvasNavigation } from './CanvasNavigation.tsx';
 import { checkConnection, orientConnection } from './connection-check.ts';
 import { ConnectionHint, nodeRects } from './ConnectionHint.tsx';
-import { toFlowEdges, toFlowNodes, type FlowNode } from './flow-mapping.ts';
+import { groupIdOfNode, toFlowEdges, toFlowNodes, type FlowNode } from './flow-mapping.ts';
 import { centredTopLeft, GRID_SIZE, nodeAtPoint, nodeSize } from './geometry.ts';
 import { NODE_TYPES } from './nodes.tsx';
 import { MessageOverlay } from './overlay/MessageOverlay.tsx';
@@ -158,9 +159,16 @@ export function Canvas() {
       if (!isComponentKind(kind)) return;
       event.preventDefault();
       const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      // A consumer dropped on a consumer group joins it (M3 Q4); anywhere else it starts its own.
+      const target = nodeAtPoint(nodeRects(store.getState().nodeLookup), point);
+      const groupId = target === undefined ? undefined : groupIdOfNode(target);
+      if (kind === 'consumer' && groupId !== undefined) {
+        void addGroupMember(actions, groupId, centredTopLeft(point, nodeSize(kind)));
+        return;
+      }
       void actions.addComponent(kind, centredTopLeft(point, nodeSize(kind)));
     },
-    [actions, flow],
+    [actions, flow, store],
   );
 
   return (

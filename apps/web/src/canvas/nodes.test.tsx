@@ -58,6 +58,7 @@ function fakeActions() {
   return {
     killConsumer: vi.fn<(id: string) => Promise<typeof ok>>(() => Promise.resolve(ok)),
     restartConsumer: vi.fn<(id: string) => Promise<typeof ok>>(() => Promise.resolve(ok)),
+    stopConsumer: vi.fn<(id: string) => Promise<typeof ok>>(() => Promise.resolve(ok)),
   };
 }
 
@@ -295,13 +296,38 @@ describe('live node state (M2-T8)', () => {
     expect(actions.restartConsumer).toHaveBeenCalledWith('c1');
   });
 
+  it('the toolbar acts on the hovered member: Kill (crash), Stop (leave), with tooltips (M3-T9)', () => {
+    const c2 = component({ kind: 'consumer', id: 'c2', groupId: 'c1-group' });
+    show(
+      fixtureSnapshot({
+        consumers: [consumer('c1', [consumerPartition(0, 1, 1, 1)]), consumer('c2', [], 'crashed')],
+      }),
+    );
+    const actions = fakeActions();
+    if (C1.kind !== 'consumer' || c2.kind !== 'consumer') throw new Error('not consumers');
+    renderCanvas(
+      [{ ...toGroupNode('c1-group', [C1, c2], { x: 0, y: 200 }), selected: true }],
+      actions,
+    );
+    const stop = screen.getByRole('button', { name: 'Stop consumer c1' });
+    expect(stop.getAttribute('title')).toContain('LeaveGroup');
+    expect(
+      screen.getByRole('button', { name: 'Kill consumer c1' }).getAttribute('title'),
+    ).toContain('session.timeout.ms');
+    fireEvent.click(stop);
+    expect(actions.stopConsumer).toHaveBeenCalledWith('c1');
+    fireEvent.pointerEnter(nodeEl(G1).querySelector('[data-consumer-row="c2"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart consumer c2' }));
+    expect(actions.restartConsumer).toHaveBeenCalledWith('c2');
+  });
+
   it('the toolbar shows on hover and is reachable by keyboard from the focused node', () => {
     show(fixtureSnapshot());
     renderCanvas([groupNodeOf(C1, { x: 0, y: 200 })]);
-    expect(screen.queryByRole('toolbar', { name: 'Consumer actions' })).toBeNull();
+    expect(screen.queryByRole('toolbar', { name: 'Actions for consumer c1' })).toBeNull();
 
     fireEvent.pointerEnter(nodeEl(G1).querySelector('[data-kind="consumer"]') as HTMLElement);
-    expect(screen.getByRole('toolbar', { name: 'Consumer actions' })).toBeTruthy();
+    expect(screen.getByRole('toolbar', { name: 'Actions for consumer c1' })).toBeTruthy();
     fireEvent.pointerLeave(nodeEl(G1).querySelector('[data-kind="consumer"]') as HTMLElement);
 
     // Keyboard: focus the node (Tab), then Tab again jumps into its toolbar.
@@ -314,7 +340,7 @@ describe('live node state (M2-T8)', () => {
     // Escape goes back to the node; the toolbar stays while the node has focus.
     fireEvent.keyDown(kill, { key: 'Escape' });
     expect(document.activeElement).toBe(nodeEl(G1));
-    expect(screen.getByRole('toolbar', { name: 'Consumer actions' })).toBeTruthy();
+    expect(screen.getByRole('toolbar', { name: 'Actions for consumer c1' })).toBeTruthy();
   });
 });
 

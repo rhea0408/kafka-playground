@@ -5,8 +5,8 @@
 
 import type { DispatchResult } from '@kp/engine';
 import { COMPONENT_KINDS, type ComponentKind } from '@kp/schema';
-import type { Actions } from '../actions/actions.ts';
-import { useTopologyStore, type TopologyState } from '../stores/topology-store.ts';
+import type { Actions, AddResult } from '../actions/actions.ts';
+import { useTopologyStore, type TopologyState, type XYPosition } from '../stores/topology-store.ts';
 import { pushToast } from '../stores/ui-store.ts';
 import { checkConnection, plannedConnections } from './connection-check.ts';
 import { connectionsOfEdge, groupIdOfNode, membersOf } from './flow-mapping.ts';
@@ -80,4 +80,26 @@ export function componentsOfNode(
   if (groupId === undefined) return [nodeId];
   const members = membersOf(state, groupId).map((m) => m.id);
   return focusedMember !== null && members.includes(focusedMember) ? [focusedMember] : members;
+}
+
+/**
+ * Drops a new consumer onto a group node (M3 Q4): another instance of the same application. It
+ * copies the config of the group's first member (so it has the same group.id, assignors and
+ * timeouts) under a new id, and reads every topic any member reads (Q6).
+ */
+export async function addGroupMember(
+  actions: Pick<Actions, 'addComponent' | 'connect'>,
+  groupId: string,
+  position: XYPosition,
+): Promise<AddResult> {
+  const state = useTopologyStore.getState();
+  const members = membersOf(state, groupId);
+  const [first] = members;
+  const { id: _id, kind: _kind, ...config } = first ?? { id: '', kind: 'consumer', groupId };
+  const added = await actions.addComponent('consumer', position, config);
+  if (!added.ok) return added;
+  const ids = new Set(members.map((m) => m.id));
+  const topics = [...new Set(state.connections.filter((c) => ids.has(c.to)).map((c) => c.from))];
+  for (const topic of topics) await actions.connect(topic, added.id);
+  return added;
 }

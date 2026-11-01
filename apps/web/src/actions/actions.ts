@@ -67,7 +67,10 @@ export interface Actions {
     key: string | null,
     value: string,
   ) => Promise<DispatchResult>;
+  /** Crash: no commit, no LeaveGroup; the group notices after session.timeout.ms. */
   readonly killConsumer: (id: string) => Promise<DispatchResult>;
+  /** Graceful close(): finish the batch, commit, LeaveGroup (M3 Q8). */
+  readonly stopConsumer: (id: string) => Promise<DispatchResult>;
   readonly restartConsumer: (id: string) => Promise<DispatchResult>;
   readonly play: () => Promise<void>;
   readonly pause: () => Promise<void>;
@@ -186,6 +189,7 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     produceManual: (producerId, key, value) =>
       send({ type: 'ProduceManual', producerId, key, value }),
     killConsumer: (id) => send({ type: 'KillConsumer', id }),
+    stopConsumer: (id) => send({ type: 'StopConsumer', id }),
     restartConsumer: (id) => send({ type: 'RestartConsumer', id }),
 
     play: async () => {

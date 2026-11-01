@@ -7,8 +7,8 @@
 
 import type { KeyStrategy } from '@kp/schema';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { ReactNode } from 'react';
-import { focusMember } from '../stores/ui-store.ts';
+import { useState, type ReactNode } from 'react';
+import { focusMember, useUiStore } from '../stores/ui-store.ts';
 import {
   ConsumerLive,
   ConsumerToolbar,
@@ -213,6 +213,11 @@ export function BrokerNode({ data, selected }: NodeProps<BrokerFlowNode>) {
  */
 export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlowNode>) {
   const toolbar = useHoverToolbar(selected);
+  // The toolbar acts on the member row under the pointer, else the focused one, else the first.
+  const [hoveredMember, setHoveredMember] = useState<string | null>(null);
+  const focused = useUiStore((s) => s.focusedMember);
+  const ids = data.members.map((m) => m.id);
+  const active = [hoveredMember, focused].find((id) => id !== null && ids.includes(id)) ?? ids[0];
   return (
     <div
       ref={toolbar.rootRef}
@@ -222,7 +227,7 @@ export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlo
       onPointerEnter={toolbar.onPointerEnter}
       onPointerLeave={toolbar.onPointerLeave}
     >
-      <ConsumerToolbar consumerIds={data.members.map((m) => m.id)} toolbar={toolbar} />
+      <ConsumerToolbar consumerId={active ?? undefined} toolbar={toolbar} />
       <div
         className="flex items-center gap-1.5 border-b border-divider text-[13px] font-semibold"
         style={{ height: GROUP_HEADER_HEIGHT }}
@@ -253,6 +258,9 @@ export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlo
           style={{ width: GROUP_ROW_WIDTH, height: GROUP_ROW_HEIGHT }}
           onClick={() => {
             focusMember(consumer.id);
+          }}
+          onPointerEnter={() => {
+            setHoveredMember(consumer.id);
           }}
         >
           <ConsumerLive consumerId={consumer.id} />
