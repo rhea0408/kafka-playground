@@ -21,7 +21,9 @@
  *   settings and metadata.max.age.ms apply from the next poll() (a fetch already parked at the
  *   broker keeps the values it was sent with). group.id and auto.offset.reset are rejected in M2:
  *   changing them means leaving one group and joining another (M3).
- * - A patch that changes nothing is accepted, emits no event and is not logged.
+ * - A patch that changes nothing is accepted, emits no event and is not logged. That includes a
+ *   topic patch with the current partition count: Kafka's CreatePartitions would reject it ("would
+ *   not be an increase"), but a properties form saved unchanged is not that request (M2 T2-7).
  *
  * Real clients cannot change their config at run time at all; the application would close the
  * client and create a new one. The playground applies changes in place (docs/simplifications.md).

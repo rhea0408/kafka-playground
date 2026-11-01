@@ -1,6 +1,6 @@
 # M2 summary: Web app shell
 
-Tasks T0–T13 are done on stacked branches `m2-t0` … `m2-t13`, each a PR on the previous one with green CI. **Nothing is merged yet** (see Deviations). Every decision is in `M2-decisions.md` (start with its "Review these first" table); the learning checkpoints are in `M2-learning-checkpoints.md`. Tests: 482 unit/property tests (schema 28, engine 179, web 275) and 21 Playwright e2e tests.
+Tasks T0–T13 are done on stacked branches `m2-t0` … `m2-t13`, each a PR on the previous one with green CI. All of them (PRs #13–#27) were merged into `develop` in order on 2026-10-21, after review (see Deviations). Every decision is in `M2-decisions.md` (start with its "Review these first" table); the learning checkpoints are in `M2-learning-checkpoints.md`. Tests: 482 unit/property tests (schema 28, engine 179, web 275) and 21 Playwright e2e tests.
 
 ## 1. Built
 
@@ -21,7 +21,7 @@ Tasks T0–T13 are done on stacked branches `m2-t0` … `m2-t13`, each a PR on t
 | T2: on a partition increase "producers' sticky state resets" (implies clients see new partitions at once) | **Clients see them at their next metadata refresh** (`metadata.max.age.ms`, 5 min; T2-2) | Real Kafka behaviour; the panel warns about it |
 | T6: bottom tabs Event list · Lag chart · Event timeline | **Event timeline · Event list · Lag chart** (T6-9) | ui-spec and wireframes order |
 | T10: not-modelled fields disabled | Also **`min.insync.replicas` disabled** although the engine accepts it (T10-5) | With RF 1 it does nothing here but would fail sends in real Kafka |
-| M1 process: merge after green CI | **Stacked PRs, nothing merged** (P1) | Merging without review was blocked. **Review is needed**: merge in order from `m2-t0` |
+| M1 process: merge after green CI | **Stacked PRs, merged after review** (P1) | Merging without review was blocked, so the PRs waited for Rhea's review; all were merged in order on 2026-10-21 |
 | — | **Engine bug found and fixed (F1):** a commit could land in a re-created topic, and a deleted topic's offsets stayed | Found by the "committed ≤ HW" property. **New simplification row "Commits after a topic is re-created" needs your review** |
 
 ## 3. Simplifications added (`docs/simplifications.md`)

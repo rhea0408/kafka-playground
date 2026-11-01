@@ -116,13 +116,18 @@ export const ID_PREFIX: Readonly<Record<ComponentKind, string>> = {
 /**
  * Next free id for a kind: prefix + (highest number in use for that prefix + 1). Never reuses a
  * lower number while a higher one exists, so ids keep increasing within a session's canvas.
+ * `reserved` ids (adds still waiting for the engine's answer) count as in use.
  */
-export function nextComponentId(state: TopologyState, kind: ComponentKind): string {
+export function nextComponentId(
+  state: TopologyState,
+  kind: ComponentKind,
+  reserved: Iterable<string> = [],
+): string {
   const prefix = ID_PREFIX[kind];
   const pattern = new RegExp(`^${prefix}(\\d+)$`);
   let max = 0;
-  for (const component of state.components) {
-    const match = pattern.exec(component.id);
+  for (const id of [...state.components.map((c) => c.id), ...reserved]) {
+    const match = pattern.exec(id);
     if (match?.[1] !== undefined) max = Math.max(max, Number(match[1]));
   }
   return `${prefix}${String(max + 1)}`;

@@ -75,10 +75,10 @@ export interface BufferedFetch {
 }
 
 /**
- * A consumer's position in one partition, and the topic ID (KIP-516) of the topic life it was
- * last checked against: set when the position is initialised or reset, and on every fetch
- * response the broker answered from that topic. A commit only lands on that same topic life
- * (see commitPositions in consume.ts).
+ * A consumer's position in one partition, and the topic ID (KIP-516) of the topic life it belongs
+ * to, set when the position is initialised or reset. Fetch requests carry it, and the broker
+ * answers UNKNOWN_TOPIC_ID when the topic was re-created since; a commit only lands on that same
+ * topic life (see commitPositions in consume.ts).
  */
 export interface ConsumerPosition {
   readonly offset: number;

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { ActionsProvider } from './actions/actions-context.tsx';
 import { App } from './App.tsx';
 import { startSim } from './sim/bootstrap.ts';
-import { installSimDebugHook } from './sim/debug-hook.ts';
+import { debugHooksEnabled, installSimDebugHook } from './sim/debug-hook.ts';
 import { initialSceneFor } from './stores/default-scene.ts';
 import { resetTopologyStore } from './stores/topology-store.ts';
 import './index.css';
@@ -17,7 +17,9 @@ resetTopologyStore(initialSceneFor(window.location.search));
 // One sim worker for the page's lifetime, started outside React so StrictMode's double effects
 // don't create two.
 const sim = startSim();
-installSimDebugHook(sim.debugHook);
+if (debugHooksEnabled(window.location.search, import.meta.env.DEV)) {
+  installSimDebugHook(sim.debugHook);
+}
 
 createRoot(root).render(
   <StrictMode>

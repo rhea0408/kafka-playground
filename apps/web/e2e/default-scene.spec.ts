@@ -55,7 +55,7 @@ const props = (page: Page) => page.getByTestId('properties-panel');
 
 /** Opens the Sandbox and waits until the engine's first snapshot reached the nodes. */
 async function open(page: Page): Promise<void> {
-  await page.goto('/');
+  await page.goto('/?debug');
   await expect(node(page, DEFAULT_TOPIC).locator('[data-slot="leader"]')).toHaveCount(
     DEFAULT_PARTITIONS,
   );

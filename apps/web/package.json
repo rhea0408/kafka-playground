@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json && tsc -p tsconfig.worker.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.thresholds.lines=80",
     "e2e": "playwright test"
   },
   "dependencies": {

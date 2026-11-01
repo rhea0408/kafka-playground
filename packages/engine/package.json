@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.thresholds.lines=90 --coverage.thresholds.branches=85",
     "demo": "node scripts/demo.ts"
   },
   "devDependencies": {

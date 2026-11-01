@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { newOverlayDebug } from '../canvas/overlay/debug.ts';
 import { defaultSceneState } from '../stores/default-scene.ts';
 import { toTopologyInput } from '../stores/topology-store.ts';
-import { installSimDebugHook, simDebugHook } from './debug-hook.ts';
+import { debugHooksEnabled, installSimDebugHook, simDebugHook } from './debug-hook.ts';
 import { SimHost } from './sim-host.ts';
 
 function host(): SimHost {
@@ -36,5 +36,16 @@ describe('simDebugHook', () => {
     expect(window.__kp.overlay).toBe(overlay);
     remove();
     expect(window.__kp.sim).toBeUndefined();
+  });
+});
+
+describe('debugHooksEnabled', () => {
+  it('is on in dev builds and with ?debug or ?fps, off otherwise', () => {
+    expect(debugHooksEnabled('', true)).toBe(true);
+    expect(debugHooksEnabled('', false)).toBe(false);
+    expect(debugHooksEnabled('?scene=empty', false)).toBe(false);
+    expect(debugHooksEnabled('?debug', false)).toBe(true);
+    expect(debugHooksEnabled('?scene=empty&debug=1', false)).toBe(true);
+    expect(debugHooksEnabled('?fps', false)).toBe(true);
   });
 });

@@ -1,9 +1,9 @@
 /**
  * `window.__kp.sim`: a read-only view of the sim worker for the e2e determinism test (M2-T12) and
- * for poking at the sim from the browser console. Set in every build, because Playwright runs
- * against the production bundle and the point of the test is to check that bundle. Every method
- * only reads: nothing here can change the sim, so it can't bypass the command path (CLAUDE.md
- * rule 3).
+ * for poking at the sim from the browser console. Installed in dev builds, and in any build when
+ * the URL has `?debug` (or `?fps`): Playwright runs against the production bundle and opens it
+ * with `?debug`, so the test still checks the shipped bundle (M3-T0, F-e). Every method only
+ * reads: nothing here can change the sim, so it can't bypass the command path (CLAUDE.md rule 3).
  */
 
 import type { CommandLogEntry, EngineEvent } from '@kp/engine';
@@ -44,6 +44,12 @@ export function simDebugHook(api: SimReadPort, seed: number): SimDebugHook {
     eventLogHash: () => api.eventLogHash(),
     eventHistory: () => api.eventHistory(),
   };
+}
+
+/** Whether `window.__kp` debug hooks are installed: in `vite dev`, or with `?debug` / `?fps`. */
+export function debugHooksEnabled(search: string, dev: boolean): boolean {
+  const params = new URLSearchParams(search);
+  return dev || params.has('debug') || params.has('fps');
 }
 
 /** Installs the hook on `window.__kp.sim`; returns a function that removes it again. */

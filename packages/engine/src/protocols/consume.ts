@@ -41,6 +41,7 @@
  * start a new incarnation, so fetch responses and poll tasks of the old life are ignored.
  */
 
+import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { partitionName, type LogRecord, type PartitionState } from '../model/partition.ts';
 import { topicsOfConsumer, type ConsumerState, type GroupState } from '../model/state.ts';
@@ -326,7 +327,12 @@ function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assi
     if (position === undefined || consumer.fetchesInFlight.has(partition.leader)) continue;
     if (consumer.buffer.some((chunk) => chunk.key === a.key)) continue;
     const list = byLeader.get(partition.leader) ?? [];
-    list.push({ topic: a.topic, partition: a.partition, fetchOffset: position.offset });
+    list.push({
+      topic: a.topic,
+      partition: a.partition,
+      topicId: position.topicId,
+      fetchOffset: position.offset,
+    });
     byLeader.set(partition.leader, list);
   }
   for (const [broker, partitions] of byLeader) {
@@ -353,21 +359,32 @@ export function handleFetchResponse(ctx: EngineContext, task: Task<'FetchRespons
   for (const result of task.partitions) {
     const key = partitionName(result.topic, result.partition);
     // Discard data for partitions no longer assigned or whose position moved on (stale fetch).
-    if (consumer.positions.get(key)?.offset !== result.fetchOffset) continue;
-    if (result.error === 'UNKNOWN_TOPIC_OR_PARTITION' || result.topicId === null) {
-      consumer.metadata.updateRequested = true;
-      continue;
-    }
-    // The broker checked the fetch offset against this topic life: the position belongs to it.
+    const position = consumer.positions.get(key);
+    if (position?.offset !== result.fetchOffset || position.topicId !== result.topicId) continue;
     const { topicId } = result;
-    if (result.error === 'OFFSET_OUT_OF_RANGE') {
-      const partition = ctx.state.topics.get(result.topic)?.partitions[result.partition];
-      if (partition !== undefined) {
-        consumer.positions.set(key, { offset: resetOffset(consumer, partition), topicId });
+    switch (result.error) {
+      case 'UNKNOWN_TOPIC_OR_PARTITION':
+        consumer.metadata.updateRequested = true;
+        continue;
+      case 'UNKNOWN_TOPIC_ID':
+        // The topic was re-created: the position belongs to its old life. Forget it, so the next
+        // poll() starts the partition again from the committed offset (deleted with the old
+        // topic) or auto.offset.reset (simplifications: "Commits after a topic is re-created").
+        consumer.metadata.updateRequested = true;
+        consumer.positions.delete(key);
+        continue;
+      case 'OFFSET_OUT_OF_RANGE': {
+        const partition = ctx.state.topics.get(result.topic)?.partitions[result.partition];
+        if (partition !== undefined) {
+          consumer.positions.set(key, { offset: resetOffset(consumer, partition), topicId });
+        }
+        continue;
       }
-      continue;
+      case null:
+        break;
+      default:
+        assertNever(result);
     }
-    consumer.positions.set(key, { offset: result.fetchOffset, topicId });
     if (result.records.length > 0) {
       consumer.buffer.push({
         key,

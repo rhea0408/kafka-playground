@@ -115,6 +115,9 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     return result;
   };
 
+  /** Ids of components whose AddComponent is on its way to the worker. */
+  const pendingIds = new Set<string>();
+
   const init = async (): Promise<DispatchResult> =>
     report(await call(() => sim.init({ seed, topology: toTopologyInput(topology()) })));
 
@@ -123,9 +126,13 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     reset: init,
 
     addComponent: async (kind, position, config = {}) => {
-      const id = config.id ?? nextComponentId(topology(), kind);
+      // Reserve the id until the engine answers, so two quick drops don't both pick "p2" (F-f).
+      const id = config.id ?? nextComponentId(topology(), kind, pendingIds);
+      pendingIds.add(id);
       const input = { ...config, kind, id };
-      const result = await send({ type: 'AddComponent', component: input as Component });
+      const result = await send({ type: 'AddComponent', component: input as Component }).finally(
+        () => pendingIds.delete(id),
+      );
       if (!result.ok) return result;
       // The engine accepted the same input, so parsing (to fill in defaults) cannot fail.
       const parsed = parseComponent(input);
