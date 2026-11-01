@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useActions } from '../actions/actions-context.tsx';
 import { groupIdOfNode, membersOf } from '../canvas/flow-mapping.ts';
 import { findComponent, useTopologyStore } from '../stores/topology-store.ts';
-import { focusMember, useUiStore, type Selection } from '../stores/ui-store.ts';
+import { useUiStore, type Selection } from '../stores/ui-store.ts';
 import {
   BooleanField,
   EnumField,
@@ -28,6 +28,7 @@ import { describeDefault, describeValue, toInputText } from './field-value.ts';
 import { KeyStrategyField } from './KeyStrategyField.tsx';
 import { ManualProduce } from './ManualProduce.tsx';
 import { PartitionsStepper } from './PartitionsStepper.tsx';
+import { GroupPanel } from './GroupPanel.tsx';
 import { ConsumedBy, TopicStats } from './TopicSummary.tsx';
 
 const KIND_TITLES: Readonly<Record<ComponentKind, string>> = {
@@ -109,7 +110,7 @@ export function PropertiesPanel() {
             {view.count} items selected. Select a single component to edit its config.
           </p>
         )}
-        {view.type === 'group' && <GroupSummary groupId={view.groupId} memberIds={memberIds} />}
+        {view.type === 'group' && <GroupPanel groupId={view.groupId} />}
         {view.type === 'component' &&
           (component === undefined ? (
             <p className={NOTE}>Select a component on the canvas to see and edit its config.</p>
@@ -119,42 +120,6 @@ export function PropertiesPanel() {
           ))}
       </div>
     </Tooltip.Provider>
-  );
-}
-
-/** A selected consumer group (M3-T8): its members; T10 adds stats, the assignor and partitions. */
-function GroupSummary({ groupId, memberIds }: { groupId: string; memberIds: readonly string[] }) {
-  if (memberIds.length === 0) {
-    return <p className={NOTE}>Select a component on the canvas to see and edit its config.</p>;
-  }
-  return (
-    <>
-      <header className="mt-2.5">
-        <div className="text-[11px] text-status/70">CONSUMER GROUP</div>
-        <h2 className="truncate text-base font-bold">{groupId}</h2>
-      </header>
-      <section aria-labelledby="pp-members" className="flex flex-col gap-1">
-        <h3 id="pp-members" className={SECTION_TITLE}>
-          MEMBERS
-        </h3>
-        <ul className="flex flex-col gap-1 text-[13px]">
-          {memberIds.map((id) => (
-            <li key={id}>
-              <button
-                type="button"
-                className="rounded px-1 font-mono underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
-                onClick={() => {
-                  focusMember(id);
-                }}
-              >
-                {id}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p className={NOTE}>Click a member (here or its row on the canvas) to edit its config.</p>
-      </section>
-    </>
   );
 }
 
