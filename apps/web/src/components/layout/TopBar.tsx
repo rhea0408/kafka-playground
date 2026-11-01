@@ -1,3 +1,5 @@
+import { sceneById } from '../../stores/default-scene.ts';
+import { SceneSelect } from '../SceneSelect.tsx';
 import { SimClock, SimControls } from '../SimControls.tsx';
 
 /**
@@ -10,6 +12,11 @@ export function TopBar() {
       <h1 className="text-[15px] font-semibold text-status">
         Kafka Playground <span className="font-normal text-status/70">·</span> Sandbox
       </h1>
+      <SceneSelect
+        initial={
+          sceneById(new URLSearchParams(window.location.search).get('scene'))?.id ?? 'default'
+        }
+      />
       <SimClock />
       <SimControls />
     </header>

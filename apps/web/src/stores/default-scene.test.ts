@@ -1,4 +1,4 @@
-import { createEngine, partitionForKey } from '@kp/engine';
+import { createEngine, partitionForKey, type EngineEvent } from '@kp/engine';
 import { describe, expect, it } from 'vitest';
 import { GRID_SIZE, nodeSize } from '../canvas/geometry.ts';
 import {
@@ -8,7 +8,10 @@ import {
   DEFAULT_TOPIC,
   defaultSceneState,
   initialSceneFor,
+  sceneById,
+  SCENES,
 } from './default-scene.ts';
+import { DEFAULT_SEED } from '../sim/bootstrap.ts';
 import { INITIAL_TOPOLOGY_STATE, toTopologyInput } from './topology-store.ts';
 
 describe('default scene keys', () => {
@@ -82,5 +85,56 @@ describe('initialSceneFor', () => {
     expect(initialSceneFor('?fps')).toEqual(defaultSceneState());
     expect(initialSceneFor('?scene=empty')).toBe(INITIAL_TOPOLOGY_STATE);
     expect(initialSceneFor('?fps&scene=empty')).toBe(INITIAL_TOPOLOGY_STATE);
+  });
+});
+
+describe('M3 scene presets (M3-T12)', () => {
+  const run = (id: string, steps: (engine: ReturnType<typeof createEngine>) => void) => {
+    const scene = sceneById(id);
+    if (scene === undefined) throw new Error(id);
+    const engine = createEngine({ seed: DEFAULT_SEED, topology: toTopologyInput(scene.state()) });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    steps(engine);
+    return events;
+  };
+
+  it('every scene parses, and ?scene=<id> picks it', () => {
+    for (const scene of SCENES) expect(() => toTopologyInput(scene.state())).not.toThrow();
+    expect(
+      initialSceneFor('?scene=idle').components.filter((c) => c.kind === 'consumer'),
+    ).toHaveLength(4);
+    expect(initialSceneFor('?scene=nope')).toEqual(defaultSceneState());
+  });
+
+  it('idle: four members on three partitions leave one idle', () => {
+    const events = run('idle', (e) => {
+      e.runUntil(10_000);
+    });
+    expect(events.filter((e) => e.type === 'ConsumerIdle')).toHaveLength(1);
+  });
+
+  it('crash: killing a member mid-batch shows duplicates after the session timeout', () => {
+    const events = run('crash', (e) => {
+      e.runUntil(13_050); // after the first auto-commit (~11 s), mid-batch
+      e.dispatch({ type: 'KillConsumer', id: 'c1' });
+      e.runUntil(30_000);
+    });
+    expect(events.some((e) => e.type === 'MemberRemoved' && e.reason === 'session-timeout')).toBe(
+      true,
+    );
+    expect(events.some((e) => e.type === 'DuplicateProcessed')).toBe(true);
+    expect(events.some((e) => e.type === 'RecordsSkipped')).toBe(false);
+  });
+
+  it('slow: c2 exceeds max.poll.interval.ms and is removed (poll timeout)', () => {
+    const events = run('slow', (e) => {
+      e.runUntil(90_000);
+    });
+    expect(
+      events.some(
+        (e) => e.type === 'MemberRemoved' && e.consumerId === 'c2' && e.reason === 'poll-timeout',
+      ),
+    ).toBe(true);
   });
 });
