@@ -7,7 +7,7 @@ import { useFollow } from '../events/use-follow.ts';
 import { INPUT } from '../properties/controls.tsx';
 import { Tip } from '../properties/FieldFrame.tsx';
 import { useSimStore } from '../stores/sim-store.ts';
-import { setLogTarget, useUiStore } from '../stores/ui-store.ts';
+import { setLogGroup, setLogTarget, useUiStore } from '../stores/ui-store.ts';
 import { buildLogRows, type LogRow } from './log-rows.ts';
 import { groupOffsets, resolveTarget, type GroupOffsets } from './partition-info.ts';
 
@@ -41,6 +41,7 @@ export const EXPLAIN = {
 export function PartitionLog() {
   const snapshot = useSimStore((s) => s.snapshot);
   const target = useUiStore((s) => s.logTarget);
+  const logGroup = useUiStore((s) => s.logGroup);
   const resolved = resolveTarget(snapshot, target);
 
   if (snapshot === null || resolved === null) {
@@ -52,6 +53,9 @@ export function PartitionLog() {
   }
   const { topic, partition } = resolved;
   const groups = groupOffsets(snapshot, topic.config.id, partition.index, partition.highWatermark);
+  // With several groups, the committed marker belongs to the picked one (M3-T11).
+  const markedGroup =
+    groups.find((g) => g.groupId === logGroup)?.groupId ?? groups[0]?.groupId ?? null;
   return (
     <Tooltip.Provider delayDuration={300}>
       {/* Keyed by topic life and partition: the row limit, filter and Follow start over. */}
@@ -67,6 +71,7 @@ export function PartitionLog() {
         logEndOffset={partition.logEndOffset}
         records={partition.records}
         groups={groups}
+        markedGroup={markedGroup}
       />
     </Tooltip.Provider>
   );
@@ -83,16 +88,19 @@ interface ViewProps {
   readonly logEndOffset: number;
   readonly records: readonly LogRecord[];
   readonly groups: readonly GroupOffsets[];
+  /** The group whose committed marker is drawn; null when no group reads the partition. */
+  readonly markedGroup: string | null;
 }
 
 function PartitionLogView(props: ViewProps) {
-  const { topicId, partition, highWatermark, logEndOffset, records, groups } = props;
+  const { topicId, partition, highWatermark, logEndOffset, records, groups, markedGroup } = props;
   const [limit, setLimit] = useState(LOG_PAGE);
   const [keyFilter, setKeyFilter] = useState('');
   const reducedMotion = useUiStore((s) => s.reducedMotion);
   const listId = useId();
 
-  const committedKey = groups.map((g) => `${g.groupId}=${String(g.committed)}`).join(',');
+  const marked = groups.filter((g) => g.groupId === markedGroup);
+  const committedKey = marked.map((g) => `${g.groupId}=${String(g.committed)}`).join(',');
   const log = useMemo(
     () =>
       buildLogRows({
@@ -100,7 +108,7 @@ function PartitionLogView(props: ViewProps) {
         logStartOffset: props.logStartOffset,
         highWatermark,
         logEndOffset,
-        committed: groups.flatMap((g) =>
+        committed: marked.flatMap((g) =>
           g.committed === null ? [] : [{ groupId: g.groupId, offset: g.committed }],
         ),
         limit,
@@ -234,8 +242,20 @@ function rowKey(row: LogRow): string {
   }
 }
 
-/** Topic and partition pickers in one 328 × 32 row (ui-spec "partition picker"). */
+/** Partitions shown as a segmented control; more than this use a select (it would not fit). */
+export const SEGMENTED_MAX = 8;
+
+const SEGMENT =
+  'h-8 min-w-8 flex-1 border-r border-border px-1 font-mono text-[12px] last:border-r-0 focus-visible:relative focus-visible:outline-2 focus-visible:outline-primary';
+
+/**
+ * Topic picker and partition segmented control in one 328 × 32 row (ui-spec "partition picker",
+ * wireframe 05c). Topics with many partitions fall back to a select.
+ */
 function Picker({ topicId, topicIds, partitionCount, partition }: ViewProps) {
+  const pick = (p: number): void => {
+    setLogTarget({ topicId, partition: p });
+  };
   return (
     <div className="flex h-8 w-[328px] items-center gap-2 text-[12px]">
       <label htmlFor="pl-topic">Topic</label>
@@ -253,21 +273,55 @@ function Picker({ topicId, topicIds, partitionCount, partition }: ViewProps) {
           </option>
         ))}
       </select>
-      <label htmlFor="pl-partition">Partition</label>
-      <select
-        id="pl-partition"
-        className={`${SELECT} h-8 w-[76px] font-mono`}
-        value={partition}
-        onChange={(event) => {
-          setLogTarget({ topicId, partition: Number(event.target.value) });
-        }}
-      >
-        {Array.from({ length: partitionCount }, (_, i) => (
-          <option key={i} value={i}>
-            P{i}
-          </option>
-        ))}
-      </select>
+      {partitionCount > SEGMENTED_MAX ? (
+        <>
+          <label htmlFor="pl-partition">Partition</label>
+          <select
+            id="pl-partition"
+            className={`${SELECT} h-8 w-[76px] font-mono`}
+            value={partition}
+            onChange={(event) => {
+              pick(Number(event.target.value));
+            }}
+          >
+            {Array.from({ length: partitionCount }, (_, i) => (
+              <option key={i} value={i}>
+                P{i}
+              </option>
+            ))}
+          </select>
+        </>
+      ) : (
+        <div
+          role="radiogroup"
+          aria-label="Partition"
+          className="flex h-8 shrink-0 overflow-hidden rounded-sm border border-border"
+          onKeyDown={(event) => {
+            const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+            if (step === 0) return;
+            event.preventDefault();
+            const next = (partition + step + partitionCount) % partitionCount;
+            pick(next);
+            event.currentTarget.querySelectorAll('button')[next]?.focus();
+          }}
+        >
+          {Array.from({ length: partitionCount }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              role="radio"
+              aria-checked={i === partition}
+              tabIndex={i === partition ? 0 : -1}
+              className={`${SEGMENT} ${i === partition ? 'bg-primary text-surface' : 'bg-surface hover:bg-muted'}`}
+              onClick={() => {
+                pick(i);
+              }}
+            >
+              P{i}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -313,7 +367,35 @@ function Summary(props: ViewProps) {
         <Offset label="Log start" value={logStartOffset} tip={EXPLAIN.start(logStartOffset)} />
       </div>
       <div className="flex flex-col gap-0.5">
-        <h4 className={SECTION_TITLE}>CONSUMER GROUPS</h4>
+        <div className="flex items-center gap-2">
+          <h4 className={SECTION_TITLE}>CONSUMER GROUPS</h4>
+          {groups.length > 1 && (
+            <>
+              <label htmlFor="pl-group" className="ml-auto text-[12px]">
+                Marker for
+              </label>
+              <select
+                id="pl-group"
+                className={`${SELECT} h-7 w-[140px] font-mono`}
+                value={props.markedGroup ?? ''}
+                aria-describedby="pl-group-help"
+                onChange={(event) => {
+                  setLogGroup(event.target.value);
+                }}
+              >
+                {groups.map((g) => (
+                  <option key={g.groupId} value={g.groupId}>
+                    {g.groupId}
+                  </option>
+                ))}
+              </select>
+              <span id="pl-group-help" className="sr-only">
+                Several groups read this partition, each with its own committed offset. The log
+                draws the committed line of the group picked here.
+              </span>
+            </>
+          )}
+        </div>
         {groups.length === 0 ? (
           <p className="text-[12px] text-status/70">No group reads this partition yet.</p>
         ) : (

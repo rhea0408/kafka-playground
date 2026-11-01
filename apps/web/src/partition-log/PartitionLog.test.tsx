@@ -127,10 +127,32 @@ describe('<PartitionLog>', () => {
   it('the picker switches partitions', () => {
     show(snapshotWith(partition(0, 5), committed(3)));
     render(<PartitionLog />);
-    fireEvent.change(screen.getByLabelText('Partition'), { target: { value: '1' } });
+    const picker = screen.getByRole('radiogroup', { name: 'Partition' });
+    expect(within(picker).getByRole('radio', { name: 'P0' }).getAttribute('aria-checked')).toBe(
+      'true',
+    );
+    fireEvent.click(within(picker).getByRole('radio', { name: 'P1' }));
     expect(useUiStore.getState().logTarget).toEqual({ topicId: 't1', partition: 1 });
     expect(picture()).toBe('0 1 2 HW@3 LEO@3');
     expect(screen.getByRole('region', { name: 'Records of t1-1' })).toBeTruthy();
+  });
+
+  it('with several groups, the committed marker belongs to the picked group (M3-T11)', () => {
+    show(
+      snapshotWith(partition(0, 5), [
+        groupWithCommits('c1-group', [{ topic: 't1', partition: 0, offset: 3 }]),
+        groupWithCommits('audit', [{ topic: 't1', partition: 0, offset: 1 }]),
+      ]),
+    );
+    render(<PartitionLog />);
+    const markers = () =>
+      [...document.querySelectorAll('[data-marker="committed"]')].map((m) => m.textContent);
+    expect(markers()).toHaveLength(1);
+    expect(markers()[0]).toContain('audit');
+    act(() => {
+      fireEvent.change(screen.getByLabelText('Marker for'), { target: { value: 'c1-group' } });
+    });
+    expect(markers()[0]).toContain('c1-group');
   });
 
   it('a chosen partition that no longer exists falls back to partition 0', () => {

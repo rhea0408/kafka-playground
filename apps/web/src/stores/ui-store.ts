@@ -46,6 +46,8 @@ export interface UiState {
   readonly hiddenEventTypes: ReadonlySet<EngineEventType>;
   /** Partition log target; null = the first topic's partition 0. */
   readonly logTarget: LogTarget | null;
+  /** The group whose committed marker the partition log shows (M3-T11); null = the first. */
+  readonly logGroup: string | null;
 }
 
 /** Toasts on screen at once; a new one pushes out the oldest. */
@@ -83,6 +85,7 @@ export function initialUiState(): UiState {
     reducedMotion: readReducedMotion(),
     hiddenEventTypes: new Set(),
     logTarget: null,
+    logGroup: null,
   };
 }
 
@@ -169,4 +172,9 @@ export function watchReducedMotion(
   return () => {
     query.removeEventListener('change', onChange);
   };
+}
+
+/** Picks the group whose committed offset the partition log marks (M3-T11). */
+export function setLogGroup(logGroup: string | null): void {
+  useUiStore.setState({ logGroup });
 }

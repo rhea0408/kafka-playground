@@ -28,10 +28,10 @@ export const TOPIC_ROW_SLOT = 48;
 export const TOPIC_ROW_GAP = 8;
 export const TOPIC_ROW_HEIGHT = TOPIC_ROW_SLOT - TOPIC_ROW_GAP;
 
-/** Consumer group: 220 wide (12 px padding each side of a 196 px row), header 36, rows 40 + 8 gap. */
-export const GROUP_WIDTH = 220;
+/** Consumer group: 240 wide (12 px padding each side of a 216 px row; ui-spec allows 220–240), header 36, rows 40 + 8 gap. */
+export const GROUP_WIDTH = 240;
 export const GROUP_HEADER_HEIGHT = 36;
-export const GROUP_ROW_WIDTH = 196;
+export const GROUP_ROW_WIDTH = 216;
 export const GROUP_ROW_HEIGHT = 40;
 export const GROUP_ROW_SLOT = 48;
 /** Space under the last row (wireframe 05: 2 rows → 140 px tall). */

@@ -395,20 +395,35 @@ export function GroupHeaderLive({ groupId }: { groupId: string }) {
           group.protocol === null ? '' : `, assignor ${group.protocol}`
         }. Lag over the group: ${formatCount(group.totalLag)}.`;
   return (
-    <span className="ml-auto flex shrink-0 items-center gap-1" title={detail}>
+    <span
+      className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-semibold"
+      data-slot="group-state"
+      data-state={group?.state ?? 'none'}
+      title={detail}
+    >
+      <span aria-hidden="true">{state.icon}</span>
+      {state.text}
+    </span>
+  );
+}
+
+/** Second header line: generation and the group's total lag (M3-T11). */
+export function GroupHeaderStats({ groupId }: { groupId: string }) {
+  const group = useGroup(groupId);
+  if (group === undefined) return null;
+  const danger = group.totalLag > LAG_DANGER_THRESHOLD;
+  return (
+    <span className="font-mono text-[10px] font-normal text-status/70">
+      <span data-slot="generation">gen {group.generation}</span>
+      {' · '}
       <span
-        className="inline-flex items-center gap-0.5 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-semibold"
-        data-slot="group-state"
-        data-state={group?.state ?? 'none'}
+        data-slot="group-lag"
+        data-lag={group.totalLag}
+        className={danger ? 'font-semibold text-danger-text' : ''}
+        title="Lag over the whole group: sum of HW − committed offset per partition."
       >
-        <span aria-hidden="true">{state.icon}</span>
-        {state.text}
+        {danger ? '⚠\uFE0E ' : ''}group lag {compactCount(group.totalLag)}
       </span>
-      {group !== undefined && (
-        <span className="font-mono text-[10px] font-normal text-status/70" data-slot="generation">
-          gen {group.generation}
-        </span>
-      )}
     </span>
   );
 }
