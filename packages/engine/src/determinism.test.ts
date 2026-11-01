@@ -28,15 +28,27 @@ const topology: TopologyInput = {
     {
       kind: 'consumer',
       id: 'c1',
+      groupId: 'g',
       autoOffsetReset: 'earliest',
       autoCommitIntervalMs: 1500,
       processingTimeMs: 30,
+    },
+    // A second member of the same group (M3): rebalances, crashes and commits by generation.
+    {
+      kind: 'consumer',
+      id: 'c2',
+      groupId: 'g',
+      autoOffsetReset: 'earliest',
+      processingTimeMs: 10,
+      commitMode: 'sync-after-processing',
+      enableAutoCommit: false,
     },
   ],
   connections: [
     { from: 'p1', to: 'orders' },
     { from: 'p2', to: 'orders' },
     { from: 'orders', to: 'c1' },
+    { from: 'orders', to: 'c2' },
   ],
 };
 
@@ -44,7 +56,7 @@ const cmd = (command: Command): Step => ({ kind: 'command', command });
 const advance = (ms: number): Step => ({ kind: 'advance', ms });
 
 const steps: Step[] = [
-  advance(2500),
+  advance(8000), // the first rebalance (two initial-delay windows) and some consuming
   cmd({ type: 'ProduceManual', producerId: 'p1', key: 'Z', value: 'manual' }),
   advance(1500),
   cmd({ type: 'KillConsumer', id: 'c1' }),
@@ -57,13 +69,40 @@ const steps: Step[] = [
   advance(2000),
   cmd({ type: 'Disconnect', from: 'p2', to: 'orders' }),
   advance(3000),
+  // Group steps (M3-T6): a crash detected by session timeout, a graceful stop, a third member
+  // with another assignor list, and a group.id change.
+  cmd({ type: 'KillConsumer', id: 'c2' }),
+  advance(12_000),
+  cmd({ type: 'RestartConsumer', id: 'c2' }),
+  advance(4000),
+  cmd({
+    type: 'AddComponent',
+    component: {
+      kind: 'consumer',
+      id: 'c3',
+      groupId: 'g',
+      partitionAssignmentStrategy: ['cooperative-sticky', 'range'],
+    },
+  }),
+  cmd({ type: 'Connect', from: 'orders', to: 'c3' }),
+  advance(5000),
+  cmd({ type: 'StopConsumer', id: 'c1' }),
+  advance(3000),
+  cmd({ type: 'UpdateConfig', id: 'c3', patch: { groupId: 'other' } }),
+  advance(5000),
 ];
 
-describe('determinism', () => {
+describe('determinism', { timeout: 30_000 }, () => {
   it('two runs with the same seed and commands give byte-identical event logs', () => {
     const a = runScenario(42, topology, steps);
     const b = runScenario(42, topology, steps);
     expect(a.events.length).toBeGreaterThan(200);
+    // The group steps really happen: a crash found by session timeout, a graceful leave, a
+    // group.id change, and several generations.
+    const removed = a.events.flatMap((e) => (e.type === 'MemberRemoved' ? [e.reason] : []));
+    expect(removed).toEqual(expect.arrayContaining(['session-timeout', 'leave']));
+    expect(a.events.filter((e) => e.type === 'RebalanceCompleted').length).toBeGreaterThan(4);
+    expect(a.events.some((e) => e.type === 'MemberJoined' && e.groupId === 'other')).toBe(true);
     expect(JSON.stringify(b.events)).toBe(JSON.stringify(a.events));
     expect(hashEvents(b.events)).toBe(hashEvents(a.events));
   });
