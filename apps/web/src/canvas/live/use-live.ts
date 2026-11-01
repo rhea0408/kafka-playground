@@ -6,7 +6,7 @@
  * when its own producer / partition / consumer changed, and the canvas itself never subscribes.
  */
 
-import type { ConsumerSnapshot, PartitionSnapshot, ProducerStats } from '@kp/engine';
+import type { ConsumerSnapshot, GroupSnapshot, PartitionSnapshot, ProducerStats } from '@kp/engine';
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSimStore, type SimState } from '../../stores/sim-store.ts';
@@ -26,6 +26,11 @@ export const selectConsumer =
   (s: SimState): ConsumerSnapshot | undefined =>
     s.snapshot?.consumers.find((c) => c.config.id === id);
 
+export const selectGroup =
+  (groupId: string) =>
+  (s: SimState): GroupSnapshot | undefined =>
+    s.snapshot?.groups.find((g) => g.groupId === groupId);
+
 // `useShallow` also skips renders when an entry was rebuilt with the same fields (e.g. a producer
 // whose config changed gets a new but equal `stats` object).
 export function useProducerStats(id: string): ProducerStats | undefined {
@@ -38,6 +43,10 @@ export function usePartition(topicId: string, index: number): PartitionSnapshot 
 
 export function useConsumer(id: string): ConsumerSnapshot | undefined {
   return useSimStore(useShallow(selectConsumer(id)));
+}
+
+export function useGroup(groupId: string): GroupSnapshot | undefined {
+  return useSimStore(useShallow(selectGroup(groupId)));
 }
 
 /** Only the status, so the Kill / Restart toolbar doesn't re-render on every offset change. */

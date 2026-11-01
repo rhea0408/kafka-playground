@@ -1,9 +1,11 @@
 import type { Component, ComponentKind, KeyStrategy } from '@kp/schema';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useActions } from '../actions/actions-context.tsx';
+import { groupIdOfNode, membersOf } from '../canvas/flow-mapping.ts';
 import { findComponent, useTopologyStore } from '../stores/topology-store.ts';
-import { useUiStore, type Selection } from '../stores/ui-store.ts';
+import { focusMember, useUiStore, type Selection } from '../stores/ui-store.ts';
 import {
   BooleanField,
   EnumField,
@@ -39,15 +41,30 @@ const KIND_TITLES: Readonly<Record<ComponentKind, string>> = {
 export type PanelView =
   | { readonly type: 'empty' }
   | { readonly type: 'component'; readonly id: string }
+  | { readonly type: 'group'; readonly groupId: string }
   | { readonly type: 'connection'; readonly edgeId: string }
   | { readonly type: 'many'; readonly count: number };
 
-export function panelView(selection: Selection): PanelView {
+/**
+ * A selected consumer group node shows the member whose row was clicked (M3-T8), or the group.
+ * `members` are the selected group's member ids.
+ */
+export function panelView(
+  selection: Selection,
+  focusedMember: string | null = null,
+  members: readonly string[] = [],
+): PanelView {
   const { nodeIds, edgeIds } = selection;
   const count = nodeIds.length + edgeIds.length;
   if (count === 0) return { type: 'empty' };
   const [node] = nodeIds;
-  if (count === 1 && node !== undefined) return { type: 'component', id: node };
+  if (count === 1 && node !== undefined) {
+    const groupId = groupIdOfNode(node);
+    if (groupId === undefined) return { type: 'component', id: node };
+    return focusedMember !== null && members.includes(focusedMember)
+      ? { type: 'component', id: focusedMember }
+      : { type: 'group', groupId };
+  }
   const [edge] = edgeIds;
   if (count === 1 && edge !== undefined) return { type: 'connection', edgeId: edge };
   return { type: 'many', count };
@@ -62,7 +79,15 @@ const NOTE = 'text-[13px] text-status/70';
  */
 export function PropertiesPanel() {
   const selection = useUiStore((s) => s.selection);
-  const view = panelView(selection);
+  const focusedMember = useUiStore((s) => s.focusedMember);
+  const [onlyNode] = selection.nodeIds;
+  const selectedGroup = onlyNode === undefined ? undefined : groupIdOfNode(onlyNode);
+  const memberIds = useTopologyStore(
+    useShallow((s) =>
+      selectedGroup === undefined ? [] : membersOf(s, selectedGroup).map((m) => m.id),
+    ),
+  );
+  const view = panelView(selection, focusedMember, memberIds);
   const component = useTopologyStore((s) =>
     view.type === 'component' ? findComponent(s, view.id) : undefined,
   );
@@ -84,6 +109,7 @@ export function PropertiesPanel() {
             {view.count} items selected. Select a single component to edit its config.
           </p>
         )}
+        {view.type === 'group' && <GroupSummary groupId={view.groupId} memberIds={memberIds} />}
         {view.type === 'component' &&
           (component === undefined ? (
             <p className={NOTE}>Select a component on the canvas to see and edit its config.</p>
@@ -93,6 +119,42 @@ export function PropertiesPanel() {
           ))}
       </div>
     </Tooltip.Provider>
+  );
+}
+
+/** A selected consumer group (M3-T8): its members; T10 adds stats, the assignor and partitions. */
+function GroupSummary({ groupId, memberIds }: { groupId: string; memberIds: readonly string[] }) {
+  if (memberIds.length === 0) {
+    return <p className={NOTE}>Select a component on the canvas to see and edit its config.</p>;
+  }
+  return (
+    <>
+      <header className="mt-2.5">
+        <div className="text-[11px] text-status/70">CONSUMER GROUP</div>
+        <h2 className="truncate text-base font-bold">{groupId}</h2>
+      </header>
+      <section aria-labelledby="pp-members" className="flex flex-col gap-1">
+        <h3 id="pp-members" className={SECTION_TITLE}>
+          MEMBERS
+        </h3>
+        <ul className="flex flex-col gap-1 text-[13px]">
+          {memberIds.map((id) => (
+            <li key={id}>
+              <button
+                type="button"
+                className="rounded px-1 font-mono underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-primary"
+                onClick={() => {
+                  focusMember(id);
+                }}
+              >
+                {id}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className={NOTE}>Click a member (here or its row on the canvas) to edit its config.</p>
+      </section>
+    </>
   );
 }
 

@@ -50,6 +50,9 @@ export function partitionRowCenterY(index: number): number {
   return TOPIC_HEADER_HEIGHT + TOPIC_ROW_SLOT * index + TOPIC_ROW_GAP + TOPIC_ROW_HEIGHT / 2;
 }
 
+/** Vertical centre of the group header: where the group's input handle sits. */
+export const GROUP_HEADER_CENTER_Y = GROUP_HEADER_HEIGHT / 2;
+
 /** Vertical centre of consumer row `index`, relative to the group node's top edge. */
 export function groupRowCenterY(index: number): number {
   return GROUP_HEADER_HEIGHT + GROUP_ROW_SLOT * index + TOPIC_ROW_GAP + GROUP_ROW_HEIGHT / 2;
@@ -57,7 +60,7 @@ export function groupRowCenterY(index: number): number {
 
 /**
  * Size of a node on the canvas. `partitions` is used for topics and `rows` for consumer groups
- * (one row per consumer; always 1 in M2, M3 adds more).
+ * (one row per member).
  */
 export function nodeSize(kind: ComponentKind, partitions = 1, rows = 1): Size {
   switch (kind) {
@@ -73,9 +76,10 @@ export function nodeSize(kind: ComponentKind, partitions = 1, rows = 1): Size {
 }
 
 // ── Handle and anchor ids ──────────────────────────────────────────────────────────────────────
-// Connectable handles: producer `out` → topic `in`; topic `out` → consumer row `row:<consumerId>`.
-// Anchors are invisible, non-connectable handles React Flow measures, so the overlay (T9) can
-// read a partition row's position from `node.internals.handleBounds` by id.
+// Connectable handles: producer `out` → topic `in`; topic `out` → consumer group `in` (on the
+// group header, M3-T8). Anchors are invisible, non-connectable handles React Flow measures, so the
+// overlay can read a partition row's or a member row's position from
+// `node.internals.handleBounds` by id.
 
 export const HANDLE_OUT = 'out';
 export const HANDLE_IN = 'in';
@@ -90,7 +94,7 @@ export function partitionOutAnchorId(index: number): string {
   return `p${String(index)}:out`;
 }
 
-/** Target handle of a consumer's row inside its group node (A2 dots arrive here). */
+/** Anchor on a member's row inside its group node (A2 dots arrive here). */
 export function consumerRowHandleId(consumerId: string): string {
   return `row:${consumerId}`;
 }

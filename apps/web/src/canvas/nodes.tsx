@@ -8,9 +8,11 @@
 import type { KeyStrategy } from '@kp/schema';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { ReactNode } from 'react';
+import { focusMember } from '../stores/ui-store.ts';
 import {
   ConsumerLive,
   ConsumerToolbar,
+  GroupHeaderLive,
   PartitionLive,
   ProducerCounters,
   useHoverToolbar,
@@ -24,6 +26,7 @@ import type {
 import {
   BROKER_SIZE,
   consumerRowHandleId,
+  GROUP_HEADER_CENTER_Y,
   GROUP_HEADER_HEIGHT,
   GROUP_ROW_HEIGHT,
   GROUP_ROW_WIDTH,
@@ -201,6 +204,13 @@ export function BrokerNode({ data, selected }: NodeProps<BrokerFlowNode>) {
   );
 }
 
+/**
+ * A consumer group (M3-T8, ui-spec "Consumer group", wireframe 05): the header shows the group id,
+ * the coordinator's state and the generation; each member has a 196 × 40 row with its status, the
+ * partitions it owns and its lag. Topics connect to the group's input on the header; A2 dots end
+ * on the row of the member that read the record. Clicking a row focuses that member (properties,
+ * Delete); clicking the header focuses the group.
+ */
 export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlowNode>) {
   const toolbar = useHoverToolbar(selected);
   return (
@@ -214,26 +224,46 @@ export function ConsumerGroupNode({ data, selected }: NodeProps<ConsumerGroupFlo
     >
       <ConsumerToolbar consumerIds={data.members.map((m) => m.id)} toolbar={toolbar} />
       <div
-        className="flex items-center border-b border-divider text-[13px] font-semibold"
+        className="flex items-center gap-1.5 border-b border-divider text-[13px] font-semibold"
         style={{ height: GROUP_HEADER_HEIGHT }}
+        data-slot="group-header"
+        onClick={() => {
+          focusMember(null);
+        }}
       >
-        <span className="truncate">Group: {data.groupId}</span>
+        <span className="min-w-0 truncate" title={`Consumer group ${data.groupId}`}>
+          <span className="sr-only">Group: </span>
+          {data.groupId}
+        </span>
+        <GroupHeaderLive groupId={data.groupId} />
       </div>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id={HANDLE_IN}
+        className={HANDLE_CLASS}
+        style={{ top: GROUP_HEADER_CENTER_Y }}
+        aria-label={`Input of consumer group ${data.groupId}: drop a topic connection here to subscribe every member`}
+      />
       {data.members.map((consumer, i) => (
         <div
           key={consumer.id}
           data-consumer-row={consumer.id}
           className="kp-consumer-row mt-2 flex items-center rounded-md border border-border px-2 text-xs"
           style={{ width: GROUP_ROW_WIDTH, height: GROUP_ROW_HEIGHT }}
+          onClick={() => {
+            focusMember(consumer.id);
+          }}
         >
           <ConsumerLive consumerId={consumer.id} />
           <Handle
             type="target"
             position={Position.Left}
             id={consumerRowHandleId(consumer.id)}
-            className={HANDLE_CLASS}
+            isConnectable={false}
+            className={ANCHOR_CLASS}
             style={{ top: groupRowCenterY(i) }}
-            aria-label={`Input of consumer ${consumer.id}: drop a topic connection here`}
+            aria-hidden="true"
           />
         </div>
       ))}

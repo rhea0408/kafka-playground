@@ -3,7 +3,8 @@
  * takes the parts of a React Flow internal node it needs, so it is unit-tested without a DOM.
  *
  * - A1: producer `out` handle → the partition row's `p<i>:in` anchor.
- * - A2: the partition row's `p<i>:out` anchor → the consumer row's `row:<consumerId>` handle.
+ * - A2: the partition row's `p<i>:out` anchor → the member row's `row:<consumerId>` anchor in its
+ *   group node: the dot ends at the member that consumed the record (M3-T8).
  *
  * The anchors are invisible handles on each partition row (M2-decisions T7-4), so React Flow
  * measures them with the node and they follow any layout change. If a node has not been measured
@@ -17,6 +18,7 @@ import {
   partitionOutAnchorId,
   partitionRowCenterY,
 } from '../geometry.ts';
+import { groupNodeId } from '../flow-mapping.ts';
 import type { Anchor, Side } from './path.ts';
 
 /** Which handle of which node. */
@@ -63,9 +65,9 @@ export function partitionOut(topicId: string, partition: number): EndpointRef {
   return { nodeId: topicId, handleId: partitionOutAnchorId(partition) };
 }
 
-/** M2: the consumer group node's id is the consumer id; its row handle is `row:<consumerId>`. */
-export function consumerRow(consumerId: string): EndpointRef {
-  return { nodeId: consumerId, handleId: consumerRowHandleId(consumerId) };
+/** A member's row inside its group node (`group:<groupId>`): anchor `row:<consumerId>` (M3-T8). */
+export function consumerRow(groupId: string, consumerId: string): EndpointRef {
+  return { nodeId: groupNodeId(groupId), handleId: consumerRowHandleId(consumerId) };
 }
 
 function toSide(position: string): Side | undefined {

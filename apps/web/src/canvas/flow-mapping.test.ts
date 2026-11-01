@@ -1,8 +1,15 @@
 import { parseComponent, type Component } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
 import { INITIAL_TOPOLOGY_STATE, type TopologyState } from '../stores/topology-store.ts';
-import { checkConnection, orientConnection } from './connection-check.ts';
-import { edgeId, parseEdgeId, toFlowEdges, toFlowNodes } from './flow-mapping.ts';
+import { checkConnection, orientConnection, plannedConnections } from './connection-check.ts';
+import {
+  connectionsOfEdge,
+  edgeId,
+  groupIdOfNode,
+  parseEdgeId,
+  toFlowEdges,
+  toFlowNodes,
+} from './flow-mapping.ts';
 
 function component(input: Record<string, unknown>): Component {
   const parsed = parseComponent(input);
@@ -44,14 +51,14 @@ describe('toFlowNodes / toFlowEdges', () => {
       ['b1', 'broker', 226, 84],
       ['p1', 'producer', 150, 72],
       ['orders', 'topic', 230, 36 + 3 * 48],
-      ['c1', 'consumerGroup', 220, 92],
+      ['group:c1-group', 'consumerGroup', 220, 92],
     ]);
     // A missing position falls back to the origin.
     expect(nodes[3]?.position).toEqual({ x: 0, y: 0 });
   });
 
   it('draws a consumer as a group with itself as the only row', () => {
-    const group = toFlowNodes(state).find((n) => n.id === 'c1');
+    const group = toFlowNodes(state).find((n) => n.id === 'group:c1-group');
     expect(group?.type === 'consumerGroup' && group.data.groupId).toBe('c1-group');
     expect(group?.type === 'consumerGroup' && group.data.members.map((m) => m.id)).toEqual(['c1']);
   });
@@ -67,15 +74,64 @@ describe('toFlowNodes / toFlowEdges', () => {
     expect(p1?.position).toEqual({ x: 99, y: 99 });
   });
 
-  it('edges use the fixed handles: producer out → topic in, topic out → consumer row', () => {
+  it('edges use the fixed handles: producer out → topic in, topic out → group in', () => {
     expect(
-      toFlowEdges(state).map((e) => [e.id, e.sourceHandle, e.targetHandle, e.selected]),
+      toFlowEdges(state).map((e) => [e.id, e.target, e.sourceHandle, e.targetHandle, e.selected]),
     ).toEqual([
-      ['p1→orders', 'out', 'in', false],
-      ['orders→c1', 'out', 'row:c1', false],
+      ['p1→orders', 'orders', 'out', 'in', false],
+      ['orders→group:c1-group', 'group:c1-group', 'out', 'in', false],
     ]);
-    const prev = toFlowEdges(state).map((e) => ({ ...e, selected: e.id === 'orders→c1' }));
+    const prev = toFlowEdges(state).map((e) => ({
+      ...e,
+      selected: e.id === 'orders→group:c1-group',
+    }));
     expect(toFlowEdges(state, prev).map((e) => e.selected)).toEqual([false, true]);
+  });
+});
+
+describe('consumer groups on the canvas (M3-T8)', () => {
+  const grouped: TopologyState = {
+    ...state,
+    components: [
+      ...state.components,
+      component({ kind: 'consumer', id: 'c2', groupId: 'c1-group' }),
+      component({ kind: 'consumer', id: 'c3', groupId: 'billing' }),
+    ],
+    connections: [...state.connections, { from: 'orders', to: 'c2' }],
+    positions: { ...state.positions, c1: { x: 500, y: 100 }, 'group:billing': { x: 9, y: 9 } },
+  };
+
+  it('one node per group with a row per member, placed where its first member was dropped', () => {
+    const nodes = toFlowNodes(grouped);
+    const g = nodes.find((n) => n.id === 'group:c1-group');
+    expect(g?.type === 'consumerGroup' && g.data.members.map((m) => m.id)).toEqual(['c1', 'c2']);
+    expect([g?.height, g?.position]).toEqual([140, { x: 500, y: 100 }]);
+    expect(nodes.find((n) => n.id === 'group:billing')?.position).toEqual({ x: 9, y: 9 });
+    expect(nodes.filter((n) => n.type === 'consumerGroup')).toHaveLength(2);
+  });
+
+  it('one edge per topic and group; the edge stands for every member connection', () => {
+    expect(toFlowEdges(grouped).map((e) => e.id)).toEqual(['p1→orders', 'orders→group:c1-group']);
+    expect(connectionsOfEdge(grouped, 'orders→group:c1-group')).toEqual([
+      { from: 'orders', to: 'c1' },
+      { from: 'orders', to: 'c2' },
+    ]);
+    expect(connectionsOfEdge(grouped, 'p1→orders')).toEqual([{ from: 'p1', to: 'orders' }]);
+  });
+
+  it('connecting a topic to a group connects the members that do not read it yet (Q6)', () => {
+    expect(plannedConnections(grouped, 'orders', 'group:billing')).toEqual([
+      { from: 'orders', to: 'c3' },
+    ]);
+    expect(checkConnection(grouped, 'orders', 'group:billing')).toEqual({ ok: true });
+    expect(checkConnection(grouped, 'orders', 'group:c1-group')).toEqual({
+      ok: false,
+      reason: 'orders → group c1-group is already connected.',
+    });
+    expect(checkConnection(grouped, 'p1', 'group:billing')).toMatchObject({ ok: false });
+    expect(checkConnection(grouped, 'orders', 'group:nobody')).toMatchObject({ ok: false });
+    expect(groupIdOfNode('group:billing')).toBe('billing');
+    expect(groupIdOfNode('orders')).toBeUndefined();
   });
 });
 

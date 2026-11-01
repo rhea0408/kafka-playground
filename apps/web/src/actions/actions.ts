@@ -9,6 +9,7 @@
 
 import type { Command, ConfigPatch, DispatchResult } from '@kp/engine';
 import { parseComponent, type Component, type ComponentKind } from '@kp/schema';
+import { groupNodeId, membersOf } from '../canvas/flow-mapping.ts';
 import type { SimApi, StepResult } from '../sim/protocol.ts';
 import {
   findComponent,
@@ -145,10 +146,16 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     // One RemoveComponent: the engine drops the component's connections in the same step
     // (commands/apply.ts), so the UI drops its edges locally instead of sending Disconnects.
     removeComponent: async (id) => {
+      const removed = findComponent(topology(), id);
       const result = await send({ type: 'RemoveComponent', id }, (s) =>
         withComponentRemoved(s, id),
       );
-      if (result.ok) deselect(id);
+      if (!result.ok) return result;
+      deselect(id);
+      // The last member of a group takes the group node with it (M3-T8).
+      if (removed?.kind === 'consumer' && membersOf(topology(), removed.groupId).length === 0) {
+        deselect(groupNodeId(removed.groupId));
+      }
       return result;
     },
 

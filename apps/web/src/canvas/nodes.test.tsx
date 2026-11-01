@@ -14,10 +14,11 @@ import {
   consumer,
   consumerPartition,
   fixtureSnapshot,
+  groupWithCommits,
   partition,
   producer,
 } from '../test/snapshot-fixture.ts';
-import { toFlowNode, type FlowNode } from './flow-mapping.ts';
+import { toFlowNode, toGroupNode, type FlowNode } from './flow-mapping.ts';
 import { ConsumerLive, LagBadge, PartitionLive, ProducerCounters } from './live/live-parts.tsx';
 import { NODE_TYPES } from './nodes.tsx';
 
@@ -30,6 +31,12 @@ function component(input: Record<string, unknown>): Component {
 const P1 = component({ kind: 'producer', id: 'p1' });
 const T1 = component({ kind: 'topic', id: 't1', partitions: 2 });
 const C1 = component({ kind: 'consumer', id: 'c1' });
+/** The canvas node of c1's group (M3-T8: consumers are drawn by group). */
+const G1 = 'group:c1-group';
+const groupNodeOf = (c: Component, position: { x: number; y: number }) => {
+  if (c.kind !== 'consumer') throw new Error('not a consumer');
+  return toGroupNode(c.groupId, [c], position);
+};
 
 let frame = 0;
 
@@ -196,10 +203,59 @@ describe('live node state (M2-T8)', () => {
     expect(last?.className).not.toContain('kp-cell-in');
   });
 
+  it('a group node shows the coordinator state, the generation and one row per member (M3-T8)', () => {
+    const c2 = component({ kind: 'consumer', id: 'c2', groupId: 'c1-group' });
+    show(
+      fixtureSnapshot({
+        consumers: [
+          consumer('c1', [consumerPartition(0, 12, 12, 10), consumerPartition(1, 3, 3, 3)]),
+          consumer('c2', [], 'idle'),
+        ],
+        groups: [
+          {
+            ...groupWithCommits('c1-group', []),
+            state: 'Stable',
+            generation: 4,
+            protocol: 'range',
+            leader: 'c1-0000000a',
+          },
+        ],
+      }),
+    );
+    if (C1.kind !== 'consumer' || c2.kind !== 'consumer') throw new Error('not consumers');
+    renderCanvas([toGroupNode('c1-group', [C1, c2], { x: 0, y: 0 })]);
+    const node = nodeEl(G1);
+    expect(node.querySelector('[data-slot="group-state"]')?.textContent).toBe('✓Stable');
+    expect(node.querySelector('[data-slot="generation"]')?.textContent).toBe('gen 4');
+    const rows = node.querySelectorAll('[data-consumer-row]');
+    expect([...rows].map((r) => r.getAttribute('data-consumer-row'))).toEqual(['c1', 'c2']);
+    const chips = rows[0]?.querySelectorAll('[data-chip]') ?? [];
+    expect([...chips].map((c) => c.textContent)).toEqual(['P0', 'P1']);
+    expect(rows[1]?.querySelector('[data-slot="idle"]')?.textContent).toBe('◇Idle: no partition');
+
+    // A rebalance: the header says so; c1's revoked chips fade out (A12).
+    show(
+      fixtureSnapshot({
+        consumers: [consumer('c1', [], 'joining'), consumer('c2', [], 'joining')],
+        groups: [
+          {
+            ...groupWithCommits('c1-group', []),
+            state: 'PreparingRebalance',
+            generation: 4,
+            protocol: 'range',
+          },
+        ],
+      }),
+    );
+    expect(node.querySelector('[data-slot="group-state"]')?.textContent).toBe('↻Rebalancing…');
+    const fading = node.querySelectorAll('[data-consumer-row="c1"] [data-phase="out"]');
+    expect(fading).toHaveLength(2);
+  });
+
   it('consumer row shows status, summed position / committed, and total lag', () => {
     show(fixtureSnapshot());
-    renderCanvas([toFlowNode(C1, { x: 0, y: 0 })]);
-    const r = nodeEl('c1').querySelector<HTMLElement>('[data-consumer-row="c1"]');
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    const r = nodeEl(G1).querySelector<HTMLElement>('[data-consumer-row="c1"]');
     if (r === null) throw new Error('no row');
     expect(within(r).getByText('stable')).toBeTruthy();
     expect(r.querySelector('[data-slot="offsets"]')?.textContent).toBe('Σ pos 15 · Σ committed 13');
@@ -215,8 +271,8 @@ describe('live node state (M2-T8)', () => {
         consumers: [consumer('c1', [consumerPartition(0, 9, null, 4)], 'stopped')],
       }),
     );
-    renderCanvas([toFlowNode(C1, { x: 0, y: 0 })]);
-    const r = nodeEl('c1').querySelector<HTMLElement>('[data-consumer-row="c1"]');
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    const r = nodeEl(G1).querySelector<HTMLElement>('[data-consumer-row="c1"]');
     if (r === null) throw new Error('no row');
     expect(within(r).getByText('stopped')).toBeTruthy();
     expect(r.querySelector('[data-slot="offsets"]')?.textContent).toBe('pos - · committed 4');
@@ -226,7 +282,7 @@ describe('live node state (M2-T8)', () => {
   it('Kill / Restart in the toolbar send the engine commands', () => {
     const actions = fakeActions();
     show(fixtureSnapshot());
-    renderCanvas([{ ...toFlowNode(C1, { x: 0, y: 200 }), selected: true }], actions);
+    renderCanvas([{ ...groupNodeOf(C1, { x: 0, y: 200 }), selected: true }], actions);
     fireEvent.click(screen.getByRole('button', { name: 'Kill consumer c1' }));
     expect(actions.killConsumer).toHaveBeenCalledWith('c1');
 
@@ -241,23 +297,23 @@ describe('live node state (M2-T8)', () => {
 
   it('the toolbar shows on hover and is reachable by keyboard from the focused node', () => {
     show(fixtureSnapshot());
-    renderCanvas([toFlowNode(C1, { x: 0, y: 200 })]);
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 200 })]);
     expect(screen.queryByRole('toolbar', { name: 'Consumer actions' })).toBeNull();
 
-    fireEvent.pointerEnter(nodeEl('c1').querySelector('[data-kind="consumer"]') as HTMLElement);
+    fireEvent.pointerEnter(nodeEl(G1).querySelector('[data-kind="consumer"]') as HTMLElement);
     expect(screen.getByRole('toolbar', { name: 'Consumer actions' })).toBeTruthy();
-    fireEvent.pointerLeave(nodeEl('c1').querySelector('[data-kind="consumer"]') as HTMLElement);
+    fireEvent.pointerLeave(nodeEl(G1).querySelector('[data-kind="consumer"]') as HTMLElement);
 
     // Keyboard: focus the node (Tab), then Tab again jumps into its toolbar.
     act(() => {
-      nodeEl('c1').focus();
+      nodeEl(G1).focus();
     });
     const kill = screen.getByRole('button', { name: 'Kill consumer c1' });
-    fireEvent.keyDown(nodeEl('c1'), { key: 'Tab' });
+    fireEvent.keyDown(nodeEl(G1), { key: 'Tab' });
     expect(document.activeElement).toBe(kill);
     // Escape goes back to the node; the toolbar stays while the node has focus.
     fireEvent.keyDown(kill, { key: 'Escape' });
-    expect(document.activeElement).toBe(nodeEl('c1'));
+    expect(document.activeElement).toBe(nodeEl(G1));
     expect(screen.getByRole('toolbar', { name: 'Consumer actions' })).toBeTruthy();
   });
 });

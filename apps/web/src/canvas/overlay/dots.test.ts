@@ -19,8 +19,9 @@ const ANCHORS: Record<string, Anchor> = {
   't1|p0:in': { x: 120, y: 0, side: 'left' },
   't1|p1:in': { x: 120, y: 48, side: 'left' },
   't1|p0:out': { x: 240, y: 0, side: 'right' },
-  'c1|row:c1': { x: 360, y: 0, side: 'left' },
-  'c2|row:c2': { x: 360, y: 100, side: 'left' },
+  // Members' rows inside the group node of group "g" (M3-T8).
+  'group:g|row:c1': { x: 360, y: 0, side: 'left' },
+  'group:g|row:c2': { x: 360, y: 100, side: 'left' },
 };
 const resolve: AnchorResolver = (ref) => ANCHORS[`${ref.nodeId}|${ref.handleId}`];
 
@@ -150,7 +151,7 @@ describe('A2 waits for A1 (ADR 0008 rule 1)', () => {
     const model = new DotModel();
     model.ingest([produced('r'), consumed('r', 'c1'), consumed('r', 'c2')], 0);
     run(model, 0, 1000);
-    expect(model.dots.map((d) => d.to.nodeId)).toEqual(['c1', 'c2']);
+    expect(model.dots.map((d) => d.to.handleId)).toEqual(['row:c1', 'row:c2']);
   });
 
   it('starts A2 at once for a record whose A1 dot already arrived (consumed later)', () => {
