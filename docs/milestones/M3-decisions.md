@@ -89,3 +89,14 @@ Checked on apache/kafka trunk (2026-11-01): `GroupMetadataManager`, `ClassicGrou
 | T1-6 | `group.instance.id` is listed disabled with a "not modelled" chip (no planned milestone), so a new milestone value `later` was added. `session.timeout.ms` and `heartbeat.interval.ms` move from the disabled list to real fields. | — | |
 | T1-7 | `group.initial.rebalance.delay.ms` is read-only in the panel and the engine refuses changes ("static broker config"), like `broker.rack`. | — | A static broker config, as the milestone says. |
 | T1-8 | `group.id` and `auto.offset.reset` stay read-only until T5 makes run-time changes work. | — | Same reason as T1-4. |
+
+## T2 · Assignors
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T2-1 | Assignors are pure functions in `packages/engine/src/protocols/assignors/` (`range`, `roundrobin`, `sticky`, `cooperative-sticky`, plus `rebalanceProtocol`). Input: members (id, subscription, owned partitions, generation) and the leader's partition counts; output: member id → partitions. | One module | Matches the Java classes and keeps each port next to its source citation. |
+| T2-2 | Range and round-robin are exact ports, including the string order of member ids (`m10` sorts before `m2`). | Numeric order | That is what Kafka does; the generated member ids (T3) keep the consumer id as a prefix, so the order still reads naturally. |
+| T2-3 | Sticky with equal subscriptions follows `constrainedAssign` step by step, except that the keep step visits members in member-id order (Kafka: HashMap order). Conflicting claims are resolved by generation, and a same-generation conflict leaves the partition to neither (it counts as transferring). | — | Deterministic with the same results whenever the HashMap order would not matter. |
+| T2-4 | **Sticky with different subscriptions is simplified**: keep valid owned partitions, give each unassigned partition to the eligible member with the fewest partitions, then move partitions from members with at least two more than an eligible member until none can move. Kafka's `generalAssign` does a longer balancing search with the same goals. Simplifications row added. | Port `generalAssign` in full | It is several hundred lines for a case lessons rarely use; the properties (exactly once, stability, only-subscribers) still hold. |
+| T2-5 | Cooperative-sticky = the sticky result minus every partition that would move from a previous owner still in the group (or that two members claimed). | — | `CooperativeStickyAssignor#adjustAssignment`. |
+| T2-6 | Property tests: exactly-once to a subscriber (range, round-robin, sticky), balance ≤ 1 with equal subscriptions (round-robin, both sticky), idle members when members outnumber partitions (range: by the largest topic, since it splits each topic on its own), sticky stability, keep-all-on-leave, only-give-up-on-join, and cooperative converging in two rounds. | — | The milestone's list, plus the two stickiness directions. |
