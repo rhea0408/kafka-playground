@@ -18,7 +18,8 @@ function topology(
   consumer: Record<string, unknown> = {},
 ): TopologyInput {
   return {
-    brokers: [{ kind: 'broker', id: 'b1' }],
+    // No initial rebalance delay, so consumers own their partitions 4 ms after starting.
+    brokers: [{ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: 0 }],
     topics: [{ kind: 'topic', id: 'orders', partitions: 3 }],
     producers: [{ kind: 'producer', id: 'p1', ratePerSec: 2, ...producer }],
     consumers: [{ kind: 'consumer', id: 'c1', autoOffsetReset: 'earliest', ...consumer }],
@@ -95,7 +96,7 @@ describe('UpdateConfig: general rules', () => {
       engine.dispatch({
         type: 'UpdateConfig',
         id: 'b1',
-        patch: { groupInitialRebalanceDelayMs: 0 },
+        patch: { groupInitialRebalanceDelayMs: 1000 },
       }),
     ).toMatchObject({
       ok: false,
@@ -295,14 +296,14 @@ describe('UpdateConfig: consumer', () => {
       patch: { maxPollRecords: 3, processingTimeMs: 100 },
     });
     engine.dispatch({ type: 'RestartConsumer', id: 'c1' });
-    engine.runUntil(10_500);
+    // The restarted member gets partitions once the crashed one's session has timed out (~13 s).
+    engine.runUntil(14_000);
     const perPoll = new Map<number, number>();
     for (const e of ofType(events, 'RecordConsumed')) perPoll.set(e.t, (perPoll.get(e.t) ?? 0) + 1);
-    // Fetch answered at 10002; each poll() returns 3 records and takes 300 ms to process.
-    expect([...perPoll.entries()].slice(0, 2)).toEqual([
-      [10_002, 3],
-      [10_302, 3],
-    ]);
+    // Each poll() returns 3 records and takes 300 ms to process.
+    const [first, second] = [...perPoll.entries()];
+    expect([first?.[1], second?.[1]]).toEqual([3, 3]);
+    expect((second?.[0] ?? 0) - (first?.[0] ?? 0)).toBe(300);
     for (const n of perPoll.values()) expect(n).toBeLessThanOrEqual(3);
   });
 
@@ -311,13 +312,13 @@ describe('UpdateConfig: consumer', () => {
       seed: 1,
       topology: { ...topology(), producers: [], connections: [{ from: 'orders', to: 'c1' }] },
     });
-    engine.runUntil(10); // the first fetch is parked at t=1 for 500 ms
+    engine.runUntil(10); // the first fetch (sent once c1 owns the partition, t=4) is parked at 5
     engine.dispatch({ type: 'UpdateConfig', id: 'c1', patch: { fetchMaxWaitMs: 100 } });
-    // The parked fetch still expires at 501 (answer at 502); later fetches wait 100 ms.
+    // The parked fetch still expires at 505 (answer at 506); later fetches wait 100 ms.
     const steps: number[] = [];
     while (engine.now() < 900 && engine.step()) steps.push(engine.now());
-    expect(steps).toContain(501);
-    expect(steps).toContain(603); // second fetch parked at 503, expires after 100 ms
+    expect(steps).toContain(505);
+    expect(steps).toContain(607); // second fetch parked at 507, expires after 100 ms
   });
 
   it('replays exactly, including UpdateConfig', () => {

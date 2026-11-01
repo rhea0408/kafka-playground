@@ -18,10 +18,19 @@ const GROUPS = [
     label: 'Records',
     types: ['RecordProduced', 'RecordAppended', 'ProduceAcked', 'ProduceFailed', 'RecordConsumed'],
   },
-  { label: 'Offsets', types: ['OffsetCommitted'] },
+  { label: 'Offsets', types: ['OffsetCommitted', 'CommitFailed'] },
   {
     label: 'Group',
-    types: ['MemberJoined', 'MemberRemoved', 'RebalanceStarted', 'RebalanceCompleted'],
+    types: [
+      'MemberJoined',
+      'MemberRemoved',
+      'RebalanceStarted',
+      'RebalanceCompleted',
+      'PartitionsAssigned',
+      'PartitionsRevoked',
+      'PartitionsLost',
+      'ConsumerIdle',
+    ],
   },
   { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
   {

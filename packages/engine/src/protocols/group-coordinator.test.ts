@@ -505,3 +505,89 @@ describe('protocol selection (K6) and consistency', () => {
     expect(h.group().members.size).toBe(1);
   });
 });
+
+describe('edge cases', () => {
+  it('a JoinGroup or Heartbeat with an unknown member id gets UNKNOWN_MEMBER_ID', () => {
+    const h = harness();
+    h.join('c1', 'ghost-1');
+    h.send('c1', { api: 'Heartbeat', memberId: 'ghost-1', generation: 0 });
+    h.run(5);
+    expect(h.last('c1', 'JoinGroup')?.response).toEqual({
+      api: 'JoinGroup',
+      error: 'UNKNOWN_MEMBER_ID',
+    });
+    expect(h.last('c1', 'Heartbeat')?.response).toEqual({
+      api: 'Heartbeat',
+      error: 'UNKNOWN_MEMBER_ID',
+    });
+  });
+
+  it('a member rejoining with the same metadata while CompletingRebalance gets the current generation', () => {
+    const h = harness();
+    h.join('c1');
+    h.join('c2');
+    h.run(6002);
+    h.join('c2', h.idOf('c2'));
+    h.run(6004);
+    expect(h.group().state).toBe('CompletingRebalance');
+    expect(h.last('c2', 'JoinGroup')).toMatchObject({ t: 6004, response: { generation: 1 } });
+  });
+
+  it('a follower syncing after the group is Stable gets its assignment at once', () => {
+    const h = harness();
+    h.join('c1');
+    h.join('c2');
+    h.run(6002);
+    h.send('c1', {
+      api: 'SyncGroup',
+      memberId: h.idOf('c1'),
+      generation: 1,
+      assignment: [[h.idOf('c2'), [{ topic: 't', partition: 1 }]]],
+    });
+    h.run(6004);
+    h.send('c2', { api: 'SyncGroup', memberId: h.idOf('c2'), generation: 1, assignment: null });
+    h.run(6006);
+    expect(h.last('c2', 'SyncGroup')?.response).toMatchObject({
+      assignment: [{ topic: 't', partition: 1 }],
+    });
+    expect(h.last('c1', 'SyncGroup')?.response).toMatchObject({ assignment: [] });
+  });
+
+  it('a SyncGroup while PreparingRebalance gets REBALANCE_IN_PROGRESS; LeaveGroup of an unknown member is ignored', () => {
+    const h = harness();
+    stableGroupOfTwo(h);
+    h.join('c3');
+    h.send('c9', { api: 'LeaveGroup', memberId: 'c9-x', reason: 'leave' });
+    h.run(T + 2);
+    h.send('c1', { api: 'SyncGroup', memberId: h.idOf('c1'), generation: 1, assignment: null });
+    h.run(T + 4);
+    expect(h.last('c1', 'SyncGroup')?.response).toEqual({
+      api: 'SyncGroup',
+      error: 'REBALANCE_IN_PROGRESS',
+    });
+    expect(ofType(h.events, 'MemberRemoved')).toEqual([]);
+  });
+
+  it('an Empty group accepts commits without a member (generation -1); unknown partitions are skipped', () => {
+    const h = harness();
+    h.send('admin', {
+      api: 'OffsetCommit',
+      commitId: 7,
+      memberId: '',
+      generation: -1,
+      offsets: [
+        { topic: 't', partition: 1, offset: 3, topicId: 1 },
+        { topic: 't', partition: 9, offset: 3, topicId: 1 },
+        { topic: 'gone', partition: 0, offset: 3, topicId: 5 },
+      ],
+    });
+    h.run(2);
+    expect(h.last('admin', 'OffsetCommit')?.response).toEqual({
+      api: 'OffsetCommit',
+      commitId: 7,
+      error: null,
+    });
+    expect([...h.group().committed]).toEqual([['t-1', 3]]);
+    expect(ofType(h.events, 'OffsetCommitted')).toMatchObject([{ memberId: null, generation: -1 }]);
+  });
+});

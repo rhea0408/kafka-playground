@@ -50,6 +50,15 @@ export function describeEvent(e: EngineEvent): string {
         : `${e.groupId}  gen=${String(e.generation)}  ${e.protocol ?? ''}  ${e.members
             .map((m) => `${m.consumerId}: ${partitionsText(m.partitions)}`)
             .join(', ')}`;
+    case 'PartitionsAssigned':
+      return `${e.consumerId}  ${e.groupId}  gen=${String(e.generation)}  ${partitionsText(e.partitions)}`;
+    case 'PartitionsRevoked':
+    case 'PartitionsLost':
+      return `${e.consumerId}  ${e.groupId}  ${partitionsText(e.partitions)}`;
+    case 'ConsumerIdle':
+      return `${e.consumerId}  ${e.groupId}  gen=${String(e.generation)}  no partition`;
+    case 'CommitFailed':
+      return `${e.consumerId}  ${e.groupId}  ${e.error}  ${partitionsText(e.partitions)}`;
     case 'ConsumerStopped':
     case 'ConsumerStarted':
       return e.consumerId;

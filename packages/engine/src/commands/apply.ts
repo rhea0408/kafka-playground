@@ -116,13 +116,6 @@ function checkAdd(ctx: EngineContext, component: Component): string | undefined 
       return 'This version keeps one copy of each partition, so replication factor must be 1. Replication arrives in a later milestone (M4).';
     }
   }
-  if (component.kind === 'consumer') {
-    for (const other of state.consumers.values()) {
-      if (other.config.groupId === component.groupId) {
-        return `Consumer group "${component.groupId}" already has a member (${other.config.id}). Groups with several consumers arrive in M3; give this consumer its own group.id for now.`;
-      }
-    }
-  }
   return undefined;
 }
 
@@ -172,11 +165,20 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       return assertNever(kind);
   }
 
+  const affected: string[] = [];
   for (let i = state.connections.length - 1; i >= 0; i--) {
     const c = state.connections[i];
-    if (c !== undefined && (c.from === id || c.to === id)) state.connections.splice(i, 1);
+    if (c !== undefined && (c.from === id || c.to === id)) {
+      state.connections.splice(i, 1);
+      affected.push(c.to);
+    }
   }
   ctx.emit({ type: 'ComponentRemoved', component });
+  // Consumers that read a removed topic lose it from their subscription.
+  for (const consumerId of affected) {
+    const consumer = state.consumers.get(consumerId);
+    if (consumer !== undefined) wakeConsumer(ctx, consumer);
+  }
   return { ok: true, logged: { type: 'RemoveComponent', id } };
 }
 
@@ -203,6 +205,9 @@ function disconnect(ctx: EngineContext, from: string, to: string): ApplyResult {
   if (index === -1) return reject(`${from} → ${to} is not connected.`);
   ctx.state.connections.splice(index, 1);
   ctx.emit({ type: 'Disconnected', from, to });
+  // The subscription changed (unsubscribing a topic): a consumer blocked in poll() rejoins now.
+  const consumer = ctx.state.consumers.get(to);
+  if (consumer !== undefined) wakeConsumer(ctx, consumer);
   return { ok: true, logged: { type: 'Disconnect', from, to } };
 }
 

@@ -9,7 +9,9 @@ import type { Rng } from '../core/rng.ts';
 import type { StickyState } from '../protocols/partitioner.ts';
 import type { ClientMetadata } from '../protocols/metadata.ts';
 import type { LogRecord, PartitionState } from './partition.ts';
-import type { GroupState } from './group.ts';
+import type { Assignor } from '@kp/schema';
+import type { TopicPartition } from '../protocols/assignors/index.ts';
+import type { GroupState, JoinReason } from './group.ts';
 import type { FetchRequestTask } from './tasks.ts';
 
 export type { GroupState } from './group.ts';
@@ -88,6 +90,62 @@ export interface ConsumerPosition {
   readonly topicId: number;
 }
 
+/**
+ * The consumer's side of its group membership (AbstractCoordinator / ConsumerCoordinator state).
+ * See protocols/consumer-coordinator.ts.
+ */
+export interface ClientGroupState {
+  /** The coordinator's member id for this client; '' until the first JoinGroup is answered. */
+  memberId: string;
+  /** Generation of the current assignment; -1 (NO_GENERATION) before joining or after a reset. */
+  generation: number;
+  /** AbstractCoordinator.MemberState (`preparing` = JoinGroup sent, `completing` = SyncGroup sent). */
+  state: 'unjoined' | 'preparing' | 'completing' | 'stable';
+  /** Set by a heartbeat, a metadata or subscription change: rejoin at the next poll(). */
+  rejoinNeeded: boolean;
+  rejoinReason: JoinReason;
+  /** Partitions this member owns now (its assignment), sorted. */
+  owned: TopicPartition[];
+  /** The subscription sent with the last JoinGroup; a different one means rejoining. */
+  joinedSubscription: readonly string[] | null;
+  /** The assignor the group chose; and whether this member is the leader. */
+  protocol: Assignor | null;
+  isLeader: boolean;
+  /** Leader only: the partition counts its last assignment was based on (assignmentSnapshot). */
+  leaderCounts: Map<string, number> | null;
+  /** A SyncGroup answer waiting for the application's next poll() to take effect. */
+  pendingAssignment: { readonly generation: number; readonly partitions: TopicPartition[] } | null;
+  /** onJoinPrepare: JoinGroup waits until this commit is answered. */
+  prepareCommitId: number | null;
+  /** Owned partitions and generation sent in JoinGroup (eager members have revoked theirs). */
+  lastOwned: TopicPartition[];
+  lastOwnedGeneration: number;
+  /** Only the heartbeat / poll-timeout task carrying the current token runs. */
+  heartbeatToken: number;
+  pollTimeoutToken: number;
+}
+
+export function createClientGroupState(): ClientGroupState {
+  return {
+    memberId: '',
+    generation: -1,
+    state: 'unjoined',
+    rejoinNeeded: false,
+    rejoinReason: 'new-member',
+    owned: [],
+    joinedSubscription: null,
+    protocol: null,
+    isLeader: false,
+    leaderCounts: null,
+    pendingAssignment: null,
+    prepareCommitId: null,
+    lastOwned: [],
+    lastOwnedGeneration: -1,
+    heartbeatToken: 0,
+    pollTimeoutToken: 0,
+  };
+}
+
 export interface ConsumerState {
   /** Replaced by UpdateConfig; read at each poll(). */
   config: Consumer;
@@ -117,6 +175,8 @@ export interface ConsumerState {
   pollToken: number;
   /** The consumer's cached cluster metadata (partition counts per topic). */
   readonly metadata: ClientMetadata;
+  /** Group membership as this client sees it; replaced on every (re)start. */
+  group: ClientGroupState;
   stats: { consumed: number };
 }
 

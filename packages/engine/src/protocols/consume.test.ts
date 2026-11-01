@@ -12,12 +12,21 @@ function record(engine: Engine): EngineEvent[] {
 const ofType = <T extends EngineEvent['type']>(events: EngineEvent[], type: T) =>
   events.filter((e): e is Extract<EngineEvent, { type: T }> => e.type === type);
 
+/**
+ * The broker's group.initial.rebalance.delay.ms is 0 in these tests (a common setting for test
+ * clusters), so a lone consumer owns its partitions JOIN_MS after its first poll(): JoinGroup
+ * reaches the coordinator (+1 ms), the join phase ends at once and the answer comes back (+1 ms),
+ * then SyncGroup goes out (+1 ms) and its answer returns (+1 ms).
+ */
+const JOIN_MS = 4;
+const BROKER = { kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: 0 } as const;
+
 function setup(
   consumer: Record<string, unknown> | null = {},
   producer: Record<string, unknown> = {},
 ): TopologyInput {
   return {
-    brokers: [{ kind: 'broker', id: 'b1' }],
+    brokers: [BROKER],
     topics: [{ kind: 'topic', id: 'orders', partitions: 3 }],
     producers: [
       {
@@ -96,13 +105,15 @@ describe('consumer poll loop', () => {
     addConsumer(engine, { autoOffsetReset: 'earliest', maxPollRecords: 10, processingTimeMs: 100 });
     engine.runUntil(3500);
     const consumed = ofType(events, 'RecordConsumed');
-    // poll() at 3000 sends the fetch; the response arrives at 3002 and poll() returns 10 of them.
-    expect(consumed.filter((e) => e.t === 3002)).toHaveLength(10);
+    // The consumer owns its partitions at 3004; the fetch it sends then is answered at 3006 and
+    // poll() returns 10 records.
+    const first = 3000 + JOIN_MS + 2;
+    expect(consumed.filter((e) => e.t === first)).toHaveLength(10);
     // The rest stay in the fetch buffer: each later poll() (every 10 × 100 ms) returns 10 more.
-    expect(consumed.filter((e) => e.t === 4002)).toHaveLength(0);
+    expect(consumed.filter((e) => e.t === first + 1000)).toHaveLength(0);
     engine.runUntil(5100);
     expect(new Set(ofType(events, 'RecordConsumed').map((e) => e.t))).toEqual(
-      new Set([3002, 4002, 5002]),
+      new Set([first, first + 1000, first + 2000]),
     );
   });
 
@@ -131,7 +142,7 @@ describe('long-poll fetch (fetch.min.bytes, fetch.max.wait.ms)', () => {
     const engine = createEngine({
       seed: 1,
       topology: {
-        brokers: [{ kind: 'broker', id: 'b1' }],
+        brokers: [BROKER],
         topics: [{ kind: 'topic', id: 'orders', partitions: 1 }],
         // 1 record per 1000 s: in these tests only ProduceManual records exist.
         producers: [{ kind: 'producer', id: 'p1', ratePerSec: 0.001 }],
@@ -155,9 +166,11 @@ describe('long-poll fetch (fetch.min.bytes, fetch.max.wait.ms)', () => {
     engine.runUntil(100);
     produce(engine); // appended at 101
     engine.runUntil(500);
-    addConsumerTo(engine, { autoOffsetReset: 'earliest' }); // first poll() at 500
+    addConsumerTo(engine, { autoOffsetReset: 'earliest' }); // first poll() at 500, owns at 504
     engine.runUntil(600);
-    expect(ofType(events, 'RecordConsumed').map((e) => [e.t, e.offset])).toEqual([[502, 0]]);
+    expect(ofType(events, 'RecordConsumed').map((e) => [e.t, e.offset])).toEqual([
+      [500 + JOIN_MS + 2, 0],
+    ]);
   });
 
   it('holds the fetch until data arrives: consumed at append time + one network delay', () => {
@@ -171,23 +184,23 @@ describe('long-poll fetch (fetch.min.bytes, fetch.max.wait.ms)', () => {
 
   it('times out after fetch.max.wait.ms with an empty response, then fetches again', () => {
     const { engine, events } = quiet({ fetchMaxWaitMs: 300 });
-    // The first fetch is parked at t=1 and expires at 301 with an empty answer, just before the
-    // record sent at 300 is appended (also at 301). The answer reaches the consumer at 302; its
-    // next fetch reaches the broker at 303, finds the record and is answered at once (304).
-    engine.runUntil(300);
+    // The first fetch (sent at JOIN_MS = 4) is parked at 5 and expires at 305 with an empty
+    // answer, just before the record sent at 304 is appended (also at 305). The answer reaches the
+    // consumer at 306; its next fetch reaches the broker at 307 and is answered at once (308).
+    engine.runUntil(304);
     produce(engine);
     engine.runUntil(1000);
-    expect(ofType(events, 'RecordAppended').map((e) => e.t)).toEqual([301]);
-    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual([304]);
+    expect(ofType(events, 'RecordAppended').map((e) => e.t)).toEqual([305]);
+    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual([308]);
   });
 
   it('with fetch.max.wait.ms elapsed and too few bytes, the response carries what is there', () => {
     // fetch.min.bytes 2500 with 1024-byte records: one record is not enough to answer early.
     const { engine, events } = quiet({ fetchMinBytes: 2500, fetchMaxWaitMs: 500 });
     engine.runUntil(100);
-    produce(engine); // appended at 101, but the fetch parked at t=1 waits until 501
+    produce(engine); // appended at 101, but the fetch parked at t=5 waits until 505
     engine.runUntil(1000);
-    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual([502]);
+    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual([506]);
   });
 
   it('accumulates until fetch.min.bytes are available, then answers immediately', () => {
@@ -266,10 +279,10 @@ describe('auto.offset.reset (no committed offset yet)', () => {
     engine.runUntil(2000);
     const events = record(engine);
     addConsumer(engine, { autoOffsetReset: 'earliest' });
-    engine.runUntil(2002);
-    // 10 records were produced by t=2000. The one sent at 2000 is appended at 2001, just before
-    // the consumer's first fetch arrives (also 2001), so the response at 2002 carries all 10.
-    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual(Array(10).fill(2002));
+    engine.runUntil(2006);
+    // 10 records were produced by t=2000 (the last appended at 2001). The consumer owns its
+    // partitions at 2004, so its first fetch is answered at 2006 with all 10.
+    expect(ofType(events, 'RecordConsumed').map((e) => e.t)).toEqual(Array(10).fill(2006));
   });
 
   it('latest starts at the end (high watermark): records written before it joined are skipped', () => {
@@ -279,9 +292,12 @@ describe('auto.offset.reset (no committed offset yet)', () => {
     addConsumer(engine, { autoOffsetReset: 'latest' });
     engine.runUntil(4000);
     const consumed = ofType(events, 'RecordConsumed');
-    expect(consumed.length).toBeGreaterThan(0);
-    expect(consumed.every((e) => e.t > 2000)).toBe(true);
-    expect(consumed).toHaveLength(10); // only the 10 records produced after it joined
+    // "latest" is resolved when the partition is assigned (2004), so only records appended after
+    // that are read: 2201, 2401, …, 3801 (the one appended at 2001 is skipped too).
+    const assignedAt = 2000 + JOIN_MS;
+    const appendedAt = new Map(ofType(events, 'RecordAppended').map((e) => [e.traceId, e.t]));
+    expect(consumed).toHaveLength(9);
+    for (const e of consumed) expect(appendedAt.get(e.traceId)).toBeGreaterThan(assignedAt);
   });
 });
 
@@ -472,7 +488,12 @@ describe('stopping and restarting a consumer', () => {
     engine.runUntil(8000); // records keep arriving; nobody reads them
     const beforeRestart = ofType(events, 'RecordConsumed').length;
     expect(engine.dispatch({ type: 'RestartConsumer', id: 'c1' })).toEqual({ ok: true });
-    engine.runUntil(8002); // poll at 8000, fetch at the broker at 8001, response at 8002
+    // The restarted process joins as a new member. The crashed member is still in the group until
+    // its session times out (10 s after its last heartbeat, ~13 s), and the rebalance waits for it.
+    engine.runUntil(12_000);
+    expect(ofType(events, 'RecordConsumed').length).toBe(beforeRestart);
+    engine.runUntil(15_000);
+    expect(ofType(events, 'MemberRemoved')).toMatchObject([{ reason: 'session-timeout' }]);
 
     const consumed = ofType(events, 'RecordConsumed');
     const seen = new Map<string, number>();
@@ -495,8 +516,9 @@ describe('stopping and restarting a consumer', () => {
     const events = record(engine);
     engine.runUntil(4000);
     engine.dispatch({ type: 'RemoveComponent', id: 'c1' });
-    const lastBeforeRemove = ofType(events, 'OffsetCommitted').at(-1);
-    expect(lastBeforeRemove?.t).toBe(4000); // close() committed right away (interval 5000 not reached)
+    engine.runUntil(4001);
+    // close() sent its commit right away (interval 5000 not reached); it lands 1 ms later.
+    expect(ofType(events, 'OffsetCommitted').at(-1)?.t).toBe(4001);
     engine.runUntil(6000);
     addConsumer(engine, { autoOffsetReset: 'earliest' }); // same id, same default group "c1-group"
     engine.runUntil(9000);

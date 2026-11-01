@@ -6,13 +6,15 @@ import { createEngine } from '../engine.ts';
  * One partition, so every number can be worked out by hand:
  * - p1 sends key "A" at 2 msg/s: records at t = 500, 1000, 1500, …; each reaches the broker 1 ms
  *   later (501, 1001, …), so by t = 2999 offsets 0-4 exist and LEO = HW = 5.
- * - c1's fetch waits at the broker (long poll) and is answered when a record is appended; the
- *   response arrives 1 ms later, so poll() returns offset n at 502, 1002, 1502, … While blocked
- *   in poll() it wakes for auto-commit every 1000 ms: at t = 1000 it commits 1, at t = 2000 it
- *   commits 3 (offsets 1 and 2 were returned at 1002 and 1502), at t = 3000 it commits 5.
+ * - c1 joins its group (no initial rebalance delay on this broker) and owns the partition at
+ *   t = 4. Its fetch waits at the broker (long poll) and is answered when a record is appended;
+ *   the response arrives 1 ms later, so poll() returns offset n at 502, 1002, 1502, … While
+ *   blocked in poll() it wakes for auto-commit every 1000 ms: at t = 1000 it commits 1, at
+ *   t = 2000 it commits 3 (offsets 1 and 2 were returned at 1002 and 1502), at t = 3000 it
+ *   commits 5. Each commit reaches the group coordinator 1 ms later (1001, 2001, 3001).
  */
 const topology: TopologyInput = {
-  brokers: [{ kind: 'broker', id: 'b1' }],
+  brokers: [{ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: 0 }],
   topics: [{ kind: 'topic', id: 'orders', partitions: 1 }],
   producers: [
     { kind: 'producer', id: 'p1', ratePerSec: 2, keyStrategy: { type: 'fixed', key: 'A' } },
@@ -43,15 +45,16 @@ describe('snapshot and lag', () => {
       topic: 'orders',
       partition: 0,
       position: 5, // all of offsets 0-4 have been fetched…
-      committed: 3, // …but the last commit (t = 2000) saved 3
+      committed: 3, // …but the last commit (sent at 2000) saved 3
       highWatermark: 5,
       lag: 2,
       fetchLag: 0,
     });
     expect(engine.getSnapshot().consumers[0]?.totalLag).toBe(2);
 
-    engine.runUntil(3000); // the poll at t = 3000 commits 5
-    expect(consumerPartition(engine)).toMatchObject({ committed: 5, lag: 0 });
+    engine.runUntil(3001); // the poll at t = 3000 commits 5; stored at 3001
+    // The record sent at 3000 is also appended at 3001: HW 6, so lag 1.
+    expect(consumerPartition(engine)).toMatchObject({ committed: 5, highWatermark: 6, lag: 1 });
   });
 
   it('lag keeps growing while the consumer is down, and the committed offset stays put', () => {

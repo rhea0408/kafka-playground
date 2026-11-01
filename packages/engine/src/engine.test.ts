@@ -126,7 +126,7 @@ describe('createEngine', () => {
     expect(events).toEqual([]);
   });
 
-  it('enforces the M1 limits with an explanation', () => {
+  it('enforces the single-broker limits with an explanation', () => {
     const engine = createEngine({
       seed: 1,
       topology: {
@@ -144,12 +144,13 @@ describe('createEngine', () => {
         component: { kind: 'topic', id: 'replicated', replicationFactor: 2 },
       }),
     ).toMatchObject({ ok: false, reason: /replication factor must be 1/ });
+    // M3: groups have several members; the M2 "one consumer per group" rule is gone.
     expect(
       engine.dispatch({
         type: 'AddComponent',
         component: { kind: 'consumer', id: 'c2', groupId: 'g' },
       }),
-    ).toMatchObject({ ok: false, reason: /already has a member \(c1\)/ });
+    ).toEqual({ ok: true });
     const leader = engine.getSnapshot().topics[0]?.partitions[0]?.leader ?? '';
     expect(engine.dispatch({ type: 'RemoveComponent', id: leader })).toMatchObject({
       ok: false,

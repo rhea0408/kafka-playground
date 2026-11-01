@@ -1,0 +1,591 @@
+/**
+ * The consumer's side of the classic group protocol (ADR 0004), ported from the Kafka 4.x client:
+ * AbstractCoordinator (joinGroupIfNeeded, the JoinGroup / SyncGroup / Heartbeat response handlers,
+ * HeartbeatThread, maybeLeaveGroup) and ConsumerCoordinator (poll, onJoinPrepare, onJoinComplete,
+ * onLeaderElected, rejoinNeededOrPending, sendOffsetCommitRequest). Facts: M3-decisions K2, K9–K14.
+ *
+ * - Joining happens inside poll(): the application thread sends JoinGroup only when it calls
+ *   poll(), so a member busy processing delays the whole group's rebalance ("stop the world").
+ *   poll() does not wait for the join to finish (K12): it keeps fetching partitions the member
+ *   still owns, which with an eager assignor is none.
+ * - onJoinPrepare (K10): commits first when auto-commit is on and waits for the answer; then an
+ *   eager member revokes everything, a cooperative one only partitions of topics it no longer
+ *   subscribes to. A member that was kicked out (generation reset) loses its partitions instead.
+ * - The JoinGroup answer is handled when it arrives: the leader runs the assignor on its own
+ *   metadata and sends the assignment in SyncGroup; followers send an empty SyncGroup. The SyncGroup
+ *   answer takes effect at the application's next poll() (onJoinComplete); a cooperative member
+ *   that had to give partitions up rejoins at once (K14).
+ * - The heartbeat thread sends a Heartbeat every heartbeat.interval.ms while the member is in a
+ *   generation (not while its JoinGroup is pending). REBALANCE_IN_PROGRESS asks for a rejoin;
+ *   UNKNOWN_MEMBER_ID / ILLEGAL_GENERATION mean the member was removed, so it resets.
+ * - The same thread watches max.poll.interval.ms: if poll() is not called in time it sends
+ *   LeaveGroup ("consumer poll timeout has expired.") and resets the member id and generation
+ *   (K13). The application finds out at its next poll().
+ * - Only the leader watches metadata for new partitions; every member rejoins when its own
+ *   subscription changes (K11).
+ */
+
+import type { Assignor } from '@kp/schema';
+import type { EngineContext } from '../model/context.ts';
+import type { JoinReason, MemberMetadata } from '../model/group.ts';
+import { partitionName } from '../model/partition.ts';
+import { createClientGroupState, type ConsumerState } from '../model/state.ts';
+import type {
+  CommitOffset,
+  CoordinatorRequest,
+  CoordinatorResponse,
+  EngineTask,
+  GroupError,
+} from '../model/tasks.ts';
+import {
+  ASSIGNORS,
+  comparePartitions,
+  rebalanceProtocol,
+  tpKey,
+  type AssignorMember,
+  type TopicPartition,
+} from './assignors/index.ts';
+import { coordinatorFor } from './coordinator.ts';
+import { knownPartitionCount } from './metadata.ts';
+
+type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
+type Response<A extends CoordinatorResponse['api']> = Extract<CoordinatorResponse, { api: A }>;
+
+/** The hooks the poll loop (consume.ts) gives the coordinator. */
+export interface PollHooks {
+  /** Runs poll() again now if the application is blocked in it. */
+  readonly wake: (consumer: ConsumerState) => void;
+  /** Forgets a partition's position and buffered records (revoked or lost). */
+  readonly forget: (consumer: ConsumerState, key: string) => void;
+  /** An error poll() throws to the application, which then dies (a crash). */
+  readonly fatal: (consumer: ConsumerState, error: GroupError) => void;
+}
+
+/** A fresh client: not in a group, no member id (a restarted process starts like this). */
+export function resetClientGroup(consumer: ConsumerState): void {
+  consumer.group = createClientGroupState();
+}
+
+export const isRebalancing = (consumer: ConsumerState): boolean =>
+  consumer.group.state === 'preparing' || consumer.group.state === 'completing';
+
+/** Sends a request to the group's coordinator (one network delay). False if there is none. */
+function send(ctx: EngineContext, consumer: ConsumerState, request: CoordinatorRequest): boolean {
+  if (coordinatorFor(ctx, consumer.config.groupId) === null) return false;
+  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+    type: 'CoordinatorRequest',
+    groupId: consumer.config.groupId,
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    request,
+  });
+  return true;
+}
+
+export function requestRejoin(consumer: ConsumerState, reason: JoinReason): void {
+  if (consumer.group.rejoinNeeded) return;
+  consumer.group.rejoinNeeded = true;
+  consumer.group.rejoinReason = reason;
+}
+
+/**
+ * The member was removed from the group or left it (AbstractCoordinator#resetStateAndGeneration):
+ * no generation, and with `memberId` also no member id. Its partitions are lost at the next poll().
+ */
+function resetGeneration(consumer: ConsumerState, memberId: boolean): void {
+  const { group } = consumer;
+  group.generation = -1;
+  if (memberId) group.memberId = '';
+  group.state = 'unjoined';
+  group.isLeader = false;
+  group.leaderCounts = null;
+  group.pendingAssignment = null;
+  group.heartbeatToken += 1;
+  requestRejoin(consumer, 'rejoin-after-error');
+}
+
+// ── Inside poll() ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What poll() may do after the coordinator's housekeeping: fetch owned partitions, wait (nothing
+ * subscribed, or an eager member's onJoinPrepare commit is in flight), or retry after
+ * retry.backoff.ms because no coordinator is available.
+ */
+export type CoordinatorPoll = 'fetch' | 'wait' | 'retry';
+
+/** ConsumerCoordinator#poll, run at the start of every poll() with the current subscription. */
+export function pollCoordinator(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  subscription: readonly string[],
+  hooks: PollHooks,
+): CoordinatorPoll {
+  const { group } = consumer;
+  if (subscription.length === 0) {
+    // unsubscribe(): commit (auto-commit), give partitions up and leave (maybeLeaveGroup).
+    if (group.memberId !== '' || group.owned.length > 0) {
+      if (consumer.config.enableAutoCommit) commitPositions(ctx, consumer, ownedKeys(consumer));
+      leaveGroup(ctx, consumer, 'leave', hooks);
+    }
+    return 'wait';
+  }
+  if (coordinatorFor(ctx, consumer.config.groupId) === null) return 'retry';
+
+  if (group.pendingAssignment !== null) onJoinComplete(ctx, consumer, hooks);
+  if (
+    group.joinedSubscription !== null &&
+    group.joinedSubscription.join('\u0000') !== subscription.join('\u0000')
+  ) {
+    requestRejoin(consumer, 'subscription-change');
+  }
+  if (group.isLeader && group.state === 'stable' && leaderMetadataChanged(consumer)) {
+    requestRejoin(consumer, 'metadata-change');
+  }
+  if (group.prepareCommitId !== null) {
+    // onJoinPrepare is waiting for its commit; an eager member's partitions are pending
+    // revocation, so it returns nothing meanwhile (maybeMarkPartitionsPendingRevocation).
+    return rebalanceProtocol(consumer.config.partitionAssignmentStrategy) === 'cooperative'
+      ? 'fetch'
+      : 'wait';
+  }
+  const needsJoin = group.state === 'unjoined' || (group.rejoinNeeded && group.state === 'stable');
+  const waitingForCommit = needsJoin && !joinGroup(ctx, consumer, subscription, hooks);
+  return waitingForCommit &&
+    rebalanceProtocol(consumer.config.partitionAssignmentStrategy) === 'eager'
+    ? 'wait'
+    : 'fetch';
+}
+
+/** Leader only (K11): did a refresh change a partition count the last assignment used? */
+function leaderMetadataChanged(consumer: ConsumerState): boolean {
+  const snapshot = consumer.group.leaderCounts;
+  if (snapshot === null) return false;
+  for (const [topic, count] of snapshot) {
+    if (consumer.metadata.partitionCounts.get(topic) !== count) return true;
+  }
+  return false;
+}
+
+/**
+ * joinGroupIfNeeded: onJoinPrepare, then JoinGroup. Returns false when JoinGroup has to wait for
+ * onJoinPrepare's auto-commit to be answered (it goes out at the poll() after that).
+ */
+function joinGroup(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  subscription: readonly string[],
+  hooks: PollHooks,
+): boolean {
+  const { group, config } = consumer;
+  const lost = group.generation < 0 || group.memberId === '';
+  if (!lost && config.enableAutoCommit) {
+    const commitId = commitPositions(ctx, consumer, ownedKeys(consumer));
+    if (commitId !== null) {
+      group.prepareCommitId = commitId;
+      return false;
+    }
+  }
+  onJoinPrepare(ctx, consumer, subscription, lost, hooks);
+  const reason: JoinReason = group.memberId === '' ? 'new-member' : group.rejoinReason;
+  const metadata: MemberMetadata = {
+    protocols: config.partitionAssignmentStrategy,
+    subscription,
+    ownedPartitions: group.lastOwned,
+    ownedGeneration: group.lastOwnedGeneration,
+    sessionTimeoutMs: config.sessionTimeoutMs,
+    rebalanceTimeoutMs: config.maxPollIntervalMs,
+  };
+  group.state = 'preparing';
+  group.rejoinNeeded = false;
+  group.joinedSubscription = [...subscription];
+  group.heartbeatToken += 1; // the heartbeat thread is disabled while the JoinGroup is pending
+  send(ctx, consumer, { api: 'JoinGroup', memberId: group.memberId, metadata, reason });
+  return true;
+}
+
+/** ConsumerCoordinator#onJoinPrepare (K10). */
+function onJoinPrepare(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  subscription: readonly string[],
+  lost: boolean,
+  hooks: PollHooks,
+): void {
+  const { group, config } = consumer;
+  const emitFor = (type: 'PartitionsRevoked' | 'PartitionsLost', partitions: TopicPartition[]) => {
+    if (partitions.length === 0) return;
+    ctx.emit({ type, consumerId: config.id, groupId: config.groupId, partitions });
+    for (const tp of partitions) hooks.forget(consumer, tpKey(tp));
+  };
+  if (lost) {
+    emitFor('PartitionsLost', group.owned);
+    group.owned = [];
+    group.lastOwned = [];
+    group.lastOwnedGeneration = -1;
+    return;
+  }
+  // StickyAssignor (eager) sends its previous assignment as user data; cooperative members send
+  // the partitions they keep. Range and round-robin ignore it.
+  group.lastOwned = group.owned;
+  group.lastOwnedGeneration = group.generation;
+  if (rebalanceProtocol(config.partitionAssignmentStrategy) === 'eager') {
+    emitFor('PartitionsRevoked', group.owned);
+    group.owned = [];
+    return;
+  }
+  const subscribed = new Set(subscription);
+  const gone = group.owned.filter((tp) => !subscribed.has(tp.topic));
+  emitFor('PartitionsRevoked', gone);
+  group.owned = group.owned.filter((tp) => subscribed.has(tp.topic));
+  group.lastOwned = group.owned;
+}
+
+/** ConsumerCoordinator#onJoinComplete: the SyncGroup answer takes effect (inside poll()). */
+function onJoinComplete(ctx: EngineContext, consumer: ConsumerState, hooks: PollHooks): void {
+  const { group, config } = consumer;
+  const result = group.pendingAssignment;
+  if (result === null) return;
+  group.pendingAssignment = null;
+  group.generation = result.generation;
+  group.state = 'stable';
+  const assigned = new Set(result.partitions.map(tpKey));
+  const before = new Set(group.owned.map(tpKey));
+  const revoked = group.owned.filter((tp) => !assigned.has(tpKey(tp)));
+  const added = result.partitions.filter((tp) => !before.has(tpKey(tp)));
+  if (revoked.length > 0) {
+    ctx.emit({
+      type: 'PartitionsRevoked',
+      consumerId: config.id,
+      groupId: config.groupId,
+      partitions: revoked,
+    });
+    for (const tp of revoked) hooks.forget(consumer, tpKey(tp));
+    // Cooperative: the revoked partitions can only be reassigned in a follow-up rebalance.
+    requestRejoin(consumer, 'revoked-partitions');
+  }
+  group.owned = [...result.partitions];
+  ctx.emit({
+    type: 'PartitionsAssigned',
+    consumerId: config.id,
+    groupId: config.groupId,
+    generation: result.generation,
+    partitions: added,
+  });
+  if (group.owned.length === 0) {
+    ctx.emit({
+      type: 'ConsumerIdle',
+      consumerId: config.id,
+      groupId: config.groupId,
+      generation: result.generation,
+    });
+  }
+}
+
+const ownedKeys = (consumer: ConsumerState): string[] => consumer.group.owned.map(tpKey);
+
+// ── Responses (the client's network thread) ───────────────────────────────────────────────────
+
+export function handleCoordinatorResponse(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  task: Task<'CoordinatorResponse'>,
+  hooks: PollHooks,
+): void {
+  // A response for an earlier group (group.id changed since) is ignored.
+  if (task.groupId !== consumer.config.groupId) return;
+  const { response } = task;
+  switch (response.api) {
+    case 'JoinGroup':
+      onJoinResponse(ctx, consumer, response, hooks);
+      return;
+    case 'SyncGroup':
+      onSyncResponse(consumer, response, hooks);
+      return;
+    case 'Heartbeat':
+      onHeartbeatResponse(consumer, response.error, hooks);
+      return;
+    case 'OffsetCommit':
+      onCommitResponse(ctx, consumer, response, hooks);
+      return;
+  }
+}
+
+function onJoinResponse(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  response: Response<'JoinGroup'>,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  if (group.state !== 'preparing') return;
+  if (response.error !== null) {
+    switch (response.error) {
+      case 'INCONSISTENT_GROUP_PROTOCOL':
+        // Thrown to the application from poll(); the playground's application then dies.
+        hooks.fatal(consumer, response.error);
+        return;
+      case 'UNKNOWN_MEMBER_ID':
+        resetGeneration(consumer, true);
+        break;
+      case 'ILLEGAL_GENERATION':
+        resetGeneration(consumer, false);
+        break;
+      case 'REBALANCE_IN_PROGRESS':
+      case 'COORDINATOR_NOT_AVAILABLE':
+        group.state = group.generation < 0 ? 'unjoined' : 'stable';
+        requestRejoin(consumer, 'rejoin-after-error');
+        break;
+    }
+    hooks.wake(consumer);
+    return;
+  }
+  group.memberId = response.memberId;
+  group.state = 'completing';
+  group.protocol = response.protocol as Assignor;
+  group.isLeader = response.leader === response.memberId;
+  startHeartbeats(ctx, consumer);
+  let assignment: (readonly [string, TopicPartition[]])[] | null = null;
+  if (group.isLeader) {
+    // onLeaderElected: the leader assigns with its own metadata for every subscribed topic.
+    const counts = new Map<string, number>();
+    for (const topic of new Set(response.members.flatMap((m) => m.topics))) {
+      const live = ctx.state.topics.get(topic);
+      if (live !== undefined) counts.set(topic, knownPartitionCount(consumer.metadata, live));
+    }
+    group.leaderCounts = counts;
+    const assignor = ASSIGNORS[group.protocol];
+    assignment = [...assignor(response.members as AssignorMember[], counts)].map(
+      ([memberId, partitions]) => [memberId, [...partitions]] as const,
+    );
+  } else {
+    group.leaderCounts = null;
+  }
+  send(ctx, consumer, {
+    api: 'SyncGroup',
+    memberId: response.memberId,
+    generation: response.generation,
+    assignment,
+  });
+}
+
+function onSyncResponse(
+  consumer: ConsumerState,
+  response: Response<'SyncGroup'>,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  if (group.state !== 'completing') return;
+  if (response.error !== null) {
+    if (response.error === 'UNKNOWN_MEMBER_ID') resetGeneration(consumer, true);
+    else if (response.error === 'ILLEGAL_GENERATION') resetGeneration(consumer, false);
+    else {
+      group.state = group.generation < 0 ? 'unjoined' : 'stable';
+      requestRejoin(consumer, 'rebalance-in-progress');
+    }
+    hooks.wake(consumer);
+    return;
+  }
+  group.pendingAssignment = {
+    generation: response.generation,
+    partitions: [...response.assignment].sort(comparePartitions),
+  };
+  hooks.wake(consumer);
+}
+
+function onHeartbeatResponse(
+  consumer: ConsumerState,
+  error: GroupError | null,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  switch (error) {
+    case null:
+      return;
+    case 'REBALANCE_IN_PROGRESS':
+      // Only a member in a stable generation needs to act; one mid-join is already rejoining.
+      if (group.state === 'stable') requestRejoin(consumer, 'rebalance-in-progress');
+      break;
+    case 'UNKNOWN_MEMBER_ID':
+      resetGeneration(consumer, true);
+      break;
+    case 'ILLEGAL_GENERATION':
+      resetGeneration(consumer, false);
+      break;
+    case 'INCONSISTENT_GROUP_PROTOCOL':
+    case 'COORDINATOR_NOT_AVAILABLE':
+      return;
+  }
+  hooks.wake(consumer);
+}
+
+// ── Heartbeat thread ──────────────────────────────────────────────────────────────────────────
+
+/** Enables the heartbeat thread: the first Heartbeat goes out heartbeat.interval.ms from now. */
+function startHeartbeats(ctx: EngineContext, consumer: ConsumerState): void {
+  consumer.group.heartbeatToken += 1;
+  ctx.kernel.scheduleIn(consumer.config.heartbeatIntervalMs, {
+    type: 'ConsumerHeartbeat',
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    token: consumer.group.heartbeatToken,
+  });
+}
+
+export function handleConsumerHeartbeat(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  task: Task<'ConsumerHeartbeat'>,
+): void {
+  const { group } = consumer;
+  if (task.token !== group.heartbeatToken) return;
+  if (group.state !== 'stable' && group.state !== 'completing') return; // thread disabled
+  send(ctx, consumer, { api: 'Heartbeat', memberId: group.memberId, generation: group.generation });
+  ctx.kernel.scheduleIn(consumer.config.heartbeatIntervalMs, { ...task });
+}
+
+/** The application left poll(): the poll timer (max.poll.interval.ms) starts. */
+export function startPollTimer(ctx: EngineContext, consumer: ConsumerState): void {
+  consumer.group.pollTimeoutToken += 1;
+  ctx.kernel.scheduleIn(consumer.config.maxPollIntervalMs, {
+    type: 'ConsumerPollTimeout',
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    token: consumer.group.pollTimeoutToken,
+  });
+}
+
+/** The application called poll(): the poll timer stops until poll() returns again. */
+export function stopPollTimer(consumer: ConsumerState): void {
+  consumer.group.pollTimeoutToken += 1;
+}
+
+/** AbstractCoordinator.HeartbeatThread: "consumer poll timeout has expired" (K13). */
+export function handleConsumerPollTimeout(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  task: Task<'ConsumerPollTimeout'>,
+): void {
+  const { group } = consumer;
+  if (task.token !== group.pollTimeoutToken || group.memberId === '') return;
+  send(ctx, consumer, { api: 'LeaveGroup', memberId: group.memberId, reason: 'poll-timeout' });
+  resetGeneration(consumer, true);
+}
+
+// ── Leaving ───────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * close() / unsubscribe(): partitions are revoked (after a synchronous auto-commit, which the
+ * caller does first) and LeaveGroup is sent if the member has an id. The client does not wait for
+ * the LeaveGroup answer.
+ */
+export function leaveGroup(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  reason: 'leave',
+  hooks: PollHooks,
+): void {
+  const { group, config } = consumer;
+  if (group.owned.length > 0) {
+    ctx.emit({
+      type: 'PartitionsRevoked',
+      consumerId: config.id,
+      groupId: config.groupId,
+      partitions: group.owned,
+    });
+    for (const tp of group.owned) hooks.forget(consumer, tpKey(tp));
+  }
+  if (group.memberId !== '')
+    send(ctx, consumer, { api: 'LeaveGroup', memberId: group.memberId, reason });
+  resetClientGroup(consumer);
+}
+
+// ── Commits ───────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ConsumerCoordinator#sendOffsetCommitRequest for the given partitions' positions. Positions equal
+ * to the group's committed offset are skipped. A member outside a stable generation fails at once
+ * without contacting the broker: REBALANCE_IN_PROGRESS while it rejoins, otherwise
+ * CommitFailedException ("…not part of an active group…", K13). Returns the request id, or null
+ * when nothing was sent.
+ */
+export function commitPositions(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  keys: readonly string[],
+): number | null {
+  const { group, config } = consumer;
+  const committed = ctx.state.groups.get(config.groupId)?.committed;
+  const offsets: CommitOffset[] = [];
+  for (const key of keys) {
+    const position = consumer.positions.get(key);
+    if (position === undefined || committed?.get(key) === position.offset) continue;
+    const dash = key.lastIndexOf('-');
+    offsets.push({
+      topic: key.slice(0, dash),
+      partition: Number(key.slice(dash + 1)),
+      offset: position.offset,
+      topicId: position.topicId,
+    });
+  }
+  if (offsets.length === 0) return null;
+  if (group.state !== 'stable' || group.generation < 0 || group.memberId === '') {
+    emitCommitFailed(
+      ctx,
+      consumer,
+      isRebalancing(consumer) ? 'REBALANCE_IN_PROGRESS' : 'COMMIT_FAILED',
+      offsets,
+    );
+    return null;
+  }
+  const commitId = ++ctx.state.counters.commit;
+  const sent = send(ctx, consumer, {
+    api: 'OffsetCommit',
+    commitId,
+    memberId: group.memberId,
+    generation: group.generation,
+    offsets,
+  });
+  return sent ? commitId : null;
+}
+
+function emitCommitFailed(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  error: GroupError | 'COMMIT_FAILED',
+  offsets: readonly CommitOffset[],
+): void {
+  ctx.emit({
+    type: 'CommitFailed',
+    consumerId: consumer.config.id,
+    groupId: consumer.config.groupId,
+    memberId: consumer.group.memberId,
+    generation: consumer.group.generation,
+    error,
+    partitions: offsets.map((o) => ({ topic: o.topic, partition: o.partition })),
+  });
+}
+
+function onCommitResponse(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  response: Response<'OffsetCommit'>,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  if (response.error !== null) {
+    emitCommitFailed(ctx, consumer, response.error, []);
+    if (response.error === 'UNKNOWN_MEMBER_ID') resetGeneration(consumer, true);
+    else if (response.error === 'ILLEGAL_GENERATION') resetGeneration(consumer, false);
+    else if (response.error === 'REBALANCE_IN_PROGRESS')
+      requestRejoin(consumer, 'rebalance-in-progress');
+  }
+  if (response.commitId === group.prepareCommitId) {
+    // onJoinPrepare's commit is done (or failed): the JoinGroup can go out at the next poll().
+    group.prepareCommitId = null;
+    hooks.wake(consumer);
+  }
+}
+
+/** Partition keys a consumer owns, for snapshots and commits. */
+export const ownedPartitionKeys = (consumer: ConsumerState): string[] =>
+  consumer.group.owned.map((tp) => partitionName(tp.topic, tp.partition));

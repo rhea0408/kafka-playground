@@ -7,7 +7,7 @@
 import type { Acks, Assignor, Component } from '@kp/schema';
 import type { Stamped } from '../core/kernel.ts';
 import type { MemberRemovedReason, RebalanceReason } from '../model/group.ts';
-import type { ProduceError } from '../model/tasks.ts';
+import type { GroupError, ProduceError } from '../model/tasks.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 
 /** One member's share of a generation's assignment (RebalanceCompleted). */
@@ -127,6 +127,55 @@ export type EngineEventPayload =
       readonly protocol: Assignor | null;
       readonly leader: string | null;
       readonly members: readonly MemberAssignment[];
+    }
+  /**
+   * ConsumerRebalanceListener#onPartitionsAssigned: the member's new partitions in `generation`
+   * (eager: its whole assignment; cooperative: only the added ones; may be empty).
+   */
+  | {
+      readonly type: 'PartitionsAssigned';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly generation: number;
+      readonly partitions: readonly TopicPartition[];
+    }
+  /** ConsumerRebalanceListener#onPartitionsRevoked: the member gives these partitions up. */
+  | {
+      readonly type: 'PartitionsRevoked';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly partitions: readonly TopicPartition[];
+    }
+  /**
+   * ConsumerRebalanceListener#onPartitionsLost: the member learned it is no longer in the group
+   * (session or poll timeout), so its partitions may already belong to others. Nothing is committed.
+   */
+  | {
+      readonly type: 'PartitionsLost';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly partitions: readonly TopicPartition[];
+    }
+  /** A completed rebalance gave this member no partitions: it is idle until the next one. */
+  | {
+      readonly type: 'ConsumerIdle';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly generation: number;
+    }
+  /**
+   * A commit failed: the coordinator refused it, or the client refused it locally
+   * (`COMMIT_FAILED`: not part of an active group, CommitFailedException; `REBALANCE_IN_PROGRESS`:
+   * the member is rejoining). Nothing was stored.
+   */
+  | {
+      readonly type: 'CommitFailed';
+      readonly consumerId: string;
+      readonly groupId: string;
+      readonly memberId: string;
+      readonly generation: number;
+      readonly error: GroupError | 'COMMIT_FAILED';
+      readonly partitions: readonly TopicPartition[];
     }
   /** The consumer process crashed or was stopped (KillConsumer). Nothing was committed. */
   | { readonly type: 'ConsumerStopped'; readonly consumerId: string }
