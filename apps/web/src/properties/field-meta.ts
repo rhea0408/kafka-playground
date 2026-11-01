@@ -221,9 +221,7 @@ export const FIELD_META = {
       kind: 'kafka',
       kafkaDefault: { none: 'none (required to subscribe)' },
       control: { type: 'text' },
-      help: 'The consumer group this consumer belongs to. The group shares the partitions and stores committed offsets. Here it defaults to "<id>-group".',
-      readOnly:
-        'Changing group.id means leaving one group and joining another. Consumer groups arrive in M3; until then remove the consumer and add a new one.',
+      help: 'The consumer group this consumer belongs to. The group shares the partitions and stores committed offsets. Here it defaults to "<id>-group". Changing it closes the consumer (commit, leave) and joins the other group as a new member.',
     },
     autoOffsetReset: {
       label: 'Auto offset reset',
@@ -231,9 +229,7 @@ export const FIELD_META = {
       kind: 'kafka',
       kafkaDefault: { value: 'latest' },
       control: { type: 'enum', options: AutoOffsetResetSchema.options },
-      help: 'Where to start when the group has no committed offset: earliest = the oldest record, latest = only new records.',
-      readOnly:
-        'auto.offset.reset is read when the consumer joins its group. Changing it on a running consumer arrives with consumer groups in M3.',
+      help: 'Where to start a newly assigned partition when the group has no committed offset for it: earliest = the oldest record, latest = only new records.',
     },
     enableAutoCommit: {
       label: 'Auto commit',

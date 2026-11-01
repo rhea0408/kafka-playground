@@ -177,8 +177,44 @@ export type EngineEventPayload =
       readonly error: GroupError | 'COMMIT_FAILED';
       readonly partitions: readonly TopicPartition[];
     }
-  /** The consumer process crashed or was stopped (KillConsumer). Nothing was committed. */
-  | { readonly type: 'ConsumerStopped'; readonly consumerId: string }
+  /**
+   * The consumer process ended: `crash` (KillConsumer: no commit, no LeaveGroup), `close` (a
+   * graceful close(): commit and LeaveGroup) or `error` (poll() threw, e.g.
+   * INCONSISTENT_GROUP_PROTOCOL, and the application died).
+   */
+  | {
+      readonly type: 'ConsumerStopped';
+      readonly consumerId: string;
+      readonly reason: 'crash' | 'close' | 'error';
+    }
+  /**
+   * Teaching aid (no Kafka equivalent, M3 Q9): poll() handed the application a record its group
+   * had already processed (or is processing), e.g. after a crash replayed records past the last
+   * commit (at-least-once).
+   */
+  | {
+      readonly type: 'DuplicateProcessed';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly offset: number;
+      readonly traceId: string;
+    }
+  /**
+   * Teaching aid (M3 Q9): the group's next record for this partition jumped past records it never
+   * processed (offsets `from`–`to`), e.g. after a commit before processing and a crash
+   * (at-most-once), or a reset to "latest".
+   */
+  | {
+      readonly type: 'RecordsSkipped';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly from: number;
+      readonly to: number;
+    }
   /** The consumer process started again (RestartConsumer); it resumes from committed offsets. */
   | { readonly type: 'ConsumerStarted'; readonly consumerId: string }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */

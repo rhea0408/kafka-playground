@@ -16,6 +16,7 @@ import {
   killConsumer,
   runConsumer,
   startConsumer,
+  stopConsumer,
   wakeConsumer,
 } from '../protocols/consume.ts';
 import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
@@ -44,8 +45,9 @@ export function applyCommand(ctx: EngineContext, command: Command): ApplyResult 
     case 'ProduceManual':
       return produceManual(ctx, command);
     case 'KillConsumer':
+    case 'StopConsumer':
     case 'RestartConsumer':
-      return setConsumerRunning(ctx, command.id, command.type === 'RestartConsumer');
+      return consumerLifecycle(ctx, command);
     case 'UpdateConfig':
       return updateConfig(ctx, command);
     default:
@@ -226,17 +228,33 @@ function produceManual(
   return { ok: true, logged: command };
 }
 
-function setConsumerRunning(ctx: EngineContext, id: string, running: boolean): ApplyResult {
+/** KillConsumer (crash), StopConsumer (graceful close) and RestartConsumer (a new process). */
+function consumerLifecycle(
+  ctx: EngineContext,
+  command: Extract<Command, { type: 'KillConsumer' | 'StopConsumer' | 'RestartConsumer' }>,
+): ApplyResult {
+  const { id } = command;
   const consumer = ctx.state.consumers.get(id);
   if (consumer === undefined) return reject(`There is no consumer with id "${id}".`);
-  if (running) {
-    if (consumer.status === 'running') return reject(`Consumer ${id} is already running.`);
-    runConsumer(ctx, consumer);
-    ctx.emit({ type: 'ConsumerStarted', consumerId: id });
-    return { ok: true, logged: { type: 'RestartConsumer', id } };
+  const notRunning = `Consumer ${id} is not running (${consumer.status}).`;
+  switch (command.type) {
+    case 'RestartConsumer':
+      if (consumer.status === 'running') return reject(`Consumer ${id} is already running.`);
+      runConsumer(ctx, consumer);
+      ctx.emit({ type: 'ConsumerStarted', consumerId: id });
+      break;
+    case 'KillConsumer':
+      if (consumer.status !== 'running') return reject(notRunning);
+      killConsumer(ctx, consumer);
+      ctx.emit({ type: 'ConsumerStopped', consumerId: id, reason: 'crash' });
+      break;
+    case 'StopConsumer':
+      if (consumer.status !== 'running') return reject(notRunning);
+      if (consumer.stopRequested) {
+        return reject(`Consumer ${id} is already stopping: it finishes its current batch first.`);
+      }
+      stopConsumer(ctx, consumer);
+      break;
   }
-  if (consumer.status === 'stopped') return reject(`Consumer ${id} is already stopped.`);
-  killConsumer(ctx, consumer);
-  ctx.emit({ type: 'ConsumerStopped', consumerId: id });
-  return { ok: true, logged: { type: 'KillConsumer', id } };
+  return { ok: true, logged: command };
 }

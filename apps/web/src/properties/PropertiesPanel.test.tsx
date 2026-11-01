@@ -147,16 +147,13 @@ describe('<PropertiesPanel>', () => {
     );
   });
 
-  it('renders a consumer with group.id and auto.offset.reset read-only and why', () => {
+  it('renders a consumer: group fields editable, not-modelled ones disabled', () => {
     renderPanel(ctx.actions);
     selectNode('c1');
     const group = screen.getByLabelText('Group');
-    expect(group).toHaveProperty('readOnly', true);
+    expect(group).toHaveProperty('readOnly', false);
     expect(group).toHaveProperty('value', 'c1-group');
-    expect(document.querySelector('[data-field="groupId"]')?.textContent).toContain(
-      'Consumer groups arrive in M3',
-    );
-    expect(screen.getByLabelText('Auto offset reset')).toHaveProperty('readOnly', true);
+    expect(screen.getByLabelText('Auto offset reset')).toHaveProperty('disabled', false);
     // Static membership is not modelled: shown disabled with its real default.
     expect(screen.getByLabelText('Group instance id')).toHaveProperty('disabled', true);
     // M3 Q2: the session timeout is editable, game-tuned, with Kafka's default beside it.
@@ -164,10 +161,8 @@ describe('<PropertiesPanel>', () => {
     expect(screen.getByLabelText('Session timeout')).toHaveProperty('readOnly', false);
     expect(session?.querySelector('[data-chip="game-tuned"]')).not.toBeNull();
     expect(session?.textContent).toContain('Kafka default: 45000 ms (45 s)');
-    // Help and helper lines are wired to the input.
-    const describedBy = group.getAttribute('aria-describedby') ?? '';
-    expect(describedBy).toContain('pp-groupId-help');
-    expect(describedBy).toContain('pp-groupId-helper');
+    // The help text is wired to the input.
+    expect(group.getAttribute('aria-describedby') ?? '').toContain('pp-groupId-help');
   });
 
   it('renders a broker with its static rack config read-only', () => {
@@ -192,6 +187,19 @@ describe('<PropertiesPanel>', () => {
     await flush();
     expect(updates(ctx.dispatch)).toEqual([]);
     expect(config('c1')).toMatchObject({ maxPollRecords: 500 });
+  });
+
+  it('moves a consumer to another group by editing group.id', async () => {
+    renderPanel(ctx.actions);
+    selectNode('c1');
+    const group = screen.getByLabelText('Group');
+    fireEvent.change(group, { target: { value: 'billing' } });
+    fireEvent.blur(group);
+    await flush();
+    expect(updates(ctx.dispatch)).toEqual([
+      { type: 'UpdateConfig', id: 'c1', patch: { groupId: 'billing' } },
+    ]);
+    expect(config('c1')).toMatchObject({ groupId: 'billing' });
   });
 
   it('picks partition.assignment.strategy from presets and sends the list', async () => {

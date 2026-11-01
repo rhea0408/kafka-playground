@@ -37,9 +37,20 @@
  * long poll is in fetch.ts.
  *
  * Processing takes processingTimeMs per record (game setting); the next poll() happens after it.
- * close() commits pending offsets when auto-commit is on and leaves the group; a crash
- * (KillConsumer) does neither. Both start a new incarnation, so responses and tasks of the old
- * life are ignored.
+ * The commit mode (game setting, M3 Q7) stands in for the application's commit calls:
+ * `sync-after-processing` calls commitSync() after processing a batch and waits for the answer
+ * before polling again; `async-after-processing` calls commitAsync() and polls at once (a failure
+ * is only reported); `sync-before-processing` calls commitSync() as soon as poll() returns and
+ * processes the batch after the answer (at-most-once); `auto` leaves it to enable.auto.commit.
+ *
+ * close() (StopConsumer after the current batch, RemoveComponent, a group.id change) commits
+ * when auto-commit is on and leaves the group; a crash (KillConsumer) does neither. Both start a
+ * new incarnation, so responses and tasks of the old life are ignored.
+ *
+ * Teaching aid (M3 Q9, no Kafka equivalent): every record handed to the application is compared
+ * with the highest offset its group has already handed out for that partition, giving
+ * DuplicateProcessed (at or below it) or RecordsSkipped (a gap above it). A crash takes back the
+ * records of the current batch that were not processed yet.
  */
 
 import { assertNever } from '../core/assert-never.ts';
@@ -114,6 +125,9 @@ export function startConsumer(ctx: EngineContext, config: ConsumerState['config'
     pollToken: 0,
     metadata: createClientMetadata(ctx.kernel.now()),
     group: createClientGroupState(),
+    stopRequested: false,
+    batch: null,
+    appCommit: null,
     stats: { consumed: 0 },
   };
   ctx.state.consumers.set(config.id, consumer);
@@ -139,20 +153,22 @@ export function runConsumer(ctx: EngineContext, consumer: ConsumerState): void {
 
 /**
  * A crash: the process stops. Nothing is committed, no LeaveGroup is sent and heartbeats stop, so
- * the coordinator only notices after session.timeout.ms.
+ * the coordinator only notices after session.timeout.ms. Records of the current batch that were
+ * not processed yet are taken back from the duplicate/skip detector.
  */
-export function killConsumer(ctx: EngineContext, consumer: ConsumerState): void {
-  consumer.status = 'stopped';
-  forgetProcessState(consumer);
-  resetClientGroup(consumer);
-  // Pending polls, heartbeats and in-flight responses belong to the old incarnation and are ignored.
-  consumer.incarnation = ++ctx.state.counters.incarnation;
+export function killConsumer(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  status: 'crashed' | 'stopped' = 'crashed',
+): void {
+  takeBackUnprocessed(ctx, consumer);
+  endProcess(ctx, consumer, status);
 }
 
 /**
  * KafkaConsumer#close(): commits the owned partitions' positions when auto-commit is on, then
  * leaves the group (LeaveGroup), so the group rebalances at once. The client does not wait for
- * the answers; the requests are already on their way.
+ * the answers; the requests are already on their way. The current batch counts as processed.
  */
 export function closeConsumer(ctx: EngineContext, consumer: ConsumerState): void {
   if (consumer.status === 'running') {
@@ -161,7 +177,63 @@ export function closeConsumer(ctx: EngineContext, consumer: ConsumerState): void
     }
     leaveGroup(ctx, consumer, 'leave', hooks(ctx));
   }
-  killConsumer(ctx, consumer);
+  endProcess(ctx, consumer, 'stopped');
+}
+
+/** The process is gone: its state is forgotten and tasks of this life become stale. */
+function endProcess(ctx: EngineContext, consumer: ConsumerState, status: 'crashed' | 'stopped') {
+  consumer.status = status;
+  forgetProcessState(consumer);
+  resetClientGroup(consumer);
+  // Pending polls, heartbeats and in-flight responses belong to the old incarnation and are ignored.
+  consumer.incarnation = ++ctx.state.counters.incarnation;
+}
+
+/**
+ * StopConsumer: a graceful shutdown. A consumer blocked in poll() closes at once (wakeup());
+ * one that is processing finishes its batch first (and commits as its commit mode says).
+ */
+export function stopConsumer(ctx: EngineContext, consumer: ConsumerState): void {
+  if (consumer.inPoll && consumer.appCommit === null) {
+    closeNow(ctx, consumer);
+    return;
+  }
+  consumer.stopRequested = true;
+}
+
+function closeNow(ctx: EngineContext, consumer: ConsumerState): void {
+  closeConsumer(ctx, consumer);
+  ctx.emit({ type: 'ConsumerStopped', consumerId: consumer.config.id, reason: 'close' });
+}
+
+/**
+ * Crash during processing: records not processed yet are taken back, so whoever reads them next
+ * is not flagged as a duplicate (they were never processed), and a commit that already covered
+ * them shows up as RecordsSkipped.
+ */
+function takeBackUnprocessed(ctx: EngineContext, consumer: ConsumerState): void {
+  const { batch } = consumer;
+  if (batch === null || consumer.inPoll) return;
+  const group = ctx.state.groups.get(consumer.config.groupId);
+  if (group === undefined) return;
+  const per = consumer.config.processingTimeMs;
+  const now = ctx.kernel.now();
+  const done =
+    batch.startedAt === null
+      ? 0
+      : per === 0
+        ? batch.records.length
+        : Math.floor((now - batch.startedAt) / per);
+  const lastHanded = new Map<string, number>();
+  const firstUndone = new Map<string, number>();
+  batch.records.forEach((r, i) => {
+    lastHanded.set(r.key, r.offset);
+    if (i >= done && !firstUndone.has(r.key)) firstUndone.set(r.key, r.offset);
+  });
+  for (const [key, first] of firstUndone) {
+    // Only if nobody else has handed out later records of this partition meanwhile.
+    if (group.processed.get(key) === lastHanded.get(key)) group.processed.set(key, first - 1);
+  }
 }
 
 /**
@@ -179,6 +251,9 @@ function forgetProcessState(consumer: ConsumerState): void {
   consumer.buffer.length = 0;
   consumer.fetchesInFlight.clear();
   consumer.inPoll = false;
+  consumer.stopRequested = false;
+  consumer.batch = null;
+  consumer.appCommit = null;
 }
 
 /** Drops one partition's position and buffered records (it was revoked or lost). */
@@ -199,7 +274,10 @@ function hooks(ctx: EngineContext): PollHooks {
     fatal: (consumer) => {
       // The exception ends the application's loop: the process exits without closing.
       killConsumer(ctx, consumer);
-      ctx.emit({ type: 'ConsumerStopped', consumerId: consumer.config.id });
+      ctx.emit({ type: 'ConsumerStopped', consumerId: consumer.config.id, reason: 'error' });
+    },
+    commitAnswered: (consumer, commitId) => {
+      appCommitAnswered(ctx, consumer, commitId);
     },
   };
 }
@@ -226,10 +304,52 @@ const running = (
     : undefined;
 };
 
+/**
+ * The current ConsumerPoll task: either the application finished processing its batch and calls
+ * poll() again (after its after-processing commit), or it is woken inside a blocked poll().
+ */
 export function handleConsumerPoll(ctx: EngineContext, task: Task<'ConsumerPoll'>): void {
   const consumer = running(ctx, task.consumerId, task.incarnation);
   if (consumer?.pollToken !== task.token) return;
+  if (!consumer.inPoll && consumer.batch !== null) {
+    consumer.batch = null;
+    if (commitAfterProcessing(ctx, consumer)) return; // blocked in commitSync()
+  }
+  if (consumer.stopRequested) {
+    closeNow(ctx, consumer);
+    return;
+  }
   poll(ctx, consumer);
+}
+
+/** The commit mode's after-processing commit. True while commitSync() waits for its answer. */
+function commitAfterProcessing(ctx: EngineContext, consumer: ConsumerState): boolean {
+  const mode = consumer.config.commitMode;
+  if (mode !== 'sync-after-processing' && mode !== 'async-after-processing') return false;
+  const commitId = commitPositions(ctx, consumer, ownedPartitionKeys(consumer));
+  if (mode === 'async-after-processing' || commitId === null) return false;
+  consumer.appCommit = { commitId, then: 'poll' };
+  consumer.pollToken += 1;
+  return true;
+}
+
+/** commitSync() returned (accepted or failed; a failure is reported by CommitFailed). */
+function appCommitAnswered(ctx: EngineContext, consumer: ConsumerState, commitId: number): void {
+  const pending = consumer.appCommit;
+  if (pending?.commitId !== commitId) return;
+  consumer.appCommit = null;
+  const now = ctx.kernel.now();
+  if (pending.then === 'process' && consumer.batch !== null) {
+    consumer.batch.startedAt = now;
+    schedulePoll(
+      ctx,
+      consumer,
+      now + consumer.batch.records.length * consumer.config.processingTimeMs,
+    );
+    return;
+  }
+  if (consumer.stopRequested) closeNow(ctx, consumer);
+  else poll(ctx, consumer);
 }
 
 /** A coordinator answer reaches the consumer process (its network thread). */
@@ -306,10 +426,21 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
 
   const returned = drainBuffer(ctx, consumer);
   sendFetches(ctx, consumer, assigned);
-  if (returned > 0) {
+  if (returned.length > 0) {
     consumer.inPoll = false;
+    consumer.batch = { records: returned, startedAt: now };
     startPollTimer(ctx, consumer);
-    schedulePoll(ctx, consumer, now + returned * config.processingTimeMs);
+    if (config.commitMode === 'sync-before-processing') {
+      // commitSync() before processing: the positions already point past this batch.
+      const commitId = commitPositions(ctx, consumer, ownedPartitionKeys(consumer));
+      if (commitId !== null) {
+        consumer.batch.startedAt = null;
+        consumer.appCommit = { commitId, then: 'process' };
+        consumer.pollToken += 1;
+        return;
+      }
+    }
+    schedulePoll(ctx, consumer, now + returned.length * config.processingTimeMs);
   } else {
     // Blocked in poll(): a fetch response wakes it, and so does the auto-commit deadline.
     consumer.inPoll = true;
@@ -344,11 +475,17 @@ function resetOffset(consumer: ConsumerState, partition: PartitionState): number
     : partition.highWatermark;
 }
 
-/** Hands buffered records to the application, at most max.poll.records. Returns the count. */
-function drainBuffer(ctx: EngineContext, consumer: ConsumerState): number {
+/**
+ * Hands buffered records to the application, at most max.poll.records, and returns them in
+ * order. Each record also goes through the duplicate/skip detector (M3 Q9).
+ */
+function drainBuffer(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+): { readonly key: string; readonly offset: number }[] {
   const { config } = consumer;
+  const handed: { key: string; offset: number }[] = [];
   let budget = config.maxPollRecords;
-  let returned = 0;
   while (budget > 0) {
     const chunk = consumer.buffer[0];
     if (chunk === undefined) break;
@@ -365,14 +502,42 @@ function drainBuffer(ctx: EngineContext, consumer: ConsumerState): number {
         value: r.value,
         traceId: r.traceId,
       });
+      detectDuplicateOrSkip(ctx, consumer, chunk.topic, chunk.partition, r);
       consumer.positions.set(chunk.key, { offset: r.offset + 1, topicId: chunk.topicId });
+      handed.push({ key: chunk.key, offset: r.offset });
     }
     if (chunk.records.length === 0) consumer.buffer.shift();
     budget -= taken.length;
-    returned += taken.length;
   }
-  consumer.stats.consumed += returned;
-  return returned;
+  consumer.stats.consumed += handed.length;
+  return handed;
+}
+
+/** M3 Q9: compares the record with the highest offset the group has handed out so far. */
+function detectDuplicateOrSkip(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  topic: string,
+  partition: number,
+  record: LogRecord,
+): void {
+  const group = groupOf(ctx, consumer.config.groupId);
+  const key = partitionName(topic, partition);
+  const highest = group.processed.get(key);
+  const base = { groupId: group.groupId, consumerId: consumer.config.id, topic, partition };
+  if (highest !== undefined && record.offset <= highest) {
+    ctx.emit({
+      type: 'DuplicateProcessed',
+      ...base,
+      offset: record.offset,
+      traceId: record.traceId,
+    });
+    return;
+  }
+  if (highest !== undefined && record.offset > highest + 1) {
+    ctx.emit({ type: 'RecordsSkipped', ...base, from: highest + 1, to: record.offset - 1 });
+  }
+  group.processed.set(key, record.offset);
 }
 
 /**

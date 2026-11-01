@@ -24,9 +24,17 @@ export type Command =
       readonly key: string | null;
       readonly value: string;
     }
-  /** Crashes a consumer: it stops polling without committing (FR-3.1). */
+  /**
+   * Crashes a consumer (FR-3.1): the process dies without committing, leaving the group or
+   * heartbeating; the coordinator notices after session.timeout.ms.
+   */
   | { readonly type: 'KillConsumer'; readonly id: string }
-  /** Starts a killed consumer again; it resumes from the group's committed offsets. */
+  /**
+   * Stops a consumer gracefully: the application finishes the records it is processing, then
+   * calls close(), which commits (auto-commit) and sends LeaveGroup.
+   */
+  | { readonly type: 'StopConsumer'; readonly id: string }
+  /** Starts a crashed or stopped consumer again as a new group member; it resumes from the group's committed offsets. */
   | { readonly type: 'RestartConsumer'; readonly id: string }
   /**
    * Changes a component's config (properties panel, FR-1.3). `patch` holds only the fields to

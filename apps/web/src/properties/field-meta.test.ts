@@ -82,8 +82,6 @@ describe('field metadata', () => {
       [
         'broker.rack',
         'broker.groupInitialRebalanceDelayMs',
-        'consumer.autoOffsetReset',
-        'consumer.groupId',
         'topic.minInsyncReplicas',
         'topic.replicationFactor',
       ].sort(),

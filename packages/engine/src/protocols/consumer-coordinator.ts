@@ -59,6 +59,8 @@ export interface PollHooks {
   readonly forget: (consumer: ConsumerState, key: string) => void;
   /** An error poll() throws to the application, which then dies (a crash). */
   readonly fatal: (consumer: ConsumerState, error: GroupError) => void;
+  /** An OffsetCommit was answered (the application may be blocked in commitSync()). */
+  readonly commitAnswered: (consumer: ConsumerState, commitId: number) => void;
 }
 
 /** A fresh client: not in a group, no member id (a restarted process starts like this). */
@@ -584,6 +586,7 @@ function onCommitResponse(
     group.prepareCommitId = null;
     hooks.wake(consumer);
   }
+  hooks.commitAnswered(consumer, response.commitId);
 }
 
 /** Partition keys a consumer owns, for snapshots and commits. */

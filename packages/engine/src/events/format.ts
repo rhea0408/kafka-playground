@@ -60,8 +60,13 @@ export function describeEvent(e: EngineEvent): string {
     case 'CommitFailed':
       return `${e.consumerId}  ${e.groupId}  ${e.error}  ${partitionsText(e.partitions)}`;
     case 'ConsumerStopped':
+      return `${e.consumerId}  ${e.reason}`;
     case 'ConsumerStarted':
       return e.consumerId;
+    case 'DuplicateProcessed':
+      return `${e.consumerId} ← ${partitionName(e.topic, e.partition)}  offset=${String(e.offset)}  already processed by ${e.groupId}`;
+    case 'RecordsSkipped':
+      return `${e.consumerId}  ${partitionName(e.topic, e.partition)}  offsets ${String(e.from)}–${String(e.to)} never processed by ${e.groupId}`;
     case 'ConfigUpdated':
       return `${e.after.kind} ${e.id}  ${configChanges(e.before, e.after)}`;
     default:

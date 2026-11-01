@@ -274,14 +274,30 @@ describe('UpdateConfig: producer', () => {
 });
 
 describe('UpdateConfig: consumer', () => {
-  it('rejects group.id and auto.offset.reset changes (consumer groups are M3)', () => {
+  it('a group.id change leaves the old group (with a commit) and joins the new one (M3 Q5)', () => {
     const engine = createEngine({ seed: 1, topology: topology() });
+    const events = record(engine);
+    engine.runUntil(3000);
+    const committedBefore = ofType(events, 'OffsetCommitted').length;
     expect(
       engine.dispatch({ type: 'UpdateConfig', id: 'c1', patch: { groupId: 'other' } }),
-    ).toMatchObject({ ok: false, reason: /group\.id/ });
+    ).toEqual({ ok: true });
+    engine.runUntil(4000);
+    expect(ofType(events, 'OffsetCommitted').length).toBeGreaterThan(committedBefore);
+    expect(ofType(events, 'MemberRemoved')).toMatchObject([
+      { groupId: 'c1-group', consumerId: 'c1', reason: 'leave' },
+    ]);
+    expect(ofType(events, 'MemberJoined').map((e) => e.groupId)).toEqual(['c1-group', 'other']);
+    // The new group has no committed offsets, so auto.offset.reset (earliest) decides.
+    const fromNewGroup = ofType(events, 'RecordConsumed').filter((e) => e.groupId === 'other');
+    expect(Math.min(...fromNewGroup.map((e) => e.offset))).toBe(0);
+  });
+
+  it('auto.offset.reset changes are accepted and used for partitions assigned later', () => {
+    const engine = createEngine({ seed: 1, topology: topology() });
     expect(
       engine.dispatch({ type: 'UpdateConfig', id: 'c1', patch: { autoOffsetReset: 'latest' } }),
-    ).toMatchObject({ ok: false, reason: /auto\.offset\.reset/ });
+    ).toEqual({ ok: true });
   });
 
   it('max.poll.records and processing time apply from the next poll', () => {
