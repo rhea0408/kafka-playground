@@ -146,13 +146,37 @@ export function createClientGroupState(): ClientGroupState {
   };
 }
 
+/** Records the last poll() handed to the application, being processed one after another. */
+export interface InFlightBatch {
+  /** "topic-partition" and offset of each record, in the order poll() returned them. */
+  readonly records: readonly { readonly key: string; readonly offset: number }[];
+  /** When processing started; null while a commitSync() before processing is still pending. */
+  startedAt: number | null;
+}
+
+/** A commitSync() the application is blocked in, and what it does once it returns. */
+export interface PendingAppCommit {
+  readonly commitId: number;
+  /** `poll`: call poll() next (after processing); `process`: start processing the batch. */
+  readonly then: 'poll' | 'process';
+}
+
 export interface ConsumerState {
   /** Replaced by UpdateConfig; read at each poll(). */
   config: Consumer;
   /** Changes on every (re)start, so poll tasks from an earlier life are ignored. */
   incarnation: number;
-  /** "stopped" after KillConsumer, until RestartConsumer. */
-  status: 'running' | 'stopped';
+  /**
+   * `stopped` after StopConsumer (a graceful close()) and `crashed` after KillConsumer or a fatal
+   * error, until RestartConsumer.
+   */
+  status: 'running' | 'stopped' | 'crashed';
+  /** StopConsumer was asked while the application was processing: close() after this batch. */
+  stopRequested: boolean;
+  /** The batch the application is processing (null while it is in poll()). */
+  batch: InFlightBatch | null;
+  /** A commitSync() in progress (commit modes sync-after/before-processing). */
+  appCommit: PendingAppCommit | null;
   /** Next offset to fetch, per assigned partition ("topic-partition" → position). */
   readonly positions: Map<string, ConsumerPosition>;
   /** Sim time of the last auto-commit (or of the start); the interval counts from here. */

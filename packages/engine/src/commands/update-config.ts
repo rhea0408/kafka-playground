@@ -19,9 +19,10 @@
  *   Requests already in flight keep the acks they were sent with; other fields apply from the
  *   next record.
  * - Consumer: max.poll.records, fetch.min.bytes, fetch.max.wait.ms, processing time, auto-commit
- *   settings and metadata.max.age.ms apply from the next poll() (a fetch already parked at the
- *   broker keeps the values it was sent with). group.id and auto.offset.reset are rejected in M2:
- *   changing them means leaving one group and joining another (M3).
+ *   settings, the commit mode, auto.offset.reset and metadata.max.age.ms apply from the next
+ *   poll() (a fetch already parked at the broker keeps the values it was sent with). The assignor
+ *   list, session.timeout.ms and max.poll.interval.ms go with the next JoinGroup. A group.id
+ *   change closes the consumer (commit, LeaveGroup) and starts it again in the new group (M3 Q5).
  * - A patch that changes nothing is accepted, emits no event and is not logged. That includes a
  *   topic patch with the current partition count: Kafka's CreatePartitions would reject it ("would
  *   not be an increase"), but a properties form saved unchanged is not that request (M2 T2-7).
@@ -35,6 +36,7 @@ import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
 import type { TopicState } from '../model/state.ts';
+import { closeConsumer, runConsumer } from '../protocols/consume.ts';
 import { restartSchedule } from '../protocols/produce.ts';
 import { kindOf, reject, type ApplyResult } from './apply.ts';
 import type { Command } from './index.ts';
@@ -128,11 +130,13 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
       if (before.kind !== 'consumer' || consumer === undefined) {
         return 'Internal error: not a consumer.';
       }
-      if (after.groupId !== before.groupId) {
-        return 'Changing group.id means leaving one consumer group and joining another. Consumer groups arrive in M3; remove the consumer and add a new one instead.';
-      }
-      if (after.autoOffsetReset !== before.autoOffsetReset) {
-        return 'auto.offset.reset is read when the consumer joins its group. Changing it on a running consumer arrives with consumer groups in M3; remove the consumer and add a new one instead.';
+      if (after.groupId !== before.groupId && consumer.status === 'running') {
+        // M3 Q5: like closing the client and creating a new one with the other group.id: close()
+        // (commit when auto-commit is on, LeaveGroup), then join the new group as a new member.
+        closeConsumer(ctx, consumer);
+        consumer.config = after;
+        runConsumer(ctx, consumer);
+        return undefined;
       }
       consumer.config = after;
       return undefined;

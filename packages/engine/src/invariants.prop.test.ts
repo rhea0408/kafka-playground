@@ -166,22 +166,36 @@ describe('engine invariants (fast-check)', () => {
     );
   });
 
-  it('a stopped or removed consumer emits nothing until it is started or added again', () => {
+  it('a stopped or removed consumer reads nothing until it is started or added again', () => {
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
         const { events } = runScenario(seed, topology, steps);
         const alive = new Set((topology.consumers ?? []).map((c) => c.id));
+        /** When each consumer last stopped: a commit it sent just before may still land. */
+        const stoppedAt = new Map<string, number>();
+        const stop = (id: string, t: number) => {
+          alive.delete(id);
+          stoppedAt.set(id, t);
+        };
         for (const e of events) {
           if (e.type === 'ComponentAdded' && e.component.kind === 'consumer') {
             alive.add(e.component.id);
           }
           if (e.type === 'ComponentRemoved' && e.component.kind === 'consumer') {
-            alive.delete(e.component.id);
+            stop(e.component.id, e.t);
+          }
+          if (e.type === 'ConfigUpdated' && e.after.kind === 'consumer') {
+            // A group.id change closes the client and starts a new one.
+            if (e.before.kind === 'consumer' && e.before.groupId !== e.after.groupId) {
+              stoppedAt.set(e.id, e.t);
+            }
           }
           if (e.type === 'ConsumerStarted') alive.add(e.consumerId);
-          if (e.type === 'ConsumerStopped') alive.delete(e.consumerId);
-          if (e.type === 'RecordConsumed' || e.type === 'OffsetCommitted') {
-            expect(alive.has(e.consumerId)).toBe(true);
+          if (e.type === 'ConsumerStopped') stop(e.consumerId, e.t);
+          if (e.type === 'RecordConsumed') expect(alive.has(e.consumerId)).toBe(true);
+          if (e.type === 'OffsetCommitted' && !alive.has(e.consumerId)) {
+            // A commit already on the wire lands one network delay later.
+            expect(e.t).toBeLessThanOrEqual((stoppedAt.get(e.consumerId) ?? -Infinity) + 1);
           }
         }
       }),

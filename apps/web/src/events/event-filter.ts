@@ -32,7 +32,10 @@ const GROUPS = [
       'ConsumerIdle',
     ],
   },
-  { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
+  {
+    label: 'Consumers',
+    types: ['ConsumerStarted', 'ConsumerStopped', 'DuplicateProcessed', 'RecordsSkipped'],
+  },
   {
     label: 'Topology',
     types: ['ComponentAdded', 'ComponentRemoved', 'Connected', 'Disconnected', 'ConfigUpdated'],

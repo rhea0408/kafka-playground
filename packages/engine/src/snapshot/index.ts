@@ -153,7 +153,8 @@ export function buildSnapshot(
       );
       return {
         config: copyPlain(consumer.config),
-        status: consumer.status,
+        // Until the M3-T7 snapshot statuses: a crashed consumer shows as stopped.
+        status: consumer.status === 'running' ? ('running' as const) : ('stopped' as const),
         consumed: consumer.stats.consumed,
         partitions,
         totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),

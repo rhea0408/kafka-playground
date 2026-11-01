@@ -182,7 +182,7 @@ describe('actions → SimHost round trips', () => {
     expect(await ctx.actions.killConsumer('c1')).toEqual({ ok: true });
     expect(snapshot().consumers[0]?.status).toBe('stopped');
     expect((await ctx.actions.killConsumer('c1')).ok).toBe(false);
-    expect(toasts()[0]?.message).toBe('Consumer c1 is already stopped.');
+    expect(toasts()[0]?.message).toBe('Consumer c1 is not running (crashed).');
     expect(await ctx.actions.restartConsumer('c1')).toEqual({ ok: true });
     expect(snapshot().consumers[0]?.status).toBe('running');
   });

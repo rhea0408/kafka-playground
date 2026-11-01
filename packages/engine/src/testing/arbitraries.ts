@@ -122,6 +122,7 @@ const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 't0', 't1', 'b1', 'ghost');
 const commandArb: fc.Arbitrary<Command> = fc.oneof(
   ids.map((id): Command => ({ type: 'KillConsumer', id })),
   ids.map((id): Command => ({ type: 'RestartConsumer', id })),
+  ids.map((id): Command => ({ type: 'StopConsumer', id })),
   fc
     .record({ producerId: ids, key: fc.option(fc.constantFrom('A', 'B', 'Z'), { nil: null }) })
     .map(({ producerId, key }): Command => ({
