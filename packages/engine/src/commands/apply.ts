@@ -18,6 +18,7 @@ import {
   startConsumer,
   wakeConsumer,
 } from '../protocols/consume.ts';
+import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
 import { updateConfig } from './update-config.ts';
@@ -139,6 +140,11 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
             `Broker ${id} leads partitions of topic "${topic.config.id}". Remove the topic first; moving partitions to other brokers arrives in M4.`,
           );
         }
+      }
+      if (hostsOffsetsTopic(ctx, id)) {
+        return reject(
+          `Broker ${id} leads partitions of __consumer_offsets, the internal topic where consumer groups keep their committed offsets, so it is a group coordinator. Moving them to another broker arrives in M4.`,
+        );
       }
       component = (state.brokers.get(id) as { config: Component }).config;
       state.brokers.delete(id);

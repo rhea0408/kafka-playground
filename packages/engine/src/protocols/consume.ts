@@ -44,6 +44,7 @@
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { partitionName, type LogRecord, type PartitionState } from '../model/partition.ts';
+import { createGroup } from '../model/group.ts';
 import { topicsOfConsumer, type ConsumerState, type GroupState } from '../model/state.ts';
 import type { EngineTask, FetchPartition } from '../model/tasks.ts';
 import {
@@ -71,7 +72,7 @@ export function deleteCommittedOffsets(ctx: EngineContext, topic: string): void 
 export function groupOf(ctx: EngineContext, groupId: string): GroupState {
   let group = ctx.state.groups.get(groupId);
   if (group === undefined) {
-    group = { committed: new Map() };
+    group = createGroup(groupId);
     ctx.state.groups.set(groupId, group);
   }
   return group;
@@ -425,6 +426,8 @@ function commitPositions(
       type: 'OffsetCommitted',
       groupId: consumer.config.groupId,
       consumerId: consumer.config.id,
+      memberId: null,
+      generation: -1,
       topic,
       partition,
       offset: position.offset,

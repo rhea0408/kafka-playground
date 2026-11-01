@@ -4,9 +4,18 @@
  * The kernel stamps each event with `{ t, seq }` when it is emitted.
  */
 
-import type { Acks, Component } from '@kp/schema';
+import type { Acks, Assignor, Component } from '@kp/schema';
 import type { Stamped } from '../core/kernel.ts';
+import type { MemberRemovedReason, RebalanceReason } from '../model/group.ts';
 import type { ProduceError } from '../model/tasks.ts';
+import type { TopicPartition } from '../protocols/assignors/index.ts';
+
+/** One member's share of a generation's assignment (RebalanceCompleted). */
+export interface MemberAssignment {
+  readonly memberId: string;
+  readonly consumerId: string;
+  readonly partitions: readonly TopicPartition[];
+}
 
 export type EngineEventPayload =
   | { readonly type: 'ComponentAdded'; readonly component: Component }
@@ -68,14 +77,56 @@ export type EngineEventPayload =
       readonly value: string;
       readonly traceId: string;
     }
-  /** The group saved `offset` (the next offset to read) for this partition. */
+  /**
+   * The group coordinator saved `offset` (the next offset to read) for this partition. `memberId`
+   * and `generation` are what the commit carried (null / -1 for a consumer outside a group).
+   */
   | {
       readonly type: 'OffsetCommitted';
       readonly groupId: string;
       readonly consumerId: string;
+      readonly memberId: string | null;
+      readonly generation: number;
       readonly topic: string;
       readonly partition: number;
       readonly offset: number;
+    }
+  /** The coordinator added a new member to the group (its first JoinGroup). */
+  | {
+      readonly type: 'MemberJoined';
+      readonly groupId: string;
+      readonly memberId: string;
+      readonly consumerId: string;
+    }
+  /** The coordinator removed a member from the group. */
+  | {
+      readonly type: 'MemberRemoved';
+      readonly groupId: string;
+      readonly memberId: string;
+      readonly consumerId: string;
+      readonly reason: MemberRemovedReason;
+    }
+  /**
+   * The group went to PreparingRebalance. `generation` is the current one; the rebalance ends
+   * with generation + 1.
+   */
+  | {
+      readonly type: 'RebalanceStarted';
+      readonly groupId: string;
+      readonly generation: number;
+      readonly reason: RebalanceReason;
+    }
+  /**
+   * The rebalance ended: the leader's assignment for `generation` is stored and the group is
+   * Stable, or the group has no members left and is Empty (`protocol` null, no members).
+   */
+  | {
+      readonly type: 'RebalanceCompleted';
+      readonly groupId: string;
+      readonly generation: number;
+      readonly protocol: Assignor | null;
+      readonly leader: string | null;
+      readonly members: readonly MemberAssignment[];
     }
   /** The consumer process crashed or was stopped (KillConsumer). Nothing was committed. */
   | { readonly type: 'ConsumerStopped'; readonly consumerId: string }

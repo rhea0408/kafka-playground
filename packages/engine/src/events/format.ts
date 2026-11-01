@@ -37,7 +37,19 @@ export function describeEvent(e: EngineEvent): string {
     case 'RecordConsumed':
       return `${e.consumerId} ← ${partitionName(e.topic, e.partition)}  offset=${String(e.offset)}  ${keyText(e.key)}`;
     case 'OffsetCommitted':
-      return `${e.groupId}  ${partitionName(e.topic, e.partition)}  offset=${String(e.offset)}`;
+      return `${e.groupId}  ${partitionName(e.topic, e.partition)}  offset=${String(e.offset)}${e.generation >= 0 ? `  gen=${String(e.generation)}` : ''}`;
+    case 'MemberJoined':
+      return `${e.groupId}  ${e.consumerId} joined as ${e.memberId}`;
+    case 'MemberRemoved':
+      return `${e.groupId}  ${e.consumerId} (${e.memberId}) removed: ${e.reason}`;
+    case 'RebalanceStarted':
+      return `${e.groupId}  gen=${String(e.generation)}  reason=${e.reason}`;
+    case 'RebalanceCompleted':
+      return e.members.length === 0
+        ? `${e.groupId}  gen=${String(e.generation)}  no members (Empty)`
+        : `${e.groupId}  gen=${String(e.generation)}  ${e.protocol ?? ''}  ${e.members
+            .map((m) => `${m.consumerId}: ${partitionsText(m.partitions)}`)
+            .join(', ')}`;
     case 'ConsumerStopped':
     case 'ConsumerStarted':
       return e.consumerId;
@@ -46,6 +58,13 @@ export function describeEvent(e: EngineEvent): string {
     default:
       return assertNever(e);
   }
+}
+
+/** "orders-0 orders-2", or "none". */
+function partitionsText(partitions: readonly { topic: string; partition: number }[]): string {
+  return partitions.length === 0
+    ? 'none'
+    : partitions.map((p) => partitionName(p.topic, p.partition)).join(' ');
 }
 
 /** "partitions: 3 → 4, acks: all → 1" for the fields that differ. */

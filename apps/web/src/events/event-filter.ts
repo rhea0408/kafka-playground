@@ -19,6 +19,10 @@ const GROUPS = [
     types: ['RecordProduced', 'RecordAppended', 'ProduceAcked', 'ProduceFailed', 'RecordConsumed'],
   },
   { label: 'Offsets', types: ['OffsetCommitted'] },
+  {
+    label: 'Group',
+    types: ['MemberJoined', 'MemberRemoved', 'RebalanceStarted', 'RebalanceCompleted'],
+  },
   { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
   {
     label: 'Topology',
