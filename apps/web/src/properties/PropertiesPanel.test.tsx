@@ -157,7 +157,13 @@ describe('<PropertiesPanel>', () => {
       'Consumer groups arrive in M3',
     );
     expect(screen.getByLabelText('Auto offset reset')).toHaveProperty('readOnly', true);
-    expect(screen.getByLabelText('Session timeout')).toHaveProperty('disabled', true);
+    // Static membership is not modelled: shown disabled with its real default.
+    expect(screen.getByLabelText('Group instance id')).toHaveProperty('disabled', true);
+    // M3 Q2: the session timeout is editable, game-tuned, with Kafka's default beside it.
+    const session = document.querySelector('[data-field="sessionTimeoutMs"]');
+    expect(screen.getByLabelText('Session timeout')).toHaveProperty('readOnly', false);
+    expect(session?.querySelector('[data-chip="game-tuned"]')).not.toBeNull();
+    expect(session?.textContent).toContain('Kafka default: 45000 ms (45 s)');
     // Help and helper lines are wired to the input.
     const describedBy = group.getAttribute('aria-describedby') ?? '';
     expect(describedBy).toContain('pp-groupId-help');
@@ -186,6 +192,36 @@ describe('<PropertiesPanel>', () => {
     await flush();
     expect(updates(ctx.dispatch)).toEqual([]);
     expect(config('c1')).toMatchObject({ maxPollRecords: 500 });
+  });
+
+  it('picks partition.assignment.strategy from presets and sends the list', async () => {
+    renderPanel(ctx.actions);
+    selectNode('c1');
+    const strategy = screen.getByLabelText('Assignment strategy');
+    expect(strategy).toHaveProperty('value', 'range, cooperative-sticky');
+    fireEvent.change(strategy, { target: { value: 'cooperative-sticky' } });
+    await flush();
+    expect(updates(ctx.dispatch)).toEqual([
+      {
+        type: 'UpdateConfig',
+        id: 'c1',
+        patch: { partitionAssignmentStrategy: ['cooperative-sticky'] },
+      },
+    ]);
+    expect(config('c1')).toMatchObject({ partitionAssignmentStrategy: ['cooperative-sticky'] });
+  });
+
+  it('rejects a heartbeat interval that is not below the session timeout', async () => {
+    renderPanel(ctx.actions);
+    selectNode('c1');
+    const heartbeat = screen.getByLabelText('Heartbeat interval');
+    fireEvent.change(heartbeat, { target: { value: '10000' } });
+    fireEvent.blur(heartbeat);
+    await flush();
+    expect(config('c1')).toMatchObject({ heartbeatIntervalMs: 3000 });
+    expect(document.querySelector('[data-field="heartbeatIntervalMs"]')?.textContent).toContain(
+      'heartbeat.interval.ms must be lower than session.timeout.ms.',
+    );
   });
 
   it('saves on blur with only the changed field, and Enter works too', async () => {

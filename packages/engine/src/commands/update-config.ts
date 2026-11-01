@@ -12,8 +12,9 @@
  *   metadata refresh (metadata.max.age.ms, see protocols/metadata.ts). The replication factor
  *   cannot be changed through config (it takes a partition reassignment, M4).
  *   min.insync.replicas is a dynamic topic config and is accepted.
- * - Broker: the only field, `rack` (broker.rack), is a static broker config that needs a broker
- *   restart, so changing it is rejected.
+ * - Broker: `rack` (broker.rack) and `groupInitialRebalanceDelayMs`
+ *   (group.initial.rebalance.delay.ms) are static broker configs that need a broker restart, so
+ *   changing them is rejected.
  * - Producer: every field. A rate change starts a new send schedule from now; stats are kept.
  *   Requests already in flight keep the acks they were sent with; other fields apply from the
  *   next record.
@@ -92,8 +93,13 @@ function currentConfig(ctx: EngineContext, id: string): Component | undefined {
 function apply(ctx: EngineContext, before: Component, after: Component): string | undefined {
   const { state } = ctx;
   switch (after.kind) {
-    case 'broker':
-      return 'broker.rack is a static broker config: Kafka only reads it when the broker starts. Restarting brokers arrives in M4.';
+    case 'broker': {
+      const name =
+        before.kind === 'broker' && after.rack === before.rack
+          ? 'group.initial.rebalance.delay.ms'
+          : 'broker.rack';
+      return `${name} is a static broker config: Kafka only reads it when the broker starts. Restarting brokers arrives in M4.`;
+    }
     case 'topic': {
       const topic = state.topics.get(after.id);
       if (before.kind !== 'topic' || topic === undefined) return 'Internal error: not a topic.';

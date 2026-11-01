@@ -59,6 +59,10 @@ describe('field metadata', () => {
     expect(FIELD_META.producer.ratePerSec.kind).toBe('game-setting');
     expect(FIELD_META.producer.messageSizeBytes.kind).toBe('game-setting');
     expect(FIELD_META.consumer.processingTimeMs.kind).toBe('game-setting');
+    expect(FIELD_META.consumer.commitMode.kind).toBe('game-setting');
+    // M3 Q2: shortened timeouts are labelled game-tuned with the real default beside them.
+    expect(FIELD_META.consumer.sessionTimeoutMs.kind).toBe('game-tuned');
+    expect(FIELD_META.consumer.maxPollIntervalMs.kind).toBe('game-tuned');
     for (const { meta } of allMeta()) {
       if (meta.kind === 'game-setting') expect(meta.standsFor).toMatch(/^Stands in for /);
     }
@@ -77,6 +81,7 @@ describe('field metadata', () => {
     expect(fixed.sort()).toEqual(
       [
         'broker.rack',
+        'broker.groupInitialRebalanceDelayMs',
         'consumer.autoOffsetReset',
         'consumer.groupId',
         'topic.minInsyncReplicas',
@@ -90,7 +95,7 @@ describe('field metadata', () => {
       for (const extra of EXTRA_FIELDS[kind]) {
         expect(Object.keys(SHAPES[kind])).not.toContain(extra.key);
         expect(extra.kind).toBe('not-modelled');
-        expect(['M3', 'M4', 'v0.4']).toContain(extra.arrives);
+        expect(['M3', 'M4', 'v0.4', 'later']).toContain(extra.arrives);
       }
     }
   });

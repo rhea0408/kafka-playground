@@ -90,7 +90,39 @@ describe('UpdateConfig: general rules', () => {
     const engine = createEngine({ seed: 1, topology: topology() });
     expect(
       engine.dispatch({ type: 'UpdateConfig', id: 'b1', patch: { rack: 'az1' } }),
-    ).toMatchObject({ ok: false, reason: /static broker config/ });
+    ).toMatchObject({ ok: false, reason: /^broker\.rack is a static broker config/ });
+    expect(
+      engine.dispatch({
+        type: 'UpdateConfig',
+        id: 'b1',
+        patch: { groupInitialRebalanceDelayMs: 0 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: /^group\.initial\.rebalance\.delay\.ms is a static broker config/,
+    });
+  });
+
+  it('accepts the M3 consumer group fields and checks them with the schema', () => {
+    const engine = createEngine({ seed: 1, topology: topology() });
+    expect(
+      engine.dispatch({
+        type: 'UpdateConfig',
+        id: 'c1',
+        patch: {
+          sessionTimeoutMs: 20_000,
+          maxPollIntervalMs: 60_000,
+          partitionAssignmentStrategy: ['cooperative-sticky'],
+          commitMode: 'sync-after-processing',
+        },
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      engine.dispatch({ type: 'UpdateConfig', id: 'c1', patch: { heartbeatIntervalMs: 20_000 } }),
+    ).toEqual({
+      ok: false,
+      reason: 'heartbeatIntervalMs: heartbeat.interval.ms must be lower than session.timeout.ms.',
+    });
   });
 });
 

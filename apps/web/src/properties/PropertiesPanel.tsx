@@ -7,6 +7,7 @@ import { useUiStore, type Selection } from '../stores/ui-store.ts';
 import {
   BooleanField,
   EnumField,
+  PresetListField,
   FixedField,
   TextField,
   type Commit,
@@ -289,6 +290,17 @@ function ConfigRow(props: { component: Component; field: string; meta: FieldMeta
                 inputId={inputId}
                 value={value}
                 options={control.options}
+                describedBy={describedBy}
+                invalid={state.error !== null}
+                commit={commitChoice}
+              />
+            );
+          case 'presetList':
+            return (
+              <PresetListField
+                inputId={inputId}
+                value={value}
+                presets={control.presets}
                 describedBy={describedBy}
                 invalid={state.error !== null}
                 commit={commitChoice}
