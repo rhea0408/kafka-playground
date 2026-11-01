@@ -46,15 +46,19 @@ const snapshot = engine.getSnapshot(); // plain JSON for the UI
 | `replayCommandLog(options, log)`                                                  | Rebuilds the exact same run on a fresh engine                                                        |
 
 Commands: `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig`,
-`ProduceManual`, `KillConsumer`, `RestartConsumer`. Events: `ComponentAdded`, `ComponentRemoved`,
-`Connected`, `Disconnected`, `ConfigUpdated`, `RecordProduced`, `RecordAppended`, `ProduceAcked`,
-`ProduceFailed`, `RecordConsumed`, `OffsetCommitted`, `ConsumerStopped`, `ConsumerStarted`.
+`ProduceManual`, `KillConsumer` (crash), `StopConsumer` (graceful close), `RestartConsumer`.
+Events: `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated`,
+`RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`,
+`OffsetCommitted`, `ConsumerStopped`, `ConsumerStarted`; consumer groups (M3): `MemberJoined`,
+`MemberRemoved`, `RebalanceStarted`, `RebalanceCompleted`, `PartitionsAssigned`,
+`PartitionsRevoked`, `PartitionsLost`, `ConsumerIdle`, `CommitFailed`, `DuplicateProcessed`,
+`RecordsSkipped`.
 
 `UpdateConfig { id, patch }` merges `patch` into the component's config and validates it with
 `@kp/schema`. Topics can only grow (a decrease is rejected with Kafka's `InvalidPartitionsException`
 wording); a producer rate change restarts its schedule from now; consumer changes apply from the
-next `poll()`; ids, `group.id`, `auto.offset.reset`, the replication factor and `broker.rack` are
-rejected. A patch that changes nothing is accepted without an event and is not logged. Full rules
+next `poll()` (a `group.id` change closes the consumer and joins the other group); ids, the
+replication factor and the broker configs are rejected. A patch that changes nothing is accepted without an event and is not logged. Full rules
 in `src/commands/update-config.ts`.
 
 Snapshots are fresh copies, except log records, which are frozen when appended and shared. A
@@ -92,12 +96,20 @@ src/
 │  ├─ partition.ts  append-only log with logStartOffset / LEO / HW, record sizes
 │  ├─ placement.ts  partition leaders across brokers
 │  ├─ state.ts      engine state (brokers, topics, producers, consumers, groups, parked fetches)
+│  ├─ group.ts      a consumer group as its coordinator holds it (classic protocol, M3)
 │  ├─ tasks.ts      scheduled work as plain data (ProducerTick, LeaderAppend, FetchRequest, …)
 │  └─ context.ts    what handlers get: kernel, state, emit, config
 ├─ protocols/     Kafka behaviour, each with Kafka doc / source citations
 │  ├─ partitioner.ts  murmur2 (ported from the Java client) + sticky partitioner
 │  ├─ produce.ts      send → leader append → ack, acks 0 / 1 / all
-│  ├─ consume.ts      poll(), fetch buffer, auto.offset.reset, auto-commit, close vs crash
+│  ├─ consume.ts      poll(), fetch buffer, auto.offset.reset, commit modes, close vs crash,
+│  │                  duplicate / skip detector (M3)
+│  ├─ consumer-coordinator.ts  client side of the group protocol: join from poll(), heartbeats,
+│  │                  poll timeout, eager / cooperative revocation, commits (M3)
+│  ├─ group-coordinator.ts     broker side: group state machine, generations, timeouts,
+│  │                  OffsetCommit validation (M3)
+│  ├─ coordinator.ts  which broker coordinates a group (__consumer_offsets partition)
+│  ├─ assignors/      range, roundrobin, sticky, cooperative-sticky (pure, ported from the client)
 │  ├─ fetch.ts        broker side of the long poll (fetch.min.bytes / fetch.max.wait.ms)
 │  ├─ metadata.ts     client metadata cache (metadata.max.age.ms): when clients see new partitions
 │  └─ index.ts        runTask: the single task switch

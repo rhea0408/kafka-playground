@@ -82,18 +82,20 @@ canvas / panel edit → actions (actions/actions.ts) → SimPort.dispatch(comman
 
 ## Default scene
 
+**Consumer groups (M3).** Consumers are drawn by group: one node `group:<groupId>` with a row per member (status, owned partition chips or "Idle: no partition", position, lag), a header with the coordinator state, generation and group lag, and one edge per topic and group (`canvas/flow-mapping.ts`). Dropping a consumer onto a group adds a member with the group's config; clicking a row focuses that member (`uiStore.focusedMember`) for the properties panel and Delete. The header shows the group panel (`properties/GroupPanel.tsx`). The **Scene** select in the top bar (or `?scene=idle|crash|slow|empty`) loads the M3 presets from `stores/default-scene.ts`.
+
 The Sandbox opens **paused** with the default scene (`stores/default-scene.ts`): broker `b1`, topic `orders` with 3 partitions, producer `p1` at 2 msg/s with random keys **D, E, F** (they hash to partitions 0, 1, 2; A, B, C would all land on partition 1), and consumer `c1` in group `orders-app`. Every other field is the schema's Kafka default. Seed 7. Reload the page to get it back; Reset keeps whatever is on the canvas.
 
 ## Test hooks
 
-| Hook                  | What                                                                                                                                                                                     | Where                                  |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
-| `window.__kp.sim`     | Read-only view of the worker: `seed`, `status()`, `commandLog()`, `eventLogHash()`, `eventHistory()`. Used by the e2e determinism tests. It can't change the sim                         | `sim/debug-hook.ts`, every build       |
-| `window.__kp.overlay` | Overlay counters: `dotsDrawn` (cumulative), `dotsOnScreen`, `dotsActive`, `dotsQueued`, `dotsStarted`, `skippedCap`, `skippedNoA1`, `fps`, `capChip`                                     | `canvas/overlay/debug.ts`, every build |
-| `?fps`                | Shows the FPS meter (`N fps · M dots`) and enables `window.__kp.overlay.spawnTestDots(n)` (n A1 dots along the first producer → topic edge, no engine involved). Always on in `vite dev` | `canvas/overlay/debug.ts`              |
-| `?scene=empty`        | Opens the bare canvas (broker `b1` only) instead of the default scene                                                                                                                    | `stores/default-scene.ts`              |
+| Hook                  | What                                                                                                                                                                                     | Where                                      |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `window.__kp.sim`     | Read-only view of the worker: `seed`, `status()`, `commandLog()`, `eventLogHash()`, `eventHistory()`. Used by the e2e determinism tests. It can't change the sim                         | `sim/debug-hook.ts`, dev or `?debug`       |
+| `window.__kp.overlay` | Overlay counters: `dotsDrawn` (cumulative), `dotsOnScreen`, `dotsActive`, `dotsQueued`, `dotsStarted`, `skippedCap`, `skippedNoA1`, `fps`, `capChip`                                     | `canvas/overlay/debug.ts`, dev or `?debug` |
+| `?fps`                | Shows the FPS meter (`N fps · M dots`) and enables `window.__kp.overlay.spawnTestDots(n)` (n A1 dots along the first producer → topic edge, no engine involved). Always on in `vite dev` | `canvas/overlay/debug.ts`                  |
+| `?scene=empty`        | Opens the bare canvas (broker `b1` only) instead of the default scene                                                                                                                    | `stores/default-scene.ts`                  |
 
-Both `window.__kp` hooks are in production builds on purpose: Playwright runs against the production bundle. `window.__kp` is typed through the global `KpDebugHooks` interface, which each module extends.
+Both `window.__kp` hooks are installed in `vite dev`, or in any build with `?debug` (or `?fps`) in the URL (M3-T0): Playwright runs against the production bundle and opens it with `?debug`. `window.__kp` is typed through the global `KpDebugHooks` interface, which each module extends.
 
 ## Conventions
 
