@@ -11,6 +11,7 @@ import {
   handleConsumerPoll,
   handleFetchResponse,
   handleHeartbeatTask,
+  handleJoinPrepareTimeoutTask,
   handlePollTimeoutTask,
 } from './consume.ts';
 import { handleFetchExpire, handleFetchRequest } from './fetch.ts';
@@ -56,6 +57,9 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'ConsumerPollTimeout':
       handlePollTimeoutTask(ctx, task);
+      return;
+    case 'ConsumerJoinPrepareTimeout':
+      handleJoinPrepareTimeoutTask(ctx, task);
       return;
     case 'GroupJoinTimer':
       handleGroupJoinTimer(ctx, task);

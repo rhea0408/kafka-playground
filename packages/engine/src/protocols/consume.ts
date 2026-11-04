@@ -68,6 +68,7 @@ import { tpKey } from './assignors/index.ts';
 import {
   commitPositions,
   handleConsumerHeartbeat,
+  handleConsumerJoinPrepareTimeout,
   handleConsumerPollTimeout,
   handleCoordinatorResponse,
   leaveGroup,
@@ -369,6 +370,14 @@ export function handleHeartbeatTask(ctx: EngineContext, task: Task<'ConsumerHear
 export function handlePollTimeoutTask(ctx: EngineContext, task: Task<'ConsumerPollTimeout'>): void {
   const consumer = running(ctx, task.consumerId, task.incarnation);
   if (consumer !== undefined) handleConsumerPollTimeout(ctx, consumer, task);
+}
+
+export function handleJoinPrepareTimeoutTask(
+  ctx: EngineContext,
+  task: Task<'ConsumerJoinPrepareTimeout'>,
+): void {
+  const consumer = running(ctx, task.consumerId, task.incarnation);
+  if (consumer !== undefined) handleConsumerJoinPrepareTimeout(consumer, task, hooks(ctx));
 }
 
 interface Assigned {

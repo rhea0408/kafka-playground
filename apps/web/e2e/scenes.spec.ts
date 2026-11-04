@@ -91,9 +91,14 @@ test('scene "Crash and duplicates": a killed member is removed after the session
   const history = await readSim(page, 'eventHistory');
   const removed = history.find((e) => e.type === 'MemberRemoved' && e.consumerId === 'c1');
   expect(removed).toMatchObject({ reason: 'session-timeout' });
+  // Measured from the engine's crash event: the clock read after the click runs a little late.
+  const crashedAt =
+    history.find(
+      (e) => e.type === 'ConsumerStopped' && e.consumerId === 'c1' && e.reason === 'crash',
+    )?.t ?? Infinity;
   // About session.timeout.ms (10 s) after the last heartbeat, which is ≤ 3 s before the kill.
-  expect((removed?.t ?? 0) - killedAt).toBeGreaterThan(10_000 - 3_100);
-  expect((removed?.t ?? 0) - killedAt).toBeLessThanOrEqual(10_100);
+  expect((removed?.t ?? 0) - crashedAt).toBeGreaterThan(10_000 - 3_100);
+  expect((removed?.t ?? 0) - crashedAt).toBeLessThanOrEqual(10_100);
   const completed = history.find(
     (e) => e.type === 'RebalanceCompleted' && e.t >= (removed?.t ?? Infinity),
   );

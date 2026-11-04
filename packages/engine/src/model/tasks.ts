@@ -134,6 +134,16 @@ export type EngineTask =
       readonly incarnation: number;
       readonly token: number;
     }
+  /**
+   * rebalance.timeout.ms passed while onJoinPrepare waited for its auto-commit (joinPrepareTimer):
+   * the member stops waiting and joins anyway.
+   */
+  | {
+      readonly type: 'ConsumerJoinPrepareTimeout';
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly token: number;
+    }
   /** The broker's fetch response reaches the consumer. */
   | {
       readonly type: 'FetchResponse';

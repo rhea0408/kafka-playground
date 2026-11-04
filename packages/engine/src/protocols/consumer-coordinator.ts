@@ -11,10 +11,21 @@
  * - onJoinPrepare (K10): commits first when auto-commit is on and waits for the answer; then an
  *   eager member revokes everything, a cooperative one only partitions of topics it no longer
  *   subscribes to. A member that was kicked out (generation reset) loses its partitions instead.
- * - The JoinGroup answer is handled when it arrives: the leader runs the assignor on its own
- *   metadata and sends the assignment in SyncGroup; followers send an empty SyncGroup. The SyncGroup
- *   answer takes effect at the application's next poll() (onJoinComplete); a cooperative member
- *   that had to give partitions up rejoins at once (K14).
+ *   Like Kafka's single autoCommitOffsetRequestFuture, that commit is sent once per rebalance: once
+ *   it is answered the next poll() sends JoinGroup without committing again (M4-decisions D1), and
+ *   if it is not answered within rebalance.timeout.ms the member joins anyway (joinPrepareTimer).
+ * - The JoinGroup answer is handled when it arrives (JoinGroupResponseHandler): it sets the member
+ *   id and the new generation, then the leader runs the assignor on its own metadata and sends the
+ *   assignment in SyncGroup; followers send an empty SyncGroup. A successful SyncGroup answer makes
+ *   the member STABLE at once (SyncGroupResponseHandler), so heartbeats and commits use the new
+ *   generation; the assignment itself takes effect at the application's next poll()
+ *   (onJoinComplete); a cooperative member that had to give partitions up rejoins at once (K14).
+ *   (M4-decisions D2.)
+ * - A JoinGroup or SyncGroup that fails without a reset (REBALANCE_IN_PROGRESS,
+ *   COORDINATOR_NOT_AVAILABLE) leaves the member PREPARING or COMPLETING, with its member id,
+ *   generation and partitions: commits fail locally, heartbeats go on only while COMPLETING, and
+ *   the next poll() sends JoinGroup again without onJoinPrepare (needsJoinPrepare stays false).
+ *   (M4-decisions D4.)
  * - The heartbeat thread sends a Heartbeat every heartbeat.interval.ms while the member is in a
  *   generation (not while its JoinGroup is pending). REBALANCE_IN_PROGRESS asks for a rejoin;
  *   UNKNOWN_MEMBER_ID / ILLEGAL_GENERATION mean the member was removed, so it resets.
@@ -102,8 +113,26 @@ function resetGeneration(consumer: ConsumerState, memberId: boolean): void {
   group.isLeader = false;
   group.leaderCounts = null;
   group.pendingAssignment = null;
+  group.joinRetry = false;
+  // resetStateAndRejoin sets needsJoinPrepare, so the rejoin runs onJoinPrepare (partitions lost).
+  // A commit answered or in flight before the reset must not let it skip its own commit.
+  group.needsJoinPrepare = true;
+  group.prepareCommitId = null;
+  group.prepareCommitDone = false;
+  group.joinPrepareToken += 1;
   group.heartbeatToken += 1;
   requestRejoin(consumer, 'rejoin-after-error');
+}
+
+/**
+ * A JoinGroup or SyncGroup failed without a reset (JoinGroupResponseHandler /
+ * SyncGroupResponseHandler only raise the error; joinGroupIfNeeded requests a rejoin and retries).
+ * The state stays PREPARING or COMPLETING: Kafka's initiateJoinGroup failure listener does not
+ * change it (4.0, 4.1), so the member is not STABLE and its commits fail locally.
+ */
+function retryJoin(consumer: ConsumerState, reason: JoinReason): void {
+  consumer.group.joinRetry = true;
+  requestRejoin(consumer, reason);
 }
 
 // ── Inside poll() ─────────────────────────────────────────────────────────────────────────────
@@ -150,7 +179,10 @@ export function pollCoordinator(
       ? 'fetch'
       : 'wait';
   }
-  const needsJoin = group.state === 'unjoined' || (group.rejoinNeeded && group.state === 'stable');
+  const needsJoin =
+    group.state === 'unjoined' ||
+    group.joinRetry ||
+    (group.rejoinNeeded && group.state === 'stable');
   const waitingForCommit = needsJoin && !joinGroup(ctx, consumer, subscription, hooks);
   return waitingForCommit &&
     rebalanceProtocol(consumer.config.partitionAssignmentStrategy) === 'eager'
@@ -171,6 +203,11 @@ function leaderMetadataChanged(consumer: ConsumerState): boolean {
 /**
  * joinGroupIfNeeded: onJoinPrepare, then JoinGroup. Returns false when JoinGroup has to wait for
  * onJoinPrepare's auto-commit to be answered (it goes out at the poll() after that).
+ *
+ * ConsumerCoordinator#onJoinPrepare sends that commit only while autoCommitOffsetRequestFuture is
+ * null and keeps the future until it is done, so a rebalance commits once. A cooperative member
+ * keeps fetching meanwhile; committing its newer positions again at every poll() would never let
+ * the JoinGroup out (the M3 livelock, M4-decisions D1).
  */
 function joinGroup(
   ctx: EngineContext,
@@ -179,15 +216,21 @@ function joinGroup(
   hooks: PollHooks,
 ): boolean {
   const { group, config } = consumer;
-  const lost = group.generation < 0 || group.memberId === '';
-  if (!lost && config.enableAutoCommit) {
-    const commitId = commitPositions(ctx, consumer, ownedKeys(consumer));
-    if (commitId !== null) {
-      group.prepareCommitId = commitId;
-      return false;
+  if (group.needsJoinPrepare) {
+    const lost = group.generation < 0 || group.memberId === '';
+    if (!lost && config.enableAutoCommit && !group.prepareCommitDone) {
+      const commitId = commitPositions(ctx, consumer, ownedKeys(consumer));
+      if (commitId !== null) {
+        group.prepareCommitId = commitId;
+        startJoinPrepareTimer(ctx, consumer);
+        return false;
+      }
     }
+    group.prepareCommitDone = false;
+    group.joinPrepareToken += 1;
+    onJoinPrepare(ctx, consumer, subscription, lost, hooks);
+    group.needsJoinPrepare = false;
   }
-  onJoinPrepare(ctx, consumer, subscription, lost, hooks);
   const reason: JoinReason = group.memberId === '' ? 'new-member' : group.rejoinReason;
   const metadata: MemberMetadata = {
     protocols: config.partitionAssignmentStrategy,
@@ -199,6 +242,7 @@ function joinGroup(
   };
   group.state = 'preparing';
   group.rejoinNeeded = false;
+  group.joinRetry = false;
   group.joinedSubscription = [...subscription];
   group.heartbeatToken += 1; // the heartbeat thread is disabled while the JoinGroup is pending
   send(ctx, consumer, { api: 'JoinGroup', memberId: group.memberId, metadata, reason });
@@ -250,6 +294,7 @@ function onJoinComplete(ctx: EngineContext, consumer: ConsumerState, hooks: Poll
   group.pendingAssignment = null;
   group.generation = result.generation;
   group.state = 'stable';
+  group.needsJoinPrepare = true; // joinGroupIfNeeded, after onJoinComplete
   const assigned = new Set(result.partitions.map(tpKey));
   const before = new Set(group.owned.map(tpKey));
   const revoked = group.owned.filter((tp) => !assigned.has(tpKey(tp)));
@@ -319,7 +364,7 @@ function onJoinResponse(
   hooks: PollHooks,
 ): void {
   const { group } = consumer;
-  if (group.state !== 'preparing') return;
+  if (group.state !== 'preparing' || group.joinRetry) return;
   if (response.error !== null) {
     switch (response.error) {
       case 'INCONSISTENT_GROUP_PROTOCOL':
@@ -334,14 +379,16 @@ function onJoinResponse(
         break;
       case 'REBALANCE_IN_PROGRESS':
       case 'COORDINATOR_NOT_AVAILABLE':
-        group.state = group.generation < 0 ? 'unjoined' : 'stable';
-        requestRejoin(consumer, 'rejoin-after-error');
+        retryJoin(consumer, 'rejoin-after-error');
         break;
     }
     hooks.wake(consumer);
     return;
   }
+  // JoinGroupResponseHandler: the new generation (and member id) take effect now, so heartbeats
+  // sent while SyncGroup is pending carry it (M4-decisions D2).
   group.memberId = response.memberId;
+  group.generation = response.generation;
   group.state = 'completing';
   group.protocol = response.protocol as Assignor;
   group.isLeader = response.leader === response.memberId;
@@ -376,17 +423,17 @@ function onSyncResponse(
   hooks: PollHooks,
 ): void {
   const { group } = consumer;
-  if (group.state !== 'completing') return;
+  if (group.state !== 'completing' || group.joinRetry) return;
   if (response.error !== null) {
     if (response.error === 'UNKNOWN_MEMBER_ID') resetGeneration(consumer, true);
     else if (response.error === 'ILLEGAL_GENERATION') resetGeneration(consumer, false);
-    else {
-      group.state = group.generation < 0 ? 'unjoined' : 'stable';
-      requestRejoin(consumer, 'rebalance-in-progress');
-    }
+    else retryJoin(consumer, 'rebalance-in-progress');
     hooks.wake(consumer);
     return;
   }
+  // SyncGroupResponseHandler sets the state to STABLE on the network thread: commits and heartbeats
+  // from here on use the new generation, before poll() applies the assignment (onJoinComplete).
+  group.state = 'stable';
   group.pendingAssignment = {
     generation: response.generation,
     partitions: [...response.assignment].sort(comparePartitions),
@@ -471,6 +518,33 @@ export function handleConsumerPollTimeout(
   if (task.token !== group.pollTimeoutToken || group.memberId === '') return;
   send(ctx, consumer, { api: 'LeaveGroup', memberId: group.memberId, reason: 'poll-timeout' });
   resetGeneration(consumer, true);
+}
+
+/** joinPrepareTimer: onJoinPrepare waits at most rebalance.timeout.ms for its commit. */
+function startJoinPrepareTimer(ctx: EngineContext, consumer: ConsumerState): void {
+  consumer.group.joinPrepareToken += 1;
+  ctx.kernel.scheduleIn(consumer.config.maxPollIntervalMs, {
+    type: 'ConsumerJoinPrepareTimeout',
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    token: consumer.group.joinPrepareToken,
+  });
+}
+
+/**
+ * ConsumerCoordinator#onJoinPrepare: "Asynchronous auto-commit of offsets failed: joinPrepare
+ * timeout. Will continue to join group". The late answer, if it comes, is ignored.
+ */
+export function handleConsumerJoinPrepareTimeout(
+  consumer: ConsumerState,
+  task: Task<'ConsumerJoinPrepareTimeout'>,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  if (task.token !== group.joinPrepareToken || group.prepareCommitId === null) return;
+  group.prepareCommitId = null;
+  group.prepareCommitDone = true;
+  hooks.wake(consumer);
 }
 
 // ── Leaving ───────────────────────────────────────────────────────────────────────────────────
@@ -582,8 +656,10 @@ function onCommitResponse(
       requestRejoin(consumer, 'rebalance-in-progress');
   }
   if (response.commitId === group.prepareCommitId) {
-    // onJoinPrepare's commit is done (or failed): the JoinGroup can go out at the next poll().
+    // onJoinPrepare's commit is done (or failed): the JoinGroup goes out at the next poll(),
+    // without another commit.
     group.prepareCommitId = null;
+    group.prepareCommitDone = true;
     hooks.wake(consumer);
   }
   hooks.commitAnswered(consumer, response.commitId);
