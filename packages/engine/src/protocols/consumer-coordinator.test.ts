@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { createEngineInternal } from '../engine.ts';
 import type { EngineEvent } from '../events/index.ts';
 import type { CoordinatorResponse } from '../model/tasks.ts';
+import { commitPositions } from './consumer-coordinator.ts';
 
 const ofType = <T extends EngineEvent['type']>(events: EngineEvent[], type: T) =>
   events.filter((e): e is Extract<EngineEvent, { type: T }> => e.type === type);
@@ -253,7 +254,6 @@ describe('generation from the JoinGroup answer (M4-T0, F-2)', () => {
     const { c1, context } = firstJoinAnswered();
     expect(c1.group.generation).toBe(context.state.groups.get('g')?.generation);
     expect(c1.group.generation).toBe(1);
-    expect(c1.group.synced).toBe(false);
   });
 
   it('a successful SyncGroup makes the member stable before poll() applies the assignment', () => {
@@ -261,31 +261,84 @@ describe('generation from the JoinGroup answer (M4-T0, F-2)', () => {
     for (let i = 0; i < 10_000 && c1.group.pendingAssignment === null; i++) engine.step();
     // The SyncGroup answer arrived; poll() has not run onJoinComplete yet.
     expect(c1.group.state).toBe('stable');
-    expect(c1.group.synced).toBe(true);
     expect(c1.group.owned).toEqual([]);
     expect(engine.getSnapshot().consumers[0]?.status).toBe('joining');
   });
 
-  it('a first-join SyncGroup REBALANCE_IN_PROGRESS leaves the member unjoined, not idle', () => {
+  it('a first-join SyncGroup REBALANCE_IN_PROGRESS keeps the member joining, not idle', () => {
     const { engine, c1, deliver } = firstJoinAnswered();
     deliver({ api: 'SyncGroup', error: 'REBALANCE_IN_PROGRESS' });
     engine.step();
-    expect(c1.group.state).toBe('unjoined');
+    expect(c1.group.state).toBe('completing');
+    expect(c1.group.joinRetry).toBe(true);
     expect(engine.getSnapshot().consumers[0]?.status).toBe('joining');
     engine.runUntil(10_000); // it joins again and gets the partitions
     expect(c1.group.state).toBe('stable');
     expect(c1.group.owned).toHaveLength(2);
   });
 
-  it('a member that already synced falls back to its current assignment on that error', () => {
-    const { engine, c1, deliver } = stable();
-    expect(c1.group.synced).toBe(true);
-    c1.group.state = 'completing';
+  it('a failed SyncGroup leaves a member COMPLETING in the new generation: no commits, and the retry skips onJoinPrepare', () => {
+    // A cooperative member that owns both partitions rejoins; its SyncGroup for generation 2 fails.
+    const { engine, context, c1, events, deliver } = stable(1, {
+      partitionAssignmentStrategy: ['cooperative-sticky'],
+    });
+    const memberId = c1.group.memberId;
+    c1.group.rejoinNeeded = true;
+    c1.group.rejoinReason = 'metadata-change';
+    for (let i = 0; i < 10_000 && c1.group.state !== 'completing'; i++) engine.step();
+    expect(c1.group.generation).toBe(2);
     deliver({ api: 'SyncGroup', error: 'REBALANCE_IN_PROGRESS' });
     engine.step();
-    expect(c1.group.state).toBe('stable');
-    expect(c1.group.rejoinNeeded).toBe(true);
+
+    // Kafka 4.x: the error is only raised; state, member id, generation and partitions stay.
+    expect(c1.group).toMatchObject({
+      state: 'completing',
+      joinRetry: true,
+      memberId,
+      generation: 2,
+    });
     expect(c1.group.owned).toHaveLength(2);
+    expect(c1.group.needsJoinPrepare).toBe(false);
+    expect(engine.getSnapshot().consumers[0]?.status).toBe('joining');
+
+    // Not STABLE, so a commit fails on the client (generationIfStable() is null).
+    const key = 'orders-0';
+    const position = c1.positions.get(key);
+    if (position === undefined) throw new Error('no position');
+    c1.positions.set(key, { ...position, offset: position.offset + 1 });
+    expect(commitPositions(context, c1, [key])).toBeNull();
+    expect(ofType(events, 'CommitFailed').at(-1)).toMatchObject({
+      error: 'REBALANCE_IN_PROGRESS',
+      generation: 2,
+    });
+
+    // The next poll() sends JoinGroup again with the same member id and no pre-rebalance commit.
+    const requests = context.state.counters.commit;
+    for (let i = 0; i < 10_000 && c1.group.state !== 'preparing'; i++) engine.step();
+    expect(c1.group.memberId).toBe(memberId);
+    expect(context.state.counters.commit).toBe(requests);
+    engine.runUntil(engine.now() + 5000);
+    expect(c1.group.state).toBe('stable');
+    expect(c1.group.generation).toBe(3);
+    // No commit was accepted for generation 2 after the failure.
+    expect(
+      ofType(events, 'OffsetCommitted').filter((e) => e.generation === 2 && e.consumerId === 'c1'),
+    ).toEqual([]);
+  });
+
+  it('a reset clears needsJoinPrepare, an in-flight prepare commit and its timer', () => {
+    const { engine, c1, deliver } = stable();
+    c1.group.needsJoinPrepare = false;
+    c1.group.prepareCommitId = 99;
+    const token = c1.group.joinPrepareToken;
+    deliver({ api: 'Heartbeat', error: 'UNKNOWN_MEMBER_ID' });
+    engine.step();
+    expect(c1.group).toMatchObject({
+      needsJoinPrepare: true,
+      prepareCommitId: null,
+      joinRetry: false,
+    });
+    expect(c1.group.joinPrepareToken).toBe(token + 1);
   });
 });
 

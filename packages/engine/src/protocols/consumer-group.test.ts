@@ -312,6 +312,51 @@ describe('liveness under load (M4-T0 regressions, F-1 / F-2)', () => {
   });
 });
 
+describe('a SyncGroup that fails because the group rebalances again (M4-T0, review of #42)', () => {
+  // Two cooperative members on 4 partitions; c3 joins at 10 s. c4 joins 2 ms before that
+  // rebalance would complete, so its JoinGroup lands while the group waits for SyncGroup. At
+  // 300 msg/s the members consume something inside that window, so their pre-rebalance commit is
+  // not skipped (at 100 msg/s, nothing new arrives in the 2 ms here).
+  const extra = { partitionAssignmentStrategy: ['cooperative-sticky' as const] };
+  function run(c4At: number | null) {
+    const engine = createEngine({ seed: 1, topology: group(2, extra, 4, 300) });
+    const events = record(engine);
+    const add = (id: string) => {
+      engine.dispatch({
+        type: 'AddComponent',
+        component: { kind: 'consumer', id, groupId: 'g', autoOffsetReset: 'earliest', ...extra },
+      });
+      engine.dispatch({ type: 'Connect', from: 'orders', to: id });
+    };
+    engine.runUntil(10_000);
+    add('c3');
+    if (c4At !== null) {
+      engine.runUntil(c4At);
+      add('c4');
+    }
+    engine.runUntil(40_000);
+    return events;
+  }
+
+  it('no commit is accepted for a generation that never completed', () => {
+    const completesAt = ofType(run(null), 'RebalanceCompleted').find((e) => e.t > 10_000)?.t;
+    expect(completesAt).toBeDefined();
+    const events = run((completesAt ?? 0) - 2);
+    const completed = new Set(ofType(events, 'RebalanceCompleted').map((e) => e.generation));
+    // The race happened: some generation was started but never completed.
+    const started = ofType(events, 'RebalanceStarted').map((e) => e.generation + 1);
+    expect(started.some((g) => !completed.has(g))).toBe(true);
+    // Before the fix the members that had synced before fell back to STABLE in that generation and
+    // their commits for it were accepted (the coordinator accepts them while PreparingRebalance).
+    for (const e of ofType(events, 'OffsetCommitted')) {
+      expect(completed.has(e.generation), `${e.consumerId} gen ${String(e.generation)}`).toBe(true);
+    }
+    // And the group still gets everyone in (liveness).
+    const last = ofType(events, 'RebalanceCompleted').at(-1);
+    expect(last?.members.map((m) => m.consumerId).sort()).toEqual(['c1', 'c2', 'c3', 'c4']);
+  });
+});
+
 describe('subscriptions and metadata', () => {
   it('a new partition is picked up by a rebalance once the leader refreshes its metadata', () => {
     const engine = createEngine({ seed: 1, topology: group(2, { metadataMaxAgeMs: 10_000 }) });

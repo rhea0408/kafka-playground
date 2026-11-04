@@ -123,10 +123,16 @@ export interface ClientGroupState {
    */
   prepareCommitDone: boolean;
   /**
-   * Whether the member has completed a SyncGroup since it last got a member id or was reset, i.e.
-   * it has an assignment (possibly still waiting for poll() to apply it).
+   * AbstractCoordinator#needsJoinPrepare: the next joinGroup() runs onJoinPrepare (commit, revoke)
+   * first. False from the end of onJoinPrepare until the join completes (onJoinComplete) or the
+   * member is reset, so a retry after a failed JoinGroup or SyncGroup goes straight to JoinGroup.
    */
-  synced: boolean;
+  needsJoinPrepare: boolean;
+  /**
+   * The last JoinGroup or SyncGroup failed without a reset: the member stays PREPARING or
+   * COMPLETING (not stable, so commits fail locally) and the next poll() sends JoinGroup again.
+   */
+  joinRetry: boolean;
   /** Owned partitions and generation sent in JoinGroup (eager members have revoked theirs). */
   lastOwned: TopicPartition[];
   lastOwnedGeneration: number;
@@ -152,7 +158,8 @@ export function createClientGroupState(): ClientGroupState {
     pendingAssignment: null,
     prepareCommitId: null,
     prepareCommitDone: false,
-    synced: false,
+    needsJoinPrepare: true,
+    joinRetry: false,
     lastOwned: [],
     lastOwnedGeneration: -1,
     heartbeatToken: 0,
