@@ -22,7 +22,12 @@ const ofType = <T extends EngineEvent['type']>(events: EngineEvent[], type: T) =
   events.filter((e): e is Extract<EngineEvent, { type: T }> => e.type === type);
 
 /** `n` consumers in group "g" on topic "orders" (3 partitions), fed by p1 at 10 msg/s. */
-function group(n: number, extra: ConsumerExtra = {}, partitions = 3): TopologyInput {
+function group(
+  n: number,
+  extra: ConsumerExtra = {},
+  partitions = 3,
+  ratePerSec = 10,
+): TopologyInput {
   const ids = Array.from({ length: n }, (_, i) => `c${String(i + 1)}`);
   return {
     brokers: [{ kind: 'broker', id: 'b1' }],
@@ -31,7 +36,7 @@ function group(n: number, extra: ConsumerExtra = {}, partitions = 3): TopologyIn
       {
         kind: 'producer',
         id: 'p1',
-        ratePerSec: 10,
+        ratePerSec,
         keyStrategy: { type: 'random', keys: ['D', 'E', 'F'] }, // partitions 0, 1, 2
       },
     ],
@@ -241,6 +246,69 @@ describe('failure detection', () => {
     const lost = ofType(events, 'PartitionsLost');
     expect(lost).toMatchObject([{ consumerId: 'c2' }]);
     expect(lost[0]?.t).toBe((firstC2?.t ?? 0) + 20_000);
+  });
+});
+
+describe('liveness under load (M4-T0 regressions, F-1 / F-2)', () => {
+  // 3 partitions, c1 and c2 busy (250 records × 20 ms per poll at 200 msg/s); c3 joins at 20 s.
+  function loaded(strategy: Assignor, commitMode: 'auto' | 'sync-after-processing') {
+    const extra = {
+      partitionAssignmentStrategy: [strategy],
+      processingTimeMs: 20,
+      maxPollRecords: 250,
+      commitMode,
+      enableAutoCommit: commitMode === 'auto',
+    };
+    const engine = createEngine({ seed: 1, topology: group(2, extra, 3, 200) });
+    const events = record(engine);
+    engine.runUntil(20_000);
+    engine.dispatch({
+      type: 'AddComponent',
+      component: {
+        kind: 'consumer',
+        id: 'c3',
+        groupId: 'g',
+        autoOffsetReset: 'earliest',
+        ...extra,
+      },
+    });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c3' });
+    engine.runUntil(80_000);
+    const last = ofType(events, 'RebalanceCompleted').at(-1);
+    const shares = last?.members.map((m) => `${m.consumerId}=${String(m.partitions.length)}`);
+    return { events, last, shares };
+  }
+
+  it.each(['cooperative-sticky', 'range'] as const)(
+    '%s + auto-commit: the group takes c3 in without removing anyone',
+    (strategy) => {
+      const { events, last, shares } = loaded(strategy, 'auto');
+      // F-1: cooperative members re-sent the onJoinPrepare commit at every poll() and never
+      // joined, so both were removed after the rebalance timeout.
+      expect(ofType(events, 'MemberRemoved')).toEqual([]);
+      expect(ofType(events, 'PartitionsLost')).toEqual([]);
+      expect(shares?.sort()).toEqual(['c1=1', 'c2=1', 'c3=1']);
+      expect(last?.t).toBeLessThan(20_000 + 30_000);
+    },
+  );
+
+  it('cooperative + sync-after-processing: two rebalances (KIP-429), nothing lost or duplicated', () => {
+    const { events, shares } = loaded('cooperative-sticky', 'sync-after-processing');
+    // F-2: a member still processing when the JoinGroup answer came heartbeated with the old
+    // generation, got ILLEGAL_GENERATION and lost its partitions (an extra generation).
+    expect(ofType(events, 'PartitionsLost')).toEqual([]);
+    expect(ofType(events, 'RebalanceCompleted').map((e) => e.generation)).toEqual([1, 2, 3]);
+    expect(ofType(events, 'DuplicateProcessed')).toEqual([]);
+    expect(shares?.sort()).toEqual(['c1=1', 'c2=1', 'c3=1']);
+    // The window Kafka allows (M4-decisions D3): c1 is STABLE in generation 2 once SyncGroup is
+    // answered and commits P2, which generation 2 no longer gives it, before poll() revokes P2.
+    const revokedAt = ofType(events, 'PartitionsRevoked').find(
+      (e) => e.consumerId === 'c1' && e.partitions.some((p) => p.partition === 2),
+    )?.t;
+    const windowCommit = ofType(events, 'OffsetCommitted').find(
+      (e) => e.consumerId === 'c1' && e.partition === 2 && e.generation === 2,
+    );
+    expect(windowCommit?.t).toBeLessThanOrEqual(revokedAt ?? -1);
   });
 });
 

@@ -115,14 +115,26 @@ export interface ClientGroupState {
   leaderCounts: Map<string, number> | null;
   /** A SyncGroup answer waiting for the application's next poll() to take effect. */
   pendingAssignment: { readonly generation: number; readonly partitions: TopicPartition[] } | null;
-  /** onJoinPrepare: JoinGroup waits until this commit is answered. */
+  /** onJoinPrepare: JoinGroup waits until this commit is answered (autoCommitOffsetRequestFuture). */
   prepareCommitId: number | null;
+  /**
+   * onJoinPrepare's commit was answered, or its wait timed out: the next joinGroup() goes straight
+   * to JoinGroup instead of committing again. Cleared when JoinGroup is sent and on a reset.
+   */
+  prepareCommitDone: boolean;
+  /**
+   * Whether the member has completed a SyncGroup since it last got a member id or was reset, i.e.
+   * it has an assignment (possibly still waiting for poll() to apply it).
+   */
+  synced: boolean;
   /** Owned partitions and generation sent in JoinGroup (eager members have revoked theirs). */
   lastOwned: TopicPartition[];
   lastOwnedGeneration: number;
   /** Only the heartbeat / poll-timeout task carrying the current token runs. */
   heartbeatToken: number;
   pollTimeoutToken: number;
+  /** Only the join-prepare timeout task carrying the current token runs. */
+  joinPrepareToken: number;
 }
 
 export function createClientGroupState(): ClientGroupState {
@@ -139,10 +151,13 @@ export function createClientGroupState(): ClientGroupState {
     leaderCounts: null,
     pendingAssignment: null,
     prepareCommitId: null,
+    prepareCommitDone: false,
+    synced: false,
     lastOwned: [],
     lastOwnedGeneration: -1,
     heartbeatToken: 0,
     pollTimeoutToken: 0,
+    joinPrepareToken: 0,
   };
 }
 
