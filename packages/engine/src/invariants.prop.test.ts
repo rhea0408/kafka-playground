@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { replayCommandLog } from './engine.ts';
 import type { EngineEvent } from './events/index.ts';
 import { stepsArb, topologyArb } from './testing/arbitraries.ts';
+import { commitViolations, cooperativeCoverageViolations } from './testing/group-checks.ts';
 import { runScenario } from './testing/run.ts';
 
 const seedArb = fc.integer({ min: 0, max: 0xffffffff });
@@ -273,58 +274,22 @@ describe('engine invariants (fast-check)', { timeout: 30_000 }, () => {
   });
 
   it('an accepted commit comes from a member of the current generation that owns the partition, or still holds it from the previous one', () => {
-    // ClassicGroup#validateOffsetCommit checks only the member id and the generation, never who
-    // owns the partition. A cooperative member is STABLE in generation N+1 as soon as SyncGroup is
-    // answered, but revokes the partitions it gives up only at its next poll() (onJoinComplete),
-    // so until it emits PartitionsRevoked it may still commit them, with generation N+1. Nobody
-    // else can own them in N+1: they move only in the follow-up rebalance (KIP-429). See
-    // M4-decisions D3.
+    // See commitViolations (M4-decisions D3).
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
-        const { events } = runScenario(seed, topology, steps);
-        type Gen = { generation: number; owner: Map<string, string> };
-        /** Per group: the last two completed generations and who owns what in them. */
-        const current = new Map<string, Gen>();
-        const previous = new Map<string, Gen>();
-        /** Per consumer: partitions assigned by the rebalance listener and not yet taken back. */
-        const held = new Map<string, Set<string>>();
-        /** Per group, generation and partition: the one member that committed it. */
-        const committer = new Map<string, string>();
-        for (const e of events) {
-          if (e.type === 'RebalanceCompleted') {
-            const owner = new Map<string, string>();
-            for (const m of e.members) for (const p of m.partitions) owner.set(tp(p), m.memberId);
-            const last = current.get(e.groupId);
-            if (last !== undefined) previous.set(e.groupId, last);
-            current.set(e.groupId, { generation: e.generation, owner });
-          } else if (e.type === 'PartitionsAssigned') {
-            const set = held.get(e.consumerId) ?? new Set<string>();
-            for (const p of e.partitions) set.add(tp(p));
-            held.set(e.consumerId, set);
-          } else if (e.type === 'PartitionsRevoked' || e.type === 'PartitionsLost') {
-            for (const p of e.partitions) held.get(e.consumerId)?.delete(tp(p));
-          } else if (e.type === 'ConsumerStopped' || e.type === 'ConsumerStarted') {
-            held.delete(e.consumerId);
-          } else if (
-            (e.type === 'ComponentRemoved' || e.type === 'ComponentAdded') &&
-            e.component.kind === 'consumer'
-          ) {
-            held.delete(e.component.id);
-          } else if (e.type === 'OffsetCommitted') {
-            const g = current.get(e.groupId);
-            expect(e.memberId).not.toBeNull();
-            expect(e.generation).toBe(g?.generation);
-            const ownsNow = g?.owner.get(tp(e)) === e.memberId;
-            const stillHolds =
-              previous.get(e.groupId)?.owner.get(tp(e)) === e.memberId &&
-              held.get(e.consumerId)?.has(tp(e)) === true;
-            expect(ownsNow || stillHolds).toBe(true);
-            // Within one generation only one member commits a given partition.
-            const key = `${e.groupId}|${String(e.generation)}|${tp(e)}`;
-            expect(committer.get(key) ?? e.memberId).toBe(e.memberId);
-            if (e.memberId !== null) committer.set(key, e.memberId);
-          }
-        }
+        expect(commitViolations(runScenario(seed, topology, steps).events)).toEqual([]);
+      }),
+      { numRuns: NUM_RUNS },
+    );
+  });
+
+  it('a cooperative assignment leaves a partition unowned only while a member still holds it', () => {
+    // See cooperativeCoverageViolations (review F-4).
+    fc.assert(
+      fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+        expect(cooperativeCoverageViolations(runScenario(seed, topology, steps).events)).toEqual(
+          [],
+        );
       }),
       { numRuns: NUM_RUNS },
     );
