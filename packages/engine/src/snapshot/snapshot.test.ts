@@ -156,6 +156,8 @@ describe('member status and session (M4-T0, review F-6 / F-7)', () => {
     });
     const deadline = member?.sessionExpiresAt ?? -1;
     expect(deadline).toBe(alive);
+    // The member belongs to the life that crashed: the consumer's incarnation has moved on.
+    expect(member?.incarnation).not.toBe(engine.getSnapshot().consumers[0]?.incarnation);
     expect(deadline).toBeGreaterThan(3600);
     engine.runUntil(deadline);
     expect(removed).toMatchObject([{ t: deadline, consumerId: 'c1', reason: 'session-timeout' }]);

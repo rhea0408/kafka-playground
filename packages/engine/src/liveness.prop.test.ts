@@ -121,14 +121,30 @@ function run(seed: number, { s, steps }: Scenario) {
 }
 
 /**
- * Cases per CI run. Each case simulates minutes of a busy group, and coverage instrumentation
- * makes that about 4× slower, so CI runs 50. Raise it locally for a deeper search: 1500 and 2000
- * cases found nothing beyond M4-decisions L1–L3 (about 4 and 6 minutes without coverage).
+ * Cases per run: KP_LIVENESS_RUNS, default 50. Each case simulates minutes of a busy group, and
+ * coverage instrumentation makes that about 4× slower, so the PR job runs 50; the nightly job
+ * (.github/workflows/nightly.yml) runs 1000 without coverage. That deep search is how L1–L3 were
+ * found: 1500 and 2000 cases take about 4 and 6 minutes locally. The engine has no Node types, so
+ * the environment is read through globalThis (test-only code).
  */
-const RUNS = 50;
+const RUNS = runsFromEnv(
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[
+    'KP_LIVENESS_RUNS'
+  ],
+);
 
-describe('consumer group liveness (fast-check)', { timeout: 300_000 }, () => {
-  it('busy members that can join within the rebalance timeout end in a Stable group', () => {
+function runsFromEnv(value: string | undefined): number {
+  if (value === undefined || value === '') return 50;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new Error(`KP_LIVENESS_RUNS must be a positive integer`);
+  return n;
+}
+
+/** About 0.3 s per case without coverage, 1.2 s with; generous so slow CI runners pass too. */
+const TIMEOUT_MS = Math.max(300_000, RUNS * 2_000);
+
+describe('consumer group liveness (fast-check)', { timeout: TIMEOUT_MS }, () => {
+  it('busy members that can join within the rebalance timeout end in a Stable group, never removed', () => {
     fc.assert(
       fc.property(seedArb, scenarioArb, (seed, scenario) => {
         const { settings } = scenario.s;
@@ -156,8 +172,9 @@ describe('consumer group liveness (fast-check)', { timeout: 300_000 }, () => {
         const running = snapshot.consumers.filter(
           (c) => c.status !== 'stopped' && c.status !== 'crashed' && c.config.groupId === 'g',
         );
-        // Consumers that ran the whole time (never killed, stopped or restarted) must never miss
-        // the rebalance timeout.
+        // Consumers that ran the whole time (never killed, stopped or restarted) must never be
+        // removed, for any reason: the precondition rules out the poll and join/sync timeouts,
+        // and their heartbeat threads keep the session alive (this also catches heartbeat bugs).
         const steady = new Set(running.map((c) => c.config.id));
         for (const e of events) {
           if (e.type === 'ConsumerStopped' || e.type === 'ConsumerStarted') {
@@ -165,8 +182,7 @@ describe('consumer group liveness (fast-check)', { timeout: 300_000 }, () => {
           }
         }
         const removed = events.filter(
-          (e): e is Extract<EngineEvent, { type: 'MemberRemoved' }> =>
-            e.type === 'MemberRemoved' && e.reason === 'rebalance-timeout',
+          (e): e is Extract<EngineEvent, { type: 'MemberRemoved' }> => e.type === 'MemberRemoved',
         );
         for (const e of removed) expect(steady.has(e.consumerId), JSON.stringify(e)).toBe(false);
         if (running.length === 0) return;
@@ -185,8 +201,8 @@ describe('consumer group liveness (fast-check)', { timeout: 300_000 }, () => {
     // windows D3 allows (commits before onJoinComplete) and cooperative moves happen often.
     fc.assert(
       fc.property(seedArb, scenarioArb, (seed, scenario) => {
-        const { events } = run(seed, scenario);
-        expect(commitViolations(events)).toEqual([]);
+        const { events, networkDelayMs } = run(seed, scenario);
+        expect(commitViolations(events, networkDelayMs)).toEqual([]);
         expect(cooperativeCoverageViolations(events)).toEqual([]);
       }),
       { numRuns: RUNS },

@@ -337,15 +337,17 @@ const secondsLeft = (ms: number): string => `${(Math.max(0, ms) / 1000).toFixed(
  * chips (not color alone: the words say "held"), and how long until its session times out. The
  * coordinator only notices the crash when no heartbeat arrives for session.timeout.ms
  * (GroupMetadataManager#expireClassicGroupMemberHeartbeat); until then nobody reads these
- * partitions. A member whose JoinGroup was parked when it died has no session deadline: the
- * coordinator drops it when the join phase times out (the rebalance timeout).
+ * partitions. A member whose JoinGroup (or SyncGroup) was parked when it died has no deadline
+ * yet: the parked request counts as a heartbeat, the join phase does not wait for it, and its
+ * session timer starts when that wait ends (completeJoin re-arms it; K4). The countdown appears
+ * as soon as the snapshot carries the deadline.
  */
 function HeldChips({ held }: { held: HeldByCoordinator }) {
   const t = useSimTime();
   const labels = held.labels === '' ? [] : held.labels.split(' ');
   const until =
     held.expiresAt === null
-      ? 'in group until rebalance timeout'
+      ? 'waiting for rebalance'
       : `timeout in ${secondsLeft(held.expiresAt - t)}`;
   return (
     <span className="flex min-w-0 items-center gap-1" data-slot="held">
@@ -359,11 +361,11 @@ function HeldChips({ held }: { held: HeldByCoordinator }) {
         </span>
       ))}
       <span className="min-w-0 truncate" data-slot="held-until" aria-hidden="true">
-        {labels.length > 0 ? `held · ${until}` : until}
+        held · {until}
       </span>
       <span className="sr-only">
         {held.expiresAt === null
-          ? 'Still a member until the join phase times out (rebalance timeout)'
+          ? 'Held by the coordinator; its session timer starts when this rebalance ends'
           : `Held by the coordinator until its session times out, in ${secondsLeft(held.expiresAt - t)}`}
       </span>
     </span>
@@ -373,8 +375,8 @@ function HeldChips({ held }: { held: HeldByCoordinator }) {
 const heldTitle = (consumerId: string, held: HeldByCoordinator): string => {
   const parts = held.labels === '' ? 'no partitions yet' : held.labels.split(' ').join(', ');
   return held.expiresAt === null
-    ? `The coordinator still counts ${consumerId} as a member (${parts}): it was waiting in JoinGroup when it died, so the coordinator drops it when the join phase times out (the rebalance timeout).`
-    : `The coordinator still assigns ${parts} to ${consumerId}: it only notices the crash when no heartbeat arrives for session.timeout.ms. Until then nobody reads these partitions; then the group rebalances.`;
+    ? `The coordinator still counts an earlier ${consumerId} process as a member (${parts}). It was waiting in JoinGroup when it died, which counts as a heartbeat. Its session timer starts when this rebalance's join phase ends, and it's removed one session timeout after that.`
+    : `The coordinator still assigns ${parts} to an earlier ${consumerId} process that died: it only notices when no heartbeat arrives for session.timeout.ms. Until then nobody reads these partitions; then the group rebalances.`;
 };
 
 /** Live part of a member row: status, owned partitions, position, committed offset, lag. */
@@ -419,13 +421,13 @@ export function ConsumerLive({ consumerId }: { consumerId: string }) {
         {s !== undefined && <LagBadge lag={s.lag} uncommitted={consumer?.uncommitted ?? 0} />}
       </div>
       <div className="flex min-w-0 items-center gap-1 font-mono text-[10px] text-status/70">
-        {consumer?.status === 'idle' ? (
+        {/* A restarted process can own partitions of its own while its earlier life is held. */}
+        {consumer?.status === 'idle' && held === undefined ? (
           <IdleChip />
-        ) : held !== undefined ? (
-          <HeldChips held={held} />
         ) : (
           consumer !== undefined && <PartitionChips labels={chipLabels(consumer)} />
         )}
+        {held !== undefined && <HeldChips held={held} />}
         <span className="min-w-0 truncate" data-slot="offsets">
           {s === undefined || s.partitions === 0
             ? ''

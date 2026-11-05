@@ -364,3 +364,95 @@ describe('no coordinator', () => {
 function kernelStep(engine: { step: () => boolean }): void {
   engine.step();
 }
+
+describe('auto-commit sends every position, moved or not (M4-T0, F-8)', () => {
+  it('a consumer with nothing new still commits each interval (allConsumed())', () => {
+    const { engine, events } = stable();
+    engine.dispatch({ type: 'RemoveComponent', id: 'p1' });
+    engine.runUntil(6000); // drain what was in flight
+    const from = events.length;
+    engine.runUntil(6000 + 3 * 5000); // auto.commit.interval.ms default 5000
+    const commits = ofType(events.slice(from), 'OffsetCommitted');
+    // Both partitions, at least once per interval, always the same offsets.
+    expect(commits.length).toBeGreaterThanOrEqual(3 * 2);
+    for (const partition of [0, 1]) {
+      const offsets = new Set(
+        commits.filter((c) => c.partition === partition).map((c) => c.offset),
+      );
+      expect(offsets.size).toBe(1);
+    }
+  });
+});
+
+describe('close() gives partitions up as lost when they may belong to others (M4-T0, F-9)', () => {
+  it('a zombie (member id reset) that closes emits PartitionsLost, not PartitionsRevoked', () => {
+    // c1 spends 5 s on each record, so it is processing when the coordinator forgets it.
+    const { engine, c1, events, deliver } = stable(1, {
+      processingTimeMs: 5000,
+      maxPollRecords: 1,
+    });
+    expect(c1.group.owned.length).toBeGreaterThan(0);
+    deliver({ api: 'Heartbeat', error: 'UNKNOWN_MEMBER_ID' });
+    engine.runUntil(engine.now() + 10);
+    expect(c1.group.memberId).toBe('');
+    expect(c1.group.owned.length).toBeGreaterThan(0); // still holds them until its next poll()
+    const from = events.length;
+    engine.dispatch({ type: 'StopConsumer', id: 'c1' });
+    engine.runUntil(engine.now() + 6000);
+    const after = events.slice(from);
+    expect(ofType(after, 'PartitionsLost')).toMatchObject([
+      { consumerId: 'c1', partitions: { length: 2 } },
+    ]);
+    expect(ofType(after, 'PartitionsRevoked')).toEqual([]);
+  });
+
+  it('a cooperative member that closes while its JoinGroup waits also loses them', () => {
+    // c2 spends 3 s per record, so a rebalance waits for it while c1 is already PREPARING
+    // (cooperative: c1 keeps its partitions while it rejoins).
+    const input = topology(2, { partitionAssignmentStrategy: ['cooperative-sticky'] });
+    const consumers = input.consumers?.map((c) =>
+      c.id === 'c2' ? { ...c, processingTimeMs: 3000, maxPollRecords: 1 } : c,
+    );
+    const { engine, context } = createEngineInternal({
+      seed: 1,
+      topology: { ...input, consumers },
+    });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    engine.runUntil(10_000);
+    const c1 = context.state.consumers.get('c1');
+    if (c1 === undefined) throw new Error('no c1');
+    expect(c1.group.state).toBe('stable');
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'consumer', id: 'c3', groupId: 'g', autoOffsetReset: 'earliest' },
+    });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c3' });
+    let t = engine.now();
+    while (!(c1.group.state === 'preparing' && c1.group.owned.length > 0) && t < 20_000) {
+      t += 10;
+      engine.runUntil(t);
+    }
+    expect(c1.group.state).toBe('preparing');
+    const owned = c1.group.owned.length;
+    const from = events.length;
+    engine.dispatch({ type: 'StopConsumer', id: 'c1' });
+    engine.runUntil(engine.now() + 100);
+    const after = events.slice(from).filter((e) => 'consumerId' in e && e.consumerId === 'c1');
+    expect(ofType(after, 'PartitionsLost')).toMatchObject([{ partitions: { length: owned } }]);
+    expect(ofType(after, 'PartitionsRevoked')).toEqual([]);
+  });
+
+  it('a stable member that closes still revokes (and its LeaveGroup goes out)', () => {
+    const { engine, events } = stable();
+    const from = events.length;
+    engine.dispatch({ type: 'StopConsumer', id: 'c1' });
+    engine.runUntil(engine.now() + 100);
+    const after = events.slice(from);
+    expect(ofType(after, 'PartitionsRevoked')).toMatchObject([
+      { consumerId: 'c1', partitions: { length: 2 } },
+    ]);
+    expect(ofType(after, 'PartitionsLost')).toEqual([]);
+    expect(ofType(after, 'MemberRemoved')).toMatchObject([{ consumerId: 'c1' }]);
+  });
+});

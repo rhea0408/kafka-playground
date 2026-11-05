@@ -9,9 +9,6 @@ import type { EngineEvent } from '../events/index.ts';
 
 const tp = (e: { topic: string; partition: number }) => `${e.topic}-${String(e.partition)}`;
 
-/** The engine's default one-way client↔broker delay (EngineConfig.networkDelayMs). */
-const DEFAULT_NETWORK_DELAY_MS = 1;
-
 /**
  * Partitions each consumer holds according to its rebalance listener: assigned and not yet
  * revoked or lost. A stop, start, removal or re-add starts it from nothing.
@@ -70,11 +67,11 @@ class Held {
  * PartitionsRevoked event, and Kafka accepts it. That is still safe, because the member's next
  * JoinGroup leaves after the commit and requests arrive in order, so the partition cannot move
  * first. (A commit sent after the revocation cannot name the partition: its position is dropped.)
+ *
+ * The window is exactly one network delay, so `networkDelayMs` must be the run's own (Run has
+ * it); there is no default, so a scenario with a slower network cannot silently use a wrong one.
  */
-export function commitViolations(
-  events: readonly EngineEvent[],
-  networkDelayMs = DEFAULT_NETWORK_DELAY_MS,
-): string[] {
+export function commitViolations(events: readonly EngineEvent[], networkDelayMs: number): string[] {
   type Gen = { generation: number; owner: Map<string, string> };
   const current = new Map<string, Gen>();
   const previous = new Map<string, Gen>();

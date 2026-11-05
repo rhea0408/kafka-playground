@@ -550,9 +550,14 @@ export function handleConsumerJoinPrepareTimeout(
 // ── Leaving ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * close() / unsubscribe(): partitions are revoked (after a synchronous auto-commit, which the
+ * close() / unsubscribe(): the partitions are given up (after a synchronous auto-commit, which the
  * caller does first) and LeaveGroup is sent if the member has an id. The client does not wait for
  * the LeaveGroup answer.
+ *
+ * ConsumerCoordinator#onLeavePrepare (4.0, trunk) calls onPartitionsLost instead of
+ * onPartitionsRevoked when the generation is reset or the member id unknown (a zombie, review F-9)
+ * or a rebalance is in progress (rebalanceInProgress(): PREPARING or COMPLETING, our
+ * isRebalancing): in each case the partitions may already belong to someone else.
  */
 export function leaveGroup(
   ctx: EngineContext,
@@ -562,8 +567,9 @@ export function leaveGroup(
 ): void {
   const { group, config } = consumer;
   if (group.owned.length > 0) {
+    const lost = group.generation < 0 || group.memberId === '' || isRebalancing(consumer);
     ctx.emit({
-      type: 'PartitionsRevoked',
+      type: lost ? 'PartitionsLost' : 'PartitionsRevoked',
       consumerId: config.id,
       groupId: config.groupId,
       partitions: group.owned,
@@ -578,8 +584,11 @@ export function leaveGroup(
 // ── Commits ───────────────────────────────────────────────────────────────────────────────────
 
 /**
- * ConsumerCoordinator#sendOffsetCommitRequest for the given partitions' positions. Positions equal
- * to the group's committed offset are skipped. A member outside a stable generation fails at once
+ * ConsumerCoordinator#sendOffsetCommitRequest for the given partitions' positions, all of them:
+ * auto-commit sends subscriptions.allConsumed() every interval even when nothing moved
+ * (maybeAutoCommitOffsetsAsync), and the client never reads the coordinator's committed offsets
+ * to skip any (review F-8). Nothing to send (no position) is a no-op success, as an empty offsets
+ * map is in Kafka (RequestFuture.voidSuccess()). A member outside a stable generation fails at once
  * without contacting the broker: REBALANCE_IN_PROGRESS while it rejoins, otherwise
  * CommitFailedException ("…not part of an active group…", K13). Returns the request id, or null
  * when nothing was sent.
@@ -589,12 +598,11 @@ export function commitPositions(
   consumer: ConsumerState,
   keys: readonly string[],
 ): number | null {
-  const { group, config } = consumer;
-  const committed = ctx.state.groups.get(config.groupId)?.committed;
+  const { group } = consumer;
   const offsets: CommitOffset[] = [];
   for (const key of keys) {
     const position = consumer.positions.get(key);
-    if (position === undefined || committed?.get(key) === position.offset) continue;
+    if (position === undefined) continue;
     const dash = key.lastIndexOf('-');
     offsets.push({
       topic: key.slice(0, dash),

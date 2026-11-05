@@ -81,11 +81,13 @@ export function consumer(
   id: string,
   partitions: readonly ConsumerPartitionSnapshot[],
   status: ConsumerSnapshot['status'] = 'stable',
+  incarnation = 1,
 ): ConsumerSnapshot {
   const inGroup = status === 'stable' || status === 'idle';
   return {
     config: parse({ kind: 'consumer', id }) as Consumer,
     status,
+    incarnation,
     stopping: false,
     memberId: inGroup ? `${id}-0000000a` : null,
     generation: inGroup ? 1 : null,
