@@ -344,6 +344,126 @@ describe('live node state (M2-T8)', () => {
   });
 });
 
+describe('unknown lag, held partitions and the zombie (M4-T0, review F-5 – F-7)', () => {
+  beforeEach(() => {
+    resetSimStore();
+    resetUiStore();
+    frame = 0;
+  });
+  afterEach(cleanup);
+
+  const groupPartition = (p: number, hw: number, committed: number | null) => ({
+    topic: 't1',
+    partition: p,
+    owner: null,
+    committed,
+    highWatermark: hw,
+    logEndOffset: hw,
+    lag: committed === null ? null : hw - committed,
+  });
+  const header = () => nodeEl(G1).querySelector<HTMLElement>('[data-slot="group-lag"]');
+  const c1Row = () => {
+    const r = nodeEl(G1).querySelector<HTMLElement>('[data-consumer-row="c1"]');
+    if (r === null) throw new Error('no row');
+    return r;
+  };
+
+  it('the group lag is a lower bound while partitions have no committed offset', () => {
+    const lagOf = (partitions: ReturnType<typeof groupPartition>[]) =>
+      fixtureSnapshot({
+        groups: [
+          {
+            ...groupWithCommits('c1-group', []),
+            partitions,
+            totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+            uncommitted: partitions.filter((p) => p.lag === null).length,
+          },
+        ],
+      });
+    const first = lagOf([groupPartition(0, 30, null), groupPartition(1, 20, null)]);
+    show(first);
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    // Nothing committed: unknown, not 0.
+    expect(header()?.textContent).toBe(
+      'group lag - · 2 uncommitted, unknown (2 partitions have no committed offset, so their lag is unknown)',
+    );
+    const second = lagOf([groupPartition(0, 30, 25), groupPartition(1, 20, null)]);
+    show(second, first);
+    expect(header()?.textContent).toContain('group lag ≥ 5 · 1 uncommitted');
+    expect(header()?.getAttribute('title')).toContain(
+      'at least 5 (1 partition has no committed offset',
+    );
+    show(lagOf([groupPartition(0, 30, 25), groupPartition(1, 20, 18)]), second);
+    expect(header()?.textContent).toBe('group lag 7');
+  });
+
+  it("a crashed member's row keeps the coordinator's partitions, greyed, with a countdown", () => {
+    const crashed = (t: number, sessionExpiresAt: number | null) =>
+      fixtureSnapshot({
+        t,
+        consumers: [consumer('c1', [], 'crashed')],
+        groups: [
+          {
+            ...groupWithCommits('c1-group', []),
+            state: 'Stable',
+            generation: 1,
+            protocol: 'range',
+            leader: 'c1-0000000a',
+            members: [
+              {
+                memberId: 'c1-0000000a',
+                consumerId: 'c1',
+                partitions: [
+                  { topic: 't1', partition: 0 },
+                  { topic: 't1', partition: 1 },
+                ],
+                sessionExpiresAt,
+              },
+            ],
+          },
+        ],
+      });
+    const a = crashed(4000, 10_200);
+    show(a);
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    const held = () => [...c1Row().querySelectorAll('[data-chip-held]')].map((c) => c.textContent);
+    const until = () => c1Row().querySelector('[data-slot="held-until"]')?.textContent;
+    expect(held()).toEqual(['P0', 'P1']);
+    expect(c1Row().querySelectorAll('[data-chip]')).toHaveLength(0);
+    expect(until()).toBe('held · timeout in 6.2 s');
+    expect(c1Row().querySelector('[data-status]')?.getAttribute('title')).toContain(
+      'only notices the crash',
+    );
+    // The clock moves; the deadline does not (no heartbeats).
+    const b = crashed(9000, 10_200);
+    show(b, a);
+    expect(until()).toBe('held · timeout in 1.2 s');
+    // Crashed while its JoinGroup was parked: no deadline.
+    const c = crashed(9500, null);
+    show(c, b);
+    expect(until()).toBe('held · in group until rebalance timeout');
+    // The coordinator removed it: nothing held any more.
+    show(fixtureSnapshot({ t: 10_300, consumers: [consumer('c1', [], 'crashed')] }), c);
+    expect(c1Row().querySelector('[data-slot="held"]')).toBeNull();
+  });
+
+  it('a member that left the group but still processes says so', () => {
+    show(
+      fixtureSnapshot({
+        consumers: [consumer('c1', [consumerPartition(2, 40, 31, 30)], 'left-group')],
+      }),
+    );
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    const r = c1Row();
+    expect(r.querySelector('[data-status]')?.getAttribute('data-status')).toBe('left-group');
+    expect(r.querySelector('[data-slot="status"]')?.textContent).toBe('⚠left group');
+    // It still holds P2 and keeps processing it.
+    expect([...r.querySelectorAll('[data-chip]')].map((c) => c.textContent)).toEqual(['P2']);
+    expect(r.querySelector('[data-slot="offsets"]')?.textContent).toBe('still processing · pos 31');
+    expect(r.querySelector('[data-status]')?.getAttribute('title')).toContain('its commits fail');
+  });
+});
+
 describe('<LagBadge> (A5)', () => {
   beforeEach(() => {
     resetUiStore();
@@ -390,6 +510,14 @@ describe('<LagBadge> (A5)', () => {
     const { rerender } = render(<LagBadge lag={0} />);
     rerender(<LagBadge lag={250} />);
     expect(number()).toBe('lag 250');
+  });
+
+  it('shows "≥ N" while some partitions have no committed offset (F-5)', () => {
+    render(<LagBadge lag={5} uncommitted={2} />);
+    expect(number()).toBe('lag ≥ 5');
+    expect(
+      screen.getByText('Lag at least 5; 2 partitions have no committed offset yet'),
+    ).toBeTruthy();
   });
 
   it('shows "-" when the group has no committed offset', () => {

@@ -34,8 +34,11 @@ import {
   useConsumerStatus,
   useCountUp,
   useGroup,
+  useHeldByCoordinator,
   usePartition,
   useProducerStats,
+  useSimTime,
+  type HeldByCoordinator,
 } from './use-live.ts';
 
 const useReducedMotion = (): boolean => useUiStore((s) => s.reducedMotion);
@@ -170,14 +173,19 @@ export function PartitionLive({ topicId, index }: { topicId: string; index: numb
  * always there, so the color is never the only signal (NFR-7.1). Screen readers get the real
  * value, not the counting one.
  */
-export function LagBadge({ lag }: { lag: number | null }) {
+export function LagBadge({ lag, uncommitted = 0 }: { lag: number | null; uncommitted?: number }) {
   const reduced = useReducedMotion();
   const shown = useCountUp(lag ?? 0, LAG_COUNT_MS, reduced);
   const danger = lag !== null && lag > LAG_DANGER_THRESHOLD;
+  // Some partitions without a committed offset: their lag is unknown, so the sum is a lower
+  // bound (review F-5), as kafka-consumer-groups prints "-" for them rather than 0.
+  const atLeast = lag !== null && uncommitted > 0;
   const label =
     lag === null
       ? 'Lag unknown: the group has no committed offset yet'
-      : `Lag ${formatCount(lag)}${danger ? `, above ${String(LAG_DANGER_THRESHOLD)}` : ''}`;
+      : `Lag ${atLeast ? 'at least ' : ''}${formatCount(lag)}${
+          danger ? `, above ${String(LAG_DANGER_THRESHOLD)}` : ''
+        }${atLeast ? `; ${partitionsText(uncommitted)} no committed offset yet` : ''}`;
   return (
     <span
       className={`ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-lg px-1.5 py-0.5 font-mono text-[10px] font-semibold whitespace-nowrap ${
@@ -185,17 +193,32 @@ export function LagBadge({ lag }: { lag: number | null }) {
       }`}
       data-slot="lag"
       data-lag={lag ?? ''}
+      data-uncommitted={uncommitted}
       data-danger={danger}
       title={`${label}. Lag = end offset (high watermark) − committed offset, summed over partitions.`}
     >
       {danger && <span aria-hidden="true">⚠&#xFE0E;</span>}
       <span aria-hidden="true" data-testid="lag-number">
-        lag {lag === null ? '-' : formatCount(shown)}
+        lag {lag === null ? '-' : `${atLeast ? '≥ ' : ''}${formatCount(shown)}`}
       </span>
       <span className="sr-only">{label}</span>
     </span>
   );
 }
+
+/** "1 partition has" / "2 partitions have". */
+const partitionsText = (n: number): string =>
+  n === 1 ? '1 partition has' : `${String(n)} partitions have`;
+
+/** The words shown for each consumer status. */
+const STATUS_LABEL: { readonly [S in ConsumerSnapshot['status']]: string } = {
+  joining: 'joining',
+  'left-group': 'left group',
+  stable: 'stable',
+  idle: 'idle',
+  stopped: 'stopped',
+  crashed: 'crashed',
+};
 
 /** Icon per consumer status; the status word is always shown next to it (never icon alone). */
 const STATUS_ICON: { readonly [S in ConsumerSnapshot['status']]: string } = {
@@ -211,7 +234,7 @@ function ConsumerStatus({ status }: { status: ConsumerSnapshot['status'] }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-0.5 text-[11px]" data-slot="status">
       <span aria-hidden="true">{STATUS_ICON[status]}</span>
-      {status}
+      {STATUS_LABEL[status]}
     </span>
   );
 }
@@ -306,16 +329,66 @@ function IdleChip() {
   );
 }
 
+/** Seconds left, one decimal: 6234 ms → "6.2 s". */
+const secondsLeft = (ms: number): string => `${(Math.max(0, ms) / 1000).toFixed(1)} s`;
+
+/**
+ * The partitions the coordinator still assigns to a crashed member (review F-6): greyed, dashed
+ * chips (not color alone: the words say "held"), and how long until its session times out. The
+ * coordinator only notices the crash when no heartbeat arrives for session.timeout.ms
+ * (GroupMetadataManager#expireClassicGroupMemberHeartbeat); until then nobody reads these
+ * partitions. A member whose JoinGroup was parked when it died has no session deadline: the
+ * coordinator drops it when the join phase times out (the rebalance timeout).
+ */
+function HeldChips({ held }: { held: HeldByCoordinator }) {
+  const t = useSimTime();
+  const labels = held.labels === '' ? [] : held.labels.split(' ');
+  const until =
+    held.expiresAt === null
+      ? 'in group until rebalance timeout'
+      : `timeout in ${secondsLeft(held.expiresAt - t)}`;
+  return (
+    <span className="flex min-w-0 items-center gap-1" data-slot="held">
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="shrink-0 rounded-sm border border-dashed border-border px-1 font-mono text-[10px] text-status/70"
+          data-chip-held={label}
+        >
+          {label}
+        </span>
+      ))}
+      <span className="min-w-0 truncate" data-slot="held-until" aria-hidden="true">
+        {labels.length > 0 ? `held · ${until}` : until}
+      </span>
+      <span className="sr-only">
+        {held.expiresAt === null
+          ? 'Still a member until the join phase times out (rebalance timeout)'
+          : `Held by the coordinator until its session times out, in ${secondsLeft(held.expiresAt - t)}`}
+      </span>
+    </span>
+  );
+}
+
+const heldTitle = (consumerId: string, held: HeldByCoordinator): string => {
+  const parts = held.labels === '' ? 'no partitions yet' : held.labels.split(' ').join(', ');
+  return held.expiresAt === null
+    ? `The coordinator still counts ${consumerId} as a member (${parts}): it was waiting in JoinGroup when it died, so the coordinator drops it when the join phase times out (the rebalance timeout).`
+    : `The coordinator still assigns ${parts} to ${consumerId}: it only notices the crash when no heartbeat arrives for session.timeout.ms. Until then nobody reads these partitions; then the group rebalances.`;
+};
+
 /** Live part of a member row: status, owned partitions, position, committed offset, lag. */
 export function ConsumerLive({ consumerId }: { consumerId: string }) {
   const consumer = useConsumer(consumerId);
+  const held = useHeldByCoordinator(consumerId);
   const s = consumer === undefined ? undefined : summarizeConsumer(consumer);
   const many = s !== undefined && s.partitions > 1;
   const total = many ? 'Σ ' : '';
+  const zombie = consumer?.status === 'left-group';
   const status =
     consumer === undefined
       ? ''
-      : `${consumer.status}${consumer.stopping ? ' (stopping)' : ''}${
+      : `${STATUS_LABEL[consumer.status]}${consumer.stopping ? ' (stopping)' : ''}${
           consumer.generation === null ? '' : ` in generation ${String(consumer.generation)}`
         }`;
   const title =
@@ -323,6 +396,12 @@ export function ConsumerLive({ consumerId }: { consumerId: string }) {
       ? `${consumerId}: not in the simulation yet`
       : [
           `${consumerId} · ${status} · ${formatCount(consumer.consumed)} records consumed`,
+          ...(zombie
+            ? [
+                `${consumerId} is out of the group (it missed max.poll.interval.ms, or the coordinator removed it) but still processes the batch it has. The coordinator may already have given these partitions to another member, and its commits fail. At its next poll() it loses them and rejoins.`,
+              ]
+            : []),
+          ...(held === undefined ? [] : [heldTitle(consumerId, held)]),
           `Position: next offset to read. Committed: saved for the group.${
             many ? ` Totals over ${String(s.partitions)} partitions:` : ''
           }`,
@@ -337,18 +416,22 @@ export function ConsumerLive({ consumerId }: { consumerId: string }) {
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="truncate font-medium">{consumerId}</span>
         {consumer !== undefined && <ConsumerStatus status={consumer.status} />}
-        {s !== undefined && <LagBadge lag={s.lag} />}
+        {s !== undefined && <LagBadge lag={s.lag} uncommitted={consumer?.uncommitted ?? 0} />}
       </div>
       <div className="flex min-w-0 items-center gap-1 font-mono text-[10px] text-status/70">
         {consumer?.status === 'idle' ? (
           <IdleChip />
+        ) : held !== undefined ? (
+          <HeldChips held={held} />
         ) : (
           consumer !== undefined && <PartitionChips labels={chipLabels(consumer)} />
         )}
         <span className="min-w-0 truncate" data-slot="offsets">
           {s === undefined || s.partitions === 0
             ? ''
-            : `${total}pos ${dash(s.position)} · ${total}committed ${dash(s.committed)}`}
+            : zombie
+              ? `still processing · ${total}pos ${dash(s.position)}`
+              : `${total}pos ${dash(s.position)} · ${total}committed ${dash(s.committed)}`}
         </span>
       </div>
       {s !== undefined && s.breakdown.length > 0 && (
@@ -394,7 +477,7 @@ export function GroupHeaderLive({ groupId }: { groupId: string }) {
       ? 'The group coordinator creates the group when its first member joins.'
       : `Coordinator state ${group.state}, generation ${String(group.generation)}${
           group.protocol === null ? '' : `, assignor ${group.protocol}`
-        }. Lag over the group: ${formatCount(group.totalLag)}.`;
+        }. Lag over the group: ${groupLagWords(group)}.`;
   return (
     <span
       className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-semibold"
@@ -408,22 +491,49 @@ export function GroupHeaderLive({ groupId }: { groupId: string }) {
   );
 }
 
+/**
+ * The group lag as text (review F-5). A partition without a committed offset has unknown lag
+ * (kafka-consumer-groups prints "-"), so with any of those the sum is only a lower bound: "≥ N";
+ * with no committed offset at all, "-". Counting them as 0 would show "group lag 0" in exactly the
+ * moment records pile up unread (a crashed member before its first commit).
+ */
+export function groupLagText(group: GroupSnapshot): string {
+  if (group.uncommitted === 0) return compactCount(group.totalLag);
+  if (group.uncommitted === group.partitions.length) return '-';
+  return `≥ ${compactCount(group.totalLag)}`;
+}
+
+function groupLagWords(group: GroupSnapshot): string {
+  if (group.uncommitted === 0) return formatCount(group.totalLag);
+  const unknown = `${partitionsText(group.uncommitted)} no committed offset, so their lag is unknown`;
+  return group.uncommitted === group.partitions.length
+    ? `unknown (${unknown})`
+    : `at least ${formatCount(group.totalLag)} (${unknown})`;
+}
+
 /** Second header line: generation and the group's total lag (M3-T11). */
 export function GroupHeaderStats({ groupId }: { groupId: string }) {
   const group = useGroup(groupId);
   if (group === undefined) return null;
   const danger = group.totalLag > LAG_DANGER_THRESHOLD;
   return (
-    <span className="font-mono text-[10px] font-normal text-status/70">
+    <span className="block truncate font-mono text-[10px] font-normal text-status/70">
       <span data-slot="generation">gen {group.generation}</span>
       {' · '}
       <span
         data-slot="group-lag"
         data-lag={group.totalLag}
+        data-uncommitted={group.uncommitted}
         className={danger ? 'font-semibold text-danger-text' : ''}
-        title="Lag over the whole group: sum of HW − committed offset per partition."
+        title={`Lag over the whole group: sum of HW − committed offset per partition. Now: ${groupLagWords(group)}.`}
       >
-        {danger ? '⚠\uFE0E ' : ''}group lag {compactCount(group.totalLag)}
+        {danger ? '⚠\uFE0E ' : ''}group lag {groupLagText(group)}
+        {group.uncommitted > 0 && (
+          <>
+            <span aria-hidden="true"> · {group.uncommitted} uncommitted</span>
+            <span className="sr-only">, {groupLagWords(group)}</span>
+          </>
+        )}
       </span>
     </span>
   );
