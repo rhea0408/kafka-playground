@@ -313,13 +313,13 @@ describe('liveness under load (M4-T0 regressions, F-1 / F-2)', () => {
 });
 
 describe('a SyncGroup that fails because the group rebalances again (M4-T0, review of #42)', () => {
-  // Two cooperative members on 4 partitions; c3 joins at 10 s. c4 joins 2 ms before that
-  // rebalance would complete, so its JoinGroup lands while the group waits for SyncGroup. At
-  // 300 msg/s the members consume something inside that window, so their pre-rebalance commit is
-  // not skipped (at 100 msg/s, nothing new arrives in the 2 ms here).
+  // Two cooperative members on 4 partitions at 100 msg/s (the review's repro); c3 joins at 10 s.
+  // c4 joins 2 ms before that rebalance would complete, so its JoinGroup lands while the group
+  // waits for SyncGroup. (Before F-8 this needed 300 msg/s: a pre-rebalance commit of unchanged
+  // positions was skipped, which changed the timing.)
   const extra = { partitionAssignmentStrategy: ['cooperative-sticky' as const] };
   function run(c4At: number | null) {
-    const engine = createEngine({ seed: 1, topology: group(2, extra, 4, 300) });
+    const engine = createEngine({ seed: 1, topology: group(2, extra, 4, 100) });
     const events = record(engine);
     const add = (id: string) => {
       engine.dispatch({
