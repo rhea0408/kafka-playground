@@ -1,0 +1,27 @@
+name: Nightly
+
+# Deep property search (M4-T0): the liveness and group-safety properties with 1000 cases each,
+# without coverage. PR CI runs 50 to keep coverage fast; this is the search that found M4-decisions
+# L1–L3. Runs on the default branch (develop); "Run workflow" starts it by hand.
+on:
+  schedule:
+    - cron: '17 3 * * *' # 03:17 UTC daily
+  workflow_dispatch:
+
+jobs:
+  deep-properties:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # fast-check prints the seed and the shrunk counterexample on failure; rerun it locally with
+      # the same KP_LIVENESS_RUNS and fc.assert's { seed, path } from the log.
+      - run: pnpm --filter @kp/engine exec vitest run src/liveness.prop.test.ts
+        env:
+          KP_LIVENESS_RUNS: '1000'

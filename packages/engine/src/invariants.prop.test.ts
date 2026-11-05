@@ -277,7 +277,8 @@ describe('engine invariants (fast-check)', { timeout: 30_000 }, () => {
     // See commitViolations (M4-decisions D3).
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
-        expect(commitViolations(runScenario(seed, topology, steps).events)).toEqual([]);
+        const { events, networkDelayMs } = runScenario(seed, topology, steps);
+        expect(commitViolations(events, networkDelayMs)).toEqual([]);
       }),
       { numRuns: NUM_RUNS },
     );

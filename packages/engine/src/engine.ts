@@ -25,6 +25,9 @@ export interface EngineOptions {
   readonly networkDelayMs?: number;
 }
 
+/** EngineOptions.networkDelayMs when none is given. */
+export const DEFAULT_NETWORK_DELAY_MS = 1;
+
 export interface Engine {
   /** Validates and applies a command at the current sim time. Accepted commands are logged. */
   readonly dispatch: (command: Command) => DispatchResult;
@@ -53,7 +56,7 @@ export function createEngineInternal(options: EngineOptions): {
   kernel: Kernel<EngineTask, EngineEventPayload>;
   context: EngineContext;
 } {
-  const networkDelayMs = options.networkDelayMs ?? 1;
+  const networkDelayMs = options.networkDelayMs ?? DEFAULT_NETWORK_DELAY_MS;
   assertSimTime(networkDelayMs);
   let loading = true;
   const kernel = createKernel<EngineTask, EngineEventPayload>({

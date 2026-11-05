@@ -12,6 +12,8 @@ let seq = 0;
 const at = (t: number, payload: Record<string, unknown>): EngineEvent =>
   ({ t, seq: ++seq, groupId: 'g', ...payload }) as unknown as EngineEvent;
 const p = (partition: number) => ({ topic: 't', partition });
+/** One-way network delay of these logs (the engine default). */
+const DELAY = 1;
 
 const completed = (t: number, generation: number, members: [string, number[]][]) =>
   at(t, {
@@ -52,22 +54,38 @@ const base = [
 
 describe('commitViolations', () => {
   it('accepts the owner, and the previous owner until it revokes (judged at send time)', () => {
-    expect(commitViolations([...base, commit(21, 'c1', 2, 0), commit(21, 'c1', 2, 1)])).toEqual([]);
+    expect(
+      commitViolations([...base, commit(21, 'c1', 2, 0), commit(21, 'c1', 2, 1)], DELAY),
+    ).toEqual([]);
     // Sent at 24, revoked at 24, accepted at 25: still allowed.
-    expect(commitViolations([...base, revoked(24, 'c1', [1]), commit(25, 'c1', 2, 1)])).toEqual([]);
+    expect(
+      commitViolations([...base, revoked(24, 'c1', [1]), commit(25, 'c1', 2, 1)], DELAY),
+    ).toEqual([]);
   });
 
   it('rejects the previous owner once it revoked before the commit was sent', () => {
     const log = [...base, revoked(24, 'c1', [1]), commit(30, 'c1', 2, 1)];
-    expect(commitViolations(log)).toEqual(['t=30 c1 t-1 gen 2: neither owns nor still holds it']);
+    expect(commitViolations(log, DELAY)).toEqual([
+      't=30 c1 t-1 gen 2: neither owns nor still holds it',
+    ]);
+  });
+
+  it('allows exactly one network delay between the revocation and the arrival, no more', () => {
+    // Accepted at 26 means sent at 25, one ms after the revocation: the position was already gone.
+    const late = [...base, revoked(24, 'c1', [1]), commit(26, 'c1', 2, 1)];
+    expect(commitViolations(late, DELAY)).toEqual([
+      't=26 c1 t-1 gen 2: neither owns nor still holds it',
+    ]);
+    // With a 2 ms network the same log is the in-flight case again, and allowed.
+    expect(commitViolations(late, 2)).toEqual([]);
   });
 
   it('rejects a commit for a generation that is not the last completed one', () => {
-    expect(commitViolations([...base, commit(21, 'c1', 1, 0)])).toHaveLength(1);
+    expect(commitViolations([...base, commit(21, 'c1', 1, 0)], DELAY)).toHaveLength(1);
   });
 
   it('rejects a member that never owned the partition, and two committers in one generation', () => {
-    expect(commitViolations([...base, commit(21, 'c2', 2, 1)])).toHaveLength(1);
+    expect(commitViolations([...base, commit(21, 'c2', 2, 1)], DELAY)).toHaveLength(1);
     // A broken assignment: P0 moves straight from c1 to c2, and both commit it in generation 2.
     const log = [
       completed(10, 1, [['c1', [0]]]),
@@ -77,7 +95,7 @@ describe('commitViolations', () => {
       commit(22, 'c1', 2, 0),
       commit(23, 'c2', 2, 0),
     ];
-    expect(commitViolations(log)).toEqual(['t=23 c2 t-0 gen 2: m1 committed it too']);
+    expect(commitViolations(log, DELAY)).toEqual(['t=23 c2 t-0 gen 2: m1 committed it too']);
   });
 });
 
