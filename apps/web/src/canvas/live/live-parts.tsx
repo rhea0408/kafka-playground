@@ -200,6 +200,7 @@ export function LagBadge({ lag }: { lag: number | null }) {
 /** Icon per consumer status; the status word is always shown next to it (never icon alone). */
 const STATUS_ICON: { readonly [S in ConsumerSnapshot['status']]: string } = {
   joining: '↻',
+  'left-group': '⚠',
   stable: '▶',
   idle: '◇',
   stopped: '■',

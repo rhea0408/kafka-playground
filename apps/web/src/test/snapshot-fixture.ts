@@ -92,6 +92,7 @@ export function consumer(
     consumed: 0,
     partitions,
     totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+    uncommitted: partitions.filter((p) => p.lag === null).length,
   };
 }
 
@@ -110,6 +111,7 @@ export function groupWithCommits(
     committed,
     partitions: [],
     totalLag: 0,
+    uncommitted: 0,
   };
 }
 

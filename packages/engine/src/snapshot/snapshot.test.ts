@@ -1,6 +1,7 @@
 import type { TopologyInput } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
 import { createEngine } from '../engine.ts';
+import type { EngineEvent } from '../events/index.ts';
 
 /**
  * One partition, so every number can be worked out by hand:
@@ -81,7 +82,12 @@ describe('snapshot and lag', () => {
     const engine = createEngine({ seed: 1, topology });
     engine.runUntil(800);
     expect(consumerPartition(engine)).toMatchObject({ committed: null, lag: null, position: 1 });
-    expect(engine.getSnapshot().consumers[0]?.totalLag).toBe(0);
+    // The known lag is 0, but one partition's lag is unknown: "≥ 0 · 1 not committed" (F-5).
+    expect(engine.getSnapshot().consumers[0]).toMatchObject({ totalLag: 0, uncommitted: 1 });
+    expect(engine.getSnapshot().groups[0]).toMatchObject({ totalLag: 0, uncommitted: 1 });
+    engine.runUntil(1001); // the first commit is stored
+    expect(engine.getSnapshot().consumers[0]).toMatchObject({ uncommitted: 0 });
+    expect(engine.getSnapshot().groups[0]).toMatchObject({ uncommitted: 0 });
   });
 
   it('contains the partition offsets and the most recent records', () => {
@@ -127,5 +133,97 @@ describe('snapshot and lag', () => {
       leader: snap.consumers[0]?.memberId,
       members: [{ consumerId: 'c1', partitions: [{ topic: 'orders', partition: 0 }] }],
     });
+  });
+});
+
+describe('member status and session (M4-T0, review F-6 / F-7)', () => {
+  it("a crashed member's session expiry is when the coordinator removes it", () => {
+    const engine = createEngine({ seed: 1, topology });
+    const removed: EngineEvent[] = [];
+    engine.on((e) => {
+      if (e.type === 'MemberRemoved') removed.push(e);
+    });
+    engine.runUntil(3500);
+    const alive = engine.getSnapshot().groups[0]?.members[0]?.sessionExpiresAt;
+    engine.dispatch({ type: 'KillConsumer', id: 'c1' });
+    engine.runUntil(3600);
+    // No more heartbeats: the deadline stops moving, and the coordinator still assigns the
+    // partition to the dead member until then.
+    const member = engine.getSnapshot().groups[0]?.members[0];
+    expect(member).toMatchObject({
+      consumerId: 'c1',
+      partitions: [{ topic: 'orders', partition: 0 }],
+    });
+    const deadline = member?.sessionExpiresAt ?? -1;
+    expect(deadline).toBe(alive);
+    expect(deadline).toBeGreaterThan(3600);
+    engine.runUntil(deadline);
+    expect(removed).toMatchObject([{ t: deadline, consumerId: 'c1', reason: 'session-timeout' }]);
+    expect(engine.getSnapshot().groups[0]?.members).toEqual([]);
+  });
+
+  /** c2 takes 20 s per record and is removed after max.poll.interval.ms (15 s). */
+  const slow: TopologyInput = {
+    brokers: [{ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: 0 }],
+    topics: [{ kind: 'topic', id: 'orders', partitions: 2 }],
+    producers: [{ kind: 'producer', id: 'p1', ratePerSec: 10, keyStrategy: { type: 'null' } }],
+    consumers: ['c1', 'c2'].map((id) => ({
+      kind: 'consumer' as const,
+      id,
+      groupId: 'g',
+      autoOffsetReset: 'earliest' as const,
+      maxPollIntervalMs: 15_000,
+      ...(id === 'c2' ? { processingTimeMs: 20_000, maxPollRecords: 1 } : {}),
+    })),
+    connections: [
+      { from: 'p1', to: 'orders' },
+      { from: 'orders', to: 'c1' },
+      { from: 'orders', to: 'c2' },
+    ],
+  };
+
+  it('a member removed after the poll timeout shows left-group while it still processes', () => {
+    const engine = createEngine({ seed: 1, topology: slow });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    engine.runUntil(30_000);
+    const removed = events.find((e) => e.type === 'MemberRemoved');
+    const lost = events.find((e) => e.type === 'PartitionsLost');
+    expect(removed).toMatchObject({ consumerId: 'c2', reason: 'poll-timeout' });
+    expect(lost).toMatchObject({ consumerId: 'c2' });
+    const c2At = (t: number) => {
+      const replay = createEngine({ seed: 1, topology: slow });
+      replay.runUntil(t);
+      return replay.getSnapshot().consumers.find((c) => c.config.id === 'c2');
+    };
+    const before = c2At((removed?.t ?? 0) - 2);
+    expect(before?.status).not.toBe('left-group');
+    // Between the LeaveGroup and its next poll(), c2 has no member id but keeps its partition.
+    const zombie = c2At((removed?.t ?? 0) + 1);
+    expect(zombie).toMatchObject({ status: 'left-group', memberId: null });
+    expect(zombie?.partitions.length).toBeGreaterThan(0);
+    expect(c2At((lost?.t ?? 0) - 1)?.status).toBe('left-group');
+    // At that poll(), onJoinPrepare drops the partitions (lost) and it rejoins.
+    const after = c2At(lost?.t ?? 0);
+    expect(after).toMatchObject({ status: 'joining', partitions: [] });
+  });
+
+  it('a member waiting in JoinGroup has no session deadline (the wait counts as a heartbeat)', () => {
+    // c3 joins at 5 s; c1 rejoins at once and waits for c2, which is busy processing.
+    const engine = createEngine({ seed: 1, topology: slow });
+    engine.runUntil(5000);
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'consumer', id: 'c3', groupId: 'g', autoOffsetReset: 'earliest' },
+    });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c3' });
+    engine.runUntil(10_000);
+    const group = engine.getSnapshot().groups[0];
+    expect(group?.state).toBe('PreparingRebalance');
+    const c1 = group?.members.find((m) => m.consumerId === 'c1');
+    const c2 = group?.members.find((m) => m.consumerId === 'c2');
+    expect(c1?.sessionExpiresAt).toBeNull();
+    // c2 has not sent its JoinGroup yet; its heartbeat thread keeps its session alive.
+    expect(c2?.sessionExpiresAt).toBeGreaterThan(10_000);
   });
 });

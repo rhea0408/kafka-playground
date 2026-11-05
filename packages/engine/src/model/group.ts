@@ -5,6 +5,7 @@
  */
 
 import type { Assignor } from '@kp/schema';
+import type { SimTime } from '../core/clock.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 
 /** ClassicGroupState. `Dead` is not reached in M3 (no group deletion or offset expiry). */
@@ -74,6 +75,12 @@ export interface GroupMember {
   awaitingSync: boolean;
   /** Only the session-expiry task carrying this token is current. */
   heartbeatToken: number;
+  /**
+   * When the current session-expiry task fires: the last heartbeat (or join / sync) plus
+   * session.timeout.ms. While a JoinGroup or SyncGroup is parked, the task re-arms instead of
+   * removing the member (K4).
+   */
+  sessionExpiresAt: SimTime;
   /** Partitions from the last SyncGroup of the leader. */
   assignment: readonly TopicPartition[];
 }
