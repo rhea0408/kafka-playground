@@ -50,15 +50,20 @@ export function useGroup(groupId: string): GroupSnapshot | undefined {
 }
 
 /**
- * What the coordinator still holds for a consumer that is not running (review F-6): a crashed
- * member stays in the group, with its partitions, until its session times out. Primitives only,
- * so the row re-renders when the assignment or the deadline changes, not on every group frame.
- * Undefined while the consumer runs or once the coordinator has removed it.
+ * What the coordinator still holds for earlier lives of a consumer (review F-6): a member whose
+ * process crashed (or was killed and restarted) stays in the group, with its partitions, until
+ * its session times out. Those are the members with this consumer id from an older incarnation;
+ * the current process's own member (joining, or not yet known to the client) never counts.
+ * Primitives only, so the row re-renders when the assignment or the deadline changes, not on
+ * every group frame. Undefined when the coordinator holds nothing for an earlier life.
  */
 export interface HeldByCoordinator {
   /** Partition chip labels, space-separated ("P0 P1", or "orders-0 …" across topics). */
   readonly labels: string;
-  /** Sim time the session runs out; null while its JoinGroup / SyncGroup is parked. */
+  /**
+   * Sim time the last of those sessions runs out; null while any of them has its JoinGroup /
+   * SyncGroup parked (its session timer starts when that wait ends).
+   */
   readonly expiresAt: number | null;
 }
 
@@ -67,16 +72,20 @@ export const selectHeld =
   (s: SimState): HeldByCoordinator | undefined => {
     const consumer = selectConsumer(consumerId)(s);
     if (consumer === undefined) return undefined;
-    if (consumer.status !== 'crashed' && consumer.status !== 'stopped') return undefined;
-    const member = selectGroup(consumer.config.groupId)(s)?.members.find(
-      (m) => m.consumerId === consumerId,
+    const stale = (selectGroup(consumer.config.groupId)(s)?.members ?? []).filter(
+      (m) => m.consumerId === consumerId && m.incarnation !== consumer.incarnation,
     );
-    if (member === undefined) return undefined;
-    const topics = new Set(member.partitions.map((p) => p.topic)).size;
-    const labels = member.partitions.map((p) =>
+    if (stale.length === 0) return undefined;
+    const partitions = stale.flatMap((m) => m.partitions);
+    const topics = new Set(partitions.map((p) => p.topic)).size;
+    const labels = partitions.map((p) =>
       topics > 1 ? `${p.topic}-${String(p.partition)}` : `P${String(p.partition)}`,
     );
-    return { labels: labels.join(' '), expiresAt: member.sessionExpiresAt };
+    const deadlines = stale.map((m) => m.sessionExpiresAt);
+    const expiresAt = deadlines.includes(null)
+      ? null
+      : Math.max(...deadlines.filter((d): d is number => d !== null));
+    return { labels: [...new Set(labels)].join(' '), expiresAt };
   };
 
 export function useHeldByCoordinator(consumerId: string): HeldByCoordinator | undefined {

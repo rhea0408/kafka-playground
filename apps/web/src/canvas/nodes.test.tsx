@@ -397,53 +397,85 @@ describe('unknown lag, held partitions and the zombie (M4-T0, review F-5 – F-7
     expect(header()?.textContent).toBe('group lag 7');
   });
 
+  /** The coordinator's entry for c1's first life (incarnation 1), holding P0 and P1. */
+  const oldMember = (sessionExpiresAt: number | null) => ({
+    memberId: 'c1-0000000a',
+    consumerId: 'c1',
+    incarnation: 1,
+    partitions: [
+      { topic: 't1', partition: 0 },
+      { topic: 't1', partition: 1 },
+    ],
+    sessionExpiresAt,
+  });
+  const withMembers = (
+    t: number,
+    c1: ReturnType<typeof consumer>,
+    members: ReturnType<typeof oldMember>[],
+  ) =>
+    fixtureSnapshot({
+      t,
+      consumers: [c1],
+      groups: [
+        {
+          ...groupWithCommits('c1-group', []),
+          state: 'Stable',
+          generation: 1,
+          protocol: 'range',
+          leader: 'c1-0000000a',
+          members,
+        },
+      ],
+    });
+  const held = () => [...c1Row().querySelectorAll('[data-chip-held]')].map((c) => c.textContent);
+  const until = () => c1Row().querySelector('[data-slot="held-until"]')?.textContent;
+
   it("a crashed member's row keeps the coordinator's partitions, greyed, with a countdown", () => {
+    // The crash started incarnation 2; the coordinator's member is from incarnation 1.
     const crashed = (t: number, sessionExpiresAt: number | null) =>
-      fixtureSnapshot({
-        t,
-        consumers: [consumer('c1', [], 'crashed')],
-        groups: [
-          {
-            ...groupWithCommits('c1-group', []),
-            state: 'Stable',
-            generation: 1,
-            protocol: 'range',
-            leader: 'c1-0000000a',
-            members: [
-              {
-                memberId: 'c1-0000000a',
-                consumerId: 'c1',
-                partitions: [
-                  { topic: 't1', partition: 0 },
-                  { topic: 't1', partition: 1 },
-                ],
-                sessionExpiresAt,
-              },
-            ],
-          },
-        ],
-      });
+      withMembers(t, consumer('c1', [], 'crashed', 2), [oldMember(sessionExpiresAt)]);
     const a = crashed(4000, 10_200);
     show(a);
     renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
-    const held = () => [...c1Row().querySelectorAll('[data-chip-held]')].map((c) => c.textContent);
-    const until = () => c1Row().querySelector('[data-slot="held-until"]')?.textContent;
     expect(held()).toEqual(['P0', 'P1']);
     expect(c1Row().querySelectorAll('[data-chip]')).toHaveLength(0);
     expect(until()).toBe('held · timeout in 6.2 s');
     expect(c1Row().querySelector('[data-status]')?.getAttribute('title')).toContain(
-      'only notices the crash',
+      'only notices when no heartbeat arrives',
     );
     // The clock moves; the deadline does not (no heartbeats).
     const b = crashed(9000, 10_200);
     show(b, a);
     expect(until()).toBe('held · timeout in 1.2 s');
-    // Crashed while its JoinGroup was parked: no deadline.
+    // Crashed while its JoinGroup was parked: no deadline until the join phase ends.
     const c = crashed(9500, null);
     show(c, b);
-    expect(until()).toBe('held · in group until rebalance timeout');
+    expect(until()).toBe('held · waiting for rebalance');
+    expect(c1Row().querySelector('[data-status]')?.getAttribute('title')).toContain(
+      'which counts as a heartbeat. Its session timer starts when',
+    );
     // The coordinator removed it: nothing held any more.
-    show(fixtureSnapshot({ t: 10_300, consumers: [consumer('c1', [], 'crashed')] }), c);
+    show(fixtureSnapshot({ t: 10_300, consumers: [consumer('c1', [], 'crashed', 2)] }), c);
+    expect(c1Row().querySelector('[data-slot="held"]')).toBeNull();
+  });
+
+  it('after Kill and Restart the old member stays held next to the new process', () => {
+    // Incarnation 3 runs and has joined as a new member; the old member still holds P0 and P1.
+    const fresh = {
+      memberId: 'c1-0000000b',
+      consumerId: 'c1',
+      incarnation: 3,
+      partitions: [],
+      sessionExpiresAt: null,
+    };
+    const a = withMembers(5000, consumer('c1', [], 'joining', 3), [oldMember(10_200), fresh]);
+    show(a);
+    renderCanvas([groupNodeOf(C1, { x: 0, y: 0 })]);
+    expect(held()).toEqual(['P0', 'P1']);
+    expect(until()).toBe('held · timeout in 5.2 s');
+    // The current process's own member entry is never shown as held.
+    const b = withMembers(5500, consumer('c1', [], 'joining', 3), [fresh]);
+    show(b, a);
     expect(c1Row().querySelector('[data-slot="held"]')).toBeNull();
   });
 

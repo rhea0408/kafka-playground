@@ -76,6 +76,12 @@ export type ConsumerStatus = 'joining' | 'left-group' | 'stable' | 'idle' | 'sto
 export interface ConsumerSnapshot {
   readonly config: Consumer;
   readonly status: ConsumerStatus;
+  /**
+   * Which life of the process this is: a new number on every start, stop, crash and restart.
+   * Compare with `GroupMemberSnapshot.incarnation` to tell this process's member entry from one
+   * the coordinator still holds for an earlier life.
+   */
+  readonly incarnation: number;
   /** StopConsumer was asked: it closes once it has processed its current batch. */
   readonly stopping: boolean;
   /** Its member id in the group, null before the coordinator gave it one. */
@@ -107,6 +113,12 @@ export interface GroupPartitionSnapshot {
 export interface GroupMemberSnapshot {
   readonly memberId: string;
   readonly consumerId: string;
+  /**
+   * The incarnation of the client process that joined as this member. When it differs from the
+   * consumer's current one, the member belongs to an earlier life (crashed, or killed and
+   * restarted) and stays in the group until its session times out.
+   */
+  readonly incarnation: number;
   /** Its partitions in the current generation (empty while a rebalance is in progress). */
   readonly partitions: readonly TopicPartition[];
   /**
@@ -216,6 +228,9 @@ function consumerStatus(consumer: ConsumerState): ConsumerStatus {
   if (consumer.status === 'stopped') return 'stopped';
   if (consumer.status === 'crashed') return 'crashed';
   const { group } = consumer;
+  // After ILLEGAL_GENERATION the member keeps its id (only the generation is reset), so it shows
+  // `joining` while it still holds partitions it is about to lose: the coordinator still counts it
+  // as a member, it is not out of the group.
   if (group.memberId === '' && group.owned.length > 0) return 'left-group';
   if (group.state !== 'stable' || group.pendingAssignment !== null) return 'joining';
   return group.owned.length === 0 ? 'idle' : 'stable';
@@ -245,6 +260,7 @@ function consumerSnapshot(state: EngineState, consumer: ConsumerState): Consumer
   return {
     config: copyPlain(consumer.config),
     status: consumerStatus(consumer),
+    incarnation: consumer.incarnation,
     stopping: consumer.stopRequested,
     memberId: group.memberId === '' ? null : group.memberId,
     generation: group.generation < 0 ? null : group.generation,
@@ -297,6 +313,7 @@ function groupSnapshot(state: EngineState, group: GroupState): GroupSnapshot {
     members: members.map((m) => ({
       memberId: m.memberId,
       consumerId: m.consumerId,
+      incarnation: m.incarnation,
       partitions: m.assignment.map((tp) => ({ topic: tp.topic, partition: tp.partition })),
       sessionExpiresAt: m.awaitingJoin || m.awaitingSync ? null : m.sessionExpiresAt,
     })),
