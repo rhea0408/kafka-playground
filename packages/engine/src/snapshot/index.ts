@@ -62,10 +62,16 @@ export interface ConsumerPartitionSnapshot {
 /**
  * - `joining`: running, but not (or no longer) in a stable generation: its JoinGroup or SyncGroup
  *   is pending, or it must rejoin.
+ * - `left-group`: running and out of the group (its member id was reset: it left after
+ *   max.poll.interval.ms, or the coordinator no longer knows it), but it still holds partitions
+ *   and keeps processing the batch it has. Kafka's client keeps its assignment until the next
+ *   poll(), whose onJoinPrepare calls onPartitionsLost (ConsumerCoordinator#onJoinPrepare). Its
+ *   commits fail; the coordinator may already have given its partitions to someone else (a
+ *   "zombie", FR-3.2).
  * - `stable`: in a stable generation with partitions; `idle`: in one without any.
  * - `stopped`: closed gracefully (StopConsumer); `crashed`: killed or died on an error.
  */
-export type ConsumerStatus = 'joining' | 'stable' | 'idle' | 'stopped' | 'crashed';
+export type ConsumerStatus = 'joining' | 'left-group' | 'stable' | 'idle' | 'stopped' | 'crashed';
 
 export interface ConsumerSnapshot {
   readonly config: Consumer;
@@ -79,8 +85,10 @@ export interface ConsumerSnapshot {
   readonly consumed: number;
   /** The partitions it owns now, sorted. */
   readonly partitions: readonly ConsumerPartitionSnapshot[];
-  /** Sum of the known lags of its partitions. */
+  /** Sum of the known lags of its partitions: a lower bound while `uncommitted` > 0. */
   readonly totalLag: number;
+  /** How many of its partitions have no committed offset (their lag is unknown, shown "-"). */
+  readonly uncommitted: number;
 }
 
 /** One partition of a topic the group reads. */
@@ -101,6 +109,13 @@ export interface GroupMemberSnapshot {
   readonly consumerId: string;
   /** Its partitions in the current generation (empty while a rebalance is in progress). */
   readonly partitions: readonly TopicPartition[];
+  /**
+   * When the coordinator removes it unless it heartbeats first (last heartbeat or join + its
+   * session.timeout.ms). Null while its JoinGroup or SyncGroup is parked: that counts as a
+   * heartbeat, so the session does not run out then (GroupMetadataManager#
+   * expireClassicGroupMemberHeartbeat).
+   */
+  readonly sessionExpiresAt: SimTime | null;
 }
 
 export interface GroupSnapshot {
@@ -124,8 +139,13 @@ export interface GroupSnapshot {
    * offsets for, with owner, committed offset and lag (FR-2.9).
    */
   readonly partitions: readonly GroupPartitionSnapshot[];
-  /** Sum of the known partition lags. */
+  /**
+   * Sum of the known partition lags. A lower bound while `uncommitted` > 0: kafka-consumer-groups
+   * shows "-" for a partition without a committed offset, not 0 (review F-5).
+   */
   readonly totalLag: number;
+  /** How many of `partitions` have no committed offset. */
+  readonly uncommitted: number;
 }
 
 export interface BrokerSnapshot {
@@ -196,6 +216,7 @@ function consumerStatus(consumer: ConsumerState): ConsumerStatus {
   if (consumer.status === 'stopped') return 'stopped';
   if (consumer.status === 'crashed') return 'crashed';
   const { group } = consumer;
+  if (group.memberId === '' && group.owned.length > 0) return 'left-group';
   if (group.state !== 'stable' || group.pendingAssignment !== null) return 'joining';
   return group.owned.length === 0 ? 'idle' : 'stable';
 }
@@ -230,6 +251,7 @@ function consumerSnapshot(state: EngineState, consumer: ConsumerState): Consumer
     consumed: consumer.stats.consumed,
     partitions,
     totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+    uncommitted: partitions.filter((p) => p.lag === null).length,
   };
 }
 
@@ -276,6 +298,7 @@ function groupSnapshot(state: EngineState, group: GroupState): GroupSnapshot {
       memberId: m.memberId,
       consumerId: m.consumerId,
       partitions: m.assignment.map((tp) => ({ topic: tp.topic, partition: tp.partition })),
+      sessionExpiresAt: m.awaitingJoin || m.awaitingSync ? null : m.sessionExpiresAt,
     })),
     committed: [...group.committed.entries()].map(([key, offset]) => ({
       ...splitKey(key),
@@ -283,6 +306,7 @@ function groupSnapshot(state: EngineState, group: GroupState): GroupSnapshot {
     })),
     partitions,
     totalLag: partitions.reduce((sum, p) => sum + (p.lag ?? 0), 0),
+    uncommitted: partitions.filter((p) => p.lag === null).length,
   };
 }
 

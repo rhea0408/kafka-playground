@@ -85,6 +85,12 @@ test('scene "Crash and duplicates": a killed member is removed after the session
   await expect(
     node(page, GROUP).locator('[data-consumer-row="c1"] [data-slot="status"]'),
   ).toHaveText(/crashed/);
+  // F-6: until the session times out, the coordinator still assigns c1 its partitions.
+  const c1Row = node(page, GROUP).locator('[data-consumer-row="c1"]');
+  await expect(c1Row.locator('[data-chip-held]').first()).toBeVisible();
+  await expect(c1Row.locator('[data-slot="held-until"]')).toHaveText(/held · timeout in \d+\.\d s/);
+  mkdirSync(SHOTS, { recursive: true });
+  await node(page, GROUP).screenshot({ path: `${SHOTS}scene-crash-held.png` });
   await runPast(page, killedAt + 14_000);
   await pause(page);
 
@@ -106,6 +112,29 @@ test('scene "Crash and duplicates": a killed member is removed after the session
   expect(history.filter((e) => e.type === 'DuplicateProcessed').length).toBeGreaterThan(0);
   mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: `${SHOTS}scene-crash.png` });
+});
+
+test('scene "Slow consumer": the removed member shows "left group" while it still processes (F-7)', async ({
+  page,
+}) => {
+  await open(page, 'slow');
+  await play10(page);
+  const status = node(page, GROUP).locator('[data-consumer-row="c2"] [data-slot="status"]');
+  // Removed after max.poll.interval.ms (30 s); its 40 s batch runs on for about 10 s more.
+  await expect(status).toHaveText(/left group/, { timeout: 30_000 });
+  mkdirSync(SHOTS, { recursive: true });
+  await node(page, GROUP).screenshot({ path: `${SHOTS}scene-slow-zombie.png` });
+  await expect(
+    node(page, GROUP).locator('[data-consumer-row="c2"] [data-slot="offsets"]'),
+  ).toHaveText(/still processing/);
+  // At its next poll() the partitions are lost and it rejoins.
+  await expect(status).not.toHaveText(/left group/, { timeout: 30_000 });
+  await pause(page);
+  const history = await readSim(page, 'eventHistory');
+  const removed = history.find((e) => e.type === 'MemberRemoved' && e.consumerId === 'c2');
+  expect(removed).toMatchObject({ reason: 'poll-timeout' });
+  const lost = history.find((e) => e.type === 'PartitionsLost' && e.consumerId === 'c2');
+  expect(lost?.t ?? 0).toBeGreaterThan(removed?.t ?? Infinity);
 });
 
 /** Idle scene, assignor set from the group panel, then a fifth member joins. */

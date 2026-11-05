@@ -49,6 +49,45 @@ export function useGroup(groupId: string): GroupSnapshot | undefined {
   return useSimStore(useShallow(selectGroup(groupId)));
 }
 
+/**
+ * What the coordinator still holds for a consumer that is not running (review F-6): a crashed
+ * member stays in the group, with its partitions, until its session times out. Primitives only,
+ * so the row re-renders when the assignment or the deadline changes, not on every group frame.
+ * Undefined while the consumer runs or once the coordinator has removed it.
+ */
+export interface HeldByCoordinator {
+  /** Partition chip labels, space-separated ("P0 P1", or "orders-0 …" across topics). */
+  readonly labels: string;
+  /** Sim time the session runs out; null while its JoinGroup / SyncGroup is parked. */
+  readonly expiresAt: number | null;
+}
+
+export const selectHeld =
+  (consumerId: string) =>
+  (s: SimState): HeldByCoordinator | undefined => {
+    const consumer = selectConsumer(consumerId)(s);
+    if (consumer === undefined) return undefined;
+    if (consumer.status !== 'crashed' && consumer.status !== 'stopped') return undefined;
+    const member = selectGroup(consumer.config.groupId)(s)?.members.find(
+      (m) => m.consumerId === consumerId,
+    );
+    if (member === undefined) return undefined;
+    const topics = new Set(member.partitions.map((p) => p.topic)).size;
+    const labels = member.partitions.map((p) =>
+      topics > 1 ? `${p.topic}-${String(p.partition)}` : `P${String(p.partition)}`,
+    );
+    return { labels: labels.join(' '), expiresAt: member.sessionExpiresAt };
+  };
+
+export function useHeldByCoordinator(consumerId: string): HeldByCoordinator | undefined {
+  return useSimStore(useShallow(selectHeld(consumerId)));
+}
+
+/** The sim clock. Only for parts that must tick (a countdown): every frame re-renders them. */
+export function useSimTime(): number {
+  return useSimStore((s) => s.snapshot?.t ?? 0);
+}
+
 /** Only the status, so the Kill / Restart toolbar doesn't re-render on every offset change. */
 export function useConsumerStatus(id: string): ConsumerSnapshot['status'] | undefined {
   return useSimStore((s) => selectConsumer(id)(s)?.status);

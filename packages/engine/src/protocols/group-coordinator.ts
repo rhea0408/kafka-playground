@@ -173,6 +173,7 @@ function joinNewMember(
     awaitingJoin: true,
     awaitingSync: false,
     heartbeatToken: 0,
+    sessionExpiresAt: ctx.kernel.now(),
     assignment: [],
   };
   group.members.set(member.memberId, member);
@@ -524,6 +525,7 @@ function heartbeat(ctx: EngineContext, from: Sender, request: Request<'Heartbeat
 /** (Re)starts the member's session timer from now. */
 function scheduleSessionExpiry(ctx: EngineContext, group: GroupState, member: GroupMember): void {
   member.heartbeatToken += 1;
+  member.sessionExpiresAt = ctx.kernel.now() + member.metadata.sessionTimeoutMs;
   ctx.kernel.scheduleIn(member.metadata.sessionTimeoutMs, {
     type: 'MemberSessionExpire',
     groupId: group.groupId,
