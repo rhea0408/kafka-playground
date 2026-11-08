@@ -1,0 +1,106 @@
+/**
+ * Replication invariants (M4-T3, architecture §4.6), over the general random topologies (1–3
+ * brokers, RF up to 3, minISR 1–3) and command sequences, which include broker kills, controlled
+ * stops, restarts and topics deleted and re-created. M4-T9 adds the election and truncation rules.
+ */
+
+import type { TopologyInput } from '@kp/schema';
+import fc from 'fast-check';
+import { describe, expect, it } from 'vitest';
+import { createEngineInternal } from './engine.ts';
+import type { EngineEvent } from './events/index.ts';
+import type { EngineContext } from './model/context.ts';
+import { stepsArb, topologyArb, type Step } from './testing/arbitraries.ts';
+import { runsFromEnv } from './testing/runs.ts';
+
+const seedArb = fc.integer({ min: 0, max: 0xffffffff });
+/** KP_INVARIANT_RUNS, default 100; the nightly job runs 1000. */
+const NUM_RUNS = runsFromEnv('KP_INVARIANT_RUNS', 100);
+
+function run(seed: number, topology: TopologyInput, steps: readonly Step[]) {
+  const { engine, context } = createEngineInternal({ seed, topology });
+  const events: EngineEvent[] = [];
+  engine.on((e) => events.push(e));
+  for (const step of steps) {
+    if (step.kind === 'advance') engine.runUntil(engine.now() + step.ms);
+    else engine.dispatch(step.command);
+  }
+  return { engine, context, events };
+}
+
+const alive = (ctx: EngineContext, id: string) => ctx.state.brokers.get(id)?.status === 'running';
+
+describe(
+  'replication invariants (fast-check)',
+  { timeout: Math.max(30_000, NUM_RUNS * 400) },
+  () => {
+    it('every acknowledged offset is where the leader appended that record', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { events } = run(seed, topology, steps);
+          const appended = new Map<string, number>();
+          for (const e of events) {
+            if (e.type === 'RecordAppended') {
+              // Without retries (until M4-T7) each record is appended at most once.
+              expect(appended.has(e.traceId)).toBe(false);
+              appended.set(e.traceId, e.offset);
+            }
+            if (e.type === 'ProduceAcked' && e.offset !== null) {
+              expect(appended.get(e.traceId)).toBe(e.offset);
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
+    it('every replica keeps HW ≤ LEO, and agrees with the leader below its own HW', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context } = run(seed, topology, steps);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              const leader = p.leader === null ? undefined : p.replicaLogs.get(p.leader);
+              for (const replica of p.replicaLogs.values()) {
+                expect(replica.highWatermark).toBeLessThanOrEqual(replica.logEndOffset);
+                expect(replica.log.length).toBe(replica.logEndOffset - replica.logStartOffset);
+                if (leader === undefined || replica === leader) continue;
+                for (let o = replica.logStartOffset; o < replica.highWatermark; o++) {
+                  expect(replica.log[o]?.traceId).toBe(leader.log[o]?.traceId);
+                }
+              }
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
+    it('a running follower of a running leader keeps fetching (no stuck fetcher)', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { engine, context } = run(seed, topology, steps);
+          // Stop new records, then give fetchers time: a backoff (1 s) plus a long poll (500 ms).
+          for (const id of context.state.producers.keys()) {
+            engine.dispatch({ type: 'RemoveComponent', id });
+          }
+          engine.runUntil(engine.now() + 2000);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              if (p.leader === null || !alive(context, p.leader)) continue;
+              const leader = p.replicaLogs.get(p.leader);
+              for (const [broker, replica] of p.replicaLogs) {
+                if (broker === p.leader || !alive(context, broker)) continue;
+                expect({ broker, leo: replica.logEndOffset }).toEqual({
+                  broker,
+                  leo: leader?.logEndOffset,
+                });
+              }
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+  },
+);

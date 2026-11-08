@@ -472,7 +472,7 @@ function startingOffset(
   const inRange =
     committed !== undefined &&
     committed >= partition.logStartOffset &&
-    committed <= partition.highWatermark;
+    committed <= partition.logEndOffset;
   if (inRange) return committed;
   return resetOffset(consumer, partition);
 }

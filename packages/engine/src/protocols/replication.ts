@@ -87,19 +87,40 @@ export function isCaughtUp(
   );
 }
 
-/** The leader's view of a follower, created on first use (LEO unknown). */
+function newFollowerState(inIsr: boolean, now: number): FollowerState {
+  return {
+    logEndOffset: -1,
+    // Kafka's 0 means 1970, long ago; the sim clock starts at 0, so "never" is -Infinity.
+    lastCaughtUpTimeMs: inIsr ? now : Number.NEGATIVE_INFINITY,
+    lastFetchTimeMs: Number.NEGATIVE_INFINITY,
+    lastFetchLeaderLogEndOffset: 0,
+  };
+}
+
+/**
+ * The leader's view of a follower. `resetFollowers` creates them when the partition gets its
+ * leader; one created here (a replica the leader never heard of) starts "never caught up".
+ */
 export function followerState(partition: PartitionState, broker: string): FollowerState {
   let state = partition.followers.get(broker);
   if (state === undefined) {
-    state = {
-      logEndOffset: -1,
-      lastCaughtUpTimeMs: 0,
-      lastFetchTimeMs: 0,
-      lastFetchLeaderLogEndOffset: 0,
-    };
+    state = newFollowerState(false, 0);
     partition.followers.set(broker, state);
   }
   return state;
+}
+
+/**
+ * Partition#makeLeader → Replica#resetReplicaState: the leader knows no follower's LEO yet, and
+ * counts the ISR followers as caught up now, the others never (K3).
+ */
+export function resetFollowers(ctx: EngineContext, partition: PartitionState): void {
+  const now = ctx.kernel.now();
+  partition.followers.clear();
+  for (const broker of partition.replicas) {
+    if (broker === partition.leader) continue;
+    partition.followers.set(broker, newFollowerState(partition.isr.includes(broker), now));
+  }
 }
 
 /**
@@ -116,13 +137,13 @@ export function updateFollowerFetchState(
   const leader = leaderLog(partition);
   if (leader === undefined) return;
   const f = followerState(partition, broker);
-  if (fetchOffset >= leader.logEndOffset)
+  if (fetchOffset >= leader.logEndOffset) {
     f.lastCaughtUpTimeMs = Math.max(f.lastCaughtUpTimeMs, now);
-  else if (fetchOffset >= f.lastFetchLeaderLogEndOffset) {
+  } else if (fetchOffset >= f.lastFetchLeaderLogEndOffset) {
     f.lastCaughtUpTimeMs = Math.max(f.lastCaughtUpTimeMs, f.lastFetchTimeMs);
   }
   f.logEndOffset = fetchOffset;
-  f.lastFetchLeaderLogEndOffset = leader.logEndOffset;
+  f.lastFetchLeaderLogEndOffset = Math.max(leader.logEndOffset, f.lastFetchLeaderLogEndOffset);
   f.lastFetchTimeMs = now;
 }
 
@@ -175,10 +196,14 @@ export function onLeaderStateChanged(
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────────────────────
 
+/** replica.fetch.backoff.ms default: the wait after a failed fetch (AbstractFetcherThread). */
+export const REPLICA_FETCH_BACKOFF_MS = 1000;
+
 /** Starts the fetcher of every follower of `partition` that has none in flight. */
 export function startFollowers(ctx: EngineContext, partition: PartitionState): void {
   const { leader } = partition;
   if (leader === null) return;
+  if (partition.followers.size === 0) resetFollowers(ctx, partition);
   for (const broker of partition.replicas) {
     if (broker !== leader) ensureReplicaFetcher(ctx, broker, leader);
   }
@@ -193,7 +218,8 @@ export function ensureReplicaFetcher(ctx: EngineContext, follower: string, leade
   const key = fetcherKey(follower, leader);
   if (state.replicaFetchers.has(key)) return;
   const followerBroker = runningBroker(ctx, follower);
-  if (followerBroker === undefined || runningBroker(ctx, leader) === undefined) return;
+  const leaderBroker = runningBroker(ctx, leader);
+  if (followerBroker === undefined || leaderBroker === undefined) return;
   const partitions: ReplicaFetchPartition[] = [];
   for (const topic of state.topics.values()) {
     for (const p of topic.partitions) {
@@ -211,30 +237,56 @@ export function ensureReplicaFetcher(ctx: EngineContext, follower: string, leade
     }
   }
   if (partitions.length === 0) return;
-  state.replicaFetchers.add(key);
+  state.replicaFetchers.set(key, followerBroker.incarnation);
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
     type: 'ReplicaFetchRequest',
     fetchId: ++state.counters.replicaFetch,
     follower,
     followerIncarnation: followerBroker.incarnation,
     leader,
+    leaderIncarnation: leaderBroker.incarnation,
     partitions,
     maxWaitMs: followerBroker.config.replicaFetchWaitMaxMs,
   });
 }
 
+/**
+ * Frees a fetcher slot held by the follower life `incarnation` (or an older one) and, if the
+ * follower is running, fetches again at once.
+ */
+function releaseFetcher(
+  ctx: EngineContext,
+  follower: string,
+  incarnation: number,
+  leader: string,
+): void {
+  const key = fetcherKey(follower, leader);
+  const owner = ctx.state.replicaFetchers.get(key);
+  if (owner !== undefined && owner > incarnation) return; // a newer life fetches already
+  ctx.state.replicaFetchers.delete(key);
+  ensureReplicaFetcher(ctx, follower, leader);
+}
+
 /** A follower's fetch reaches the leader: record its progress, then answer or park. */
 export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetchRequestTask): void {
-  if (runningBroker(ctx, task.leader) === undefined) return; // lost with the broker (T5)
-  const now = ctx.kernel.now();
-  for (const p of task.partitions) {
-    const topic = ctx.state.topics.get(p.topic);
-    const partition = topic?.partitions[p.partition];
-    if (topic === undefined || partition === undefined || topic.topicId !== p.topicId) continue;
-    if (partition.leader !== task.leader || partition.leaderEpoch !== p.currentLeaderEpoch)
-      continue;
-    updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
-    onLeaderStateChanged(ctx, topic, partition);
+  if (runningBroker(ctx, task.leader, task.leaderIncarnation) === undefined) {
+    disconnect(ctx, task); // the leader process is gone: the connection fails
+    return;
+  }
+  // A request from an earlier life of the follower doesn't count (Kafka fences it by broker
+  // epoch in updateFetchStateOrThrow); its answer is dropped on arrival.
+  if (runningBroker(ctx, task.follower, task.followerIncarnation) !== undefined) {
+    const now = ctx.kernel.now();
+    for (const p of task.partitions) {
+      const topic = ctx.state.topics.get(p.topic);
+      const partition = topic?.partitions[p.partition];
+      if (topic === undefined || partition === undefined || topic.topicId !== p.topicId) continue;
+      if (partition.leader !== task.leader || partition.leaderEpoch !== p.currentLeaderEpoch) {
+        continue;
+      }
+      updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
+      onLeaderStateChanged(ctx, topic, partition);
+    }
   }
   if (task.maxWaitMs === 0 || hasDataFor(ctx, task)) {
     respondToReplicaFetch(ctx, task);
@@ -243,7 +295,6 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
   ctx.state.parkedReplicaFetches.set(task.fetchId, task);
   ctx.kernel.scheduleIn(task.maxWaitMs, { type: 'ReplicaFetchExpire', fetchId: task.fetchId });
 }
-
 /** replica.fetch.wait.max.ms passed: answer with whatever there is (usually nothing). */
 export function handleReplicaFetchExpire(
   ctx: EngineContext,
@@ -282,7 +333,6 @@ function hasDataFor(ctx: EngineContext, task: ReplicaFetchRequestTask): boolean 
 
 /** Builds the response from the leader's log now and sends it back (+ network delay). */
 function respondToReplicaFetch(ctx: EngineContext, task: ReplicaFetchRequestTask): void {
-  const now = ctx.kernel.now();
   const partitions = task.partitions.map((p): ReplicaFetchResult => {
     const topic = ctx.state.topics.get(p.topic);
     const partition = topic?.partitions[p.partition];
@@ -293,11 +343,11 @@ function respondToReplicaFetch(ctx: EngineContext, task: ReplicaFetchRequestTask
     if (leader === undefined || partition.leader !== task.leader) {
       return { ...p, error: 'NOT_LEADER_OR_FOLLOWER' };
     }
-    if (partition.leaderEpoch !== p.currentLeaderEpoch)
+    if (partition.leaderEpoch !== p.currentLeaderEpoch) {
       return { ...p, error: 'FENCED_LEADER_EPOCH' };
-    // A parked fetch completing reads the log again, which updates the follower's state again
-    // (DelayedFetch#onComplete → readFromLog).
-    updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
+    }
+    // A parked fetch completing reads the log again but does not update the follower's state
+    // (ReplicaManager#readFromLog: updateFetchState = !readFromPurgatory).
     const base = leader.logStartOffset;
     return {
       ...p,
@@ -321,14 +371,19 @@ export function handleReplicaFetchResponse(
   ctx: EngineContext,
   task: Task<'ReplicaFetchResponse'>,
 ): void {
+  if (runningBroker(ctx, task.follower, task.followerIncarnation) === undefined) {
+    // Sent by an earlier life of the follower; its current life may need the slot.
+    releaseFetcher(ctx, task.follower, task.followerIncarnation, task.leader);
+    return;
+  }
   ctx.state.replicaFetchers.delete(fetcherKey(task.follower, task.leader));
-  if (runningBroker(ctx, task.follower, task.followerIncarnation) === undefined) return;
   for (const result of task.partitions) {
     if (result.error !== null) continue; // the leader moved: the controller's metadata decides (T5)
     const topic = ctx.state.topics.get(result.topic);
     const partition = topic?.partitions[result.partition];
-    if (topic === undefined || partition === undefined || topic.topicId !== result.topicId)
+    if (topic === undefined || partition === undefined || topic.topicId !== result.topicId) {
       continue;
+    }
     if (partition.leader === task.follower) continue; // it became the leader meanwhile
     const own = partition.replicaLogs.get(task.follower);
     if (own === undefined || own.logEndOffset !== result.fetchOffset) continue; // stale
@@ -336,8 +391,9 @@ export function handleReplicaFetchResponse(
     for (const record of result.records) {
       if (record.offset === own.logEndOffset) appendToReplica(own, record);
     }
+    // Log#updateHighWatermark: the leader's HW, kept within the follower's own log.
     own.highWatermark = Math.max(
-      own.highWatermark,
+      own.logStartOffset,
       Math.min(result.highWatermark, own.logEndOffset),
     );
     if (own.logEndOffset > from) {
@@ -355,10 +411,83 @@ export function handleReplicaFetchResponse(
   ensureReplicaFetcher(ctx, task.follower, task.leader);
 }
 
+/** The follower learns its fetch failed (connection to a dead leader) one network delay later. */
+function disconnect(ctx: EngineContext, task: ReplicaFetchRequestTask): void {
+  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+    type: 'ReplicaFetchDisconnected',
+    follower: task.follower,
+    followerIncarnation: task.followerIncarnation,
+    leader: task.leader,
+  });
+}
+
+/** A failed fetch frees the slot; the follower tries again after replica.fetch.backoff.ms. */
+export function handleReplicaFetchDisconnected(
+  ctx: EngineContext,
+  task: Task<'ReplicaFetchDisconnected'>,
+): void {
+  const key = fetcherKey(task.follower, task.leader);
+  const owner = ctx.state.replicaFetchers.get(key);
+  if (owner !== undefined && owner <= task.followerIncarnation)
+    ctx.state.replicaFetchers.delete(key);
+  if (runningBroker(ctx, task.follower, task.followerIncarnation) === undefined) {
+    ensureReplicaFetcher(ctx, task.follower, task.leader); // a newer life, if any, carries on
+    return;
+  }
+  ctx.kernel.scheduleIn(REPLICA_FETCH_BACKOFF_MS, { ...task, type: 'ReplicaFetchBackoff' });
+}
+
+export function handleReplicaFetchBackoff(
+  ctx: EngineContext,
+  task: Task<'ReplicaFetchBackoff'>,
+): void {
+  if (runningBroker(ctx, task.follower, task.followerIncarnation) === undefined) return;
+  ensureReplicaFetcher(ctx, task.follower, task.leader);
+}
+
+/**
+ * A broker process stopped (crash or shutdown): what it held in memory is gone. Parked follower
+ * fetches at it fail on the followers' side, its produce purgatory vanishes (producers time
+ * out), and its own fetchers stop.
+ */
+export function onBrokerStopped(ctx: EngineContext, brokerId: string): void {
+  const { state } = ctx;
+  for (const [fetchId, parked] of state.parkedReplicaFetches) {
+    if (parked.leader !== brokerId) continue;
+    state.parkedReplicaFetches.delete(fetchId);
+    disconnect(ctx, parked);
+  }
+  for (const [id, parked] of state.parkedProduces) {
+    if (parked.broker === brokerId) state.parkedProduces.delete(id);
+  }
+  for (const key of [...state.replicaFetchers.keys()]) {
+    if (key.startsWith(`${brokerId}>`)) state.replicaFetchers.delete(key);
+  }
+}
+
+/** A topic was deleted: parked follower fetches and acks=all produces for it complete now. */
+export function onTopicRemovedReplication(ctx: EngineContext, topic: string): void {
+  const { state } = ctx;
+  for (const [fetchId, parked] of state.parkedReplicaFetches) {
+    if (!parked.partitions.some((p) => p.topic === topic)) continue;
+    state.parkedReplicaFetches.delete(fetchId);
+    respondToReplicaFetch(ctx, parked);
+  }
+  for (const [id, parked] of state.parkedProduces) {
+    if (parked.topic !== topic) continue;
+    state.parkedProduces.delete(id);
+    // DelayedProduce#tryComplete: getPartitionOrError fails.
+    sendProduceResponse(ctx, parked, { ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });
+  }
+}
+
 // ── acks=all: the DelayedProduce purgatory ─────────────────────────────────────────────────────
 
 /** Where a produce response goes: the producer life and the record it answers. */
-export type ProduceTarget = Omit<ParkedProduce, 'produceId' | 'offset'>;
+export type ProduceTarget = Pick<
+  ParkedProduce,
+  'producerId' | 'incarnation' | 'topic' | 'partition' | 'traceId'
+>;
 
 /** Sends a produce response back to the producer (+ network delay). */
 export function sendProduceResponse(
@@ -377,18 +506,27 @@ export function sendProduceResponse(
   });
 }
 
-/** Parks an acks=all produce until the HW passes `offset` or `timeoutMs` passes (K6). */
+/**
+ * Parks an acks=all produce at leader `broker` until the HW passes `offset` or `timeoutMs`
+ * passes (K6).
+ */
 export function parkProduce(
   ctx: EngineContext,
   target: ProduceTarget,
+  where: { readonly broker: string; readonly topicId: number },
   offset: number,
   timeoutMs: number,
 ): void {
   const produceId = ++ctx.state.counters.produce;
-  ctx.state.parkedProduces.set(produceId, { ...target, produceId, offset });
+  ctx.state.parkedProduces.set(produceId, {
+    ...target,
+    ...where,
+    brokerIncarnation: ctx.state.brokers.get(where.broker)?.incarnation ?? -1,
+    produceId,
+    offset,
+  });
   ctx.kernel.scheduleIn(timeoutMs, { type: 'DelayedProduceExpire', produceId });
 }
-
 /**
  * Answers parked acks=all produces of `partition` whose record is now below the HW
  * (checkEnoughReplicasReachOffset, K6): success, or NOT_ENOUGH_REPLICAS_AFTER_APPEND when the
@@ -401,6 +539,7 @@ export function completeDelayedProduces(
 ): void {
   for (const [id, parked] of ctx.state.parkedProduces) {
     if (parked.topic !== partition.topic || parked.partition !== partition.index) continue;
+    if (parked.topicId !== topic.topicId) continue;
     if (partition.highWatermark <= parked.offset) continue;
     ctx.state.parkedProduces.delete(id);
     const enough = maximalIsr(partition).length >= effectiveMinIsr(topic.config, partition);

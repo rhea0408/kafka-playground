@@ -215,6 +215,8 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     if (task.acks === '0') return; // nobody is waiting for an answer
     sendProduceResponse(ctx, target, result);
   };
+  const broker = ctx.state.brokers.get(task.broker);
+  if (broker?.status !== 'running') return; // no process to answer; the producer times out (T7)
   if (topic === undefined || partition === undefined) {
     // The topic was deleted while the request was in flight.
     respond({ ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });
@@ -244,7 +246,13 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
   onLeaderAppended(ctx, partition);
   onLeaderStateChanged(ctx, topic, partition);
   if (task.acks === 'all' && partition.highWatermark <= appended.offset) {
-    parkProduce(ctx, target, appended.offset, task.timeoutMs);
+    parkProduce(
+      ctx,
+      target,
+      { broker: task.broker, topicId: topic.topicId },
+      appended.offset,
+      task.timeoutMs,
+    );
     return;
   }
   respond({ ok: true, offset: appended.offset });

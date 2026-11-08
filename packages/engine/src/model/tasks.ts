@@ -61,6 +61,8 @@ export interface ReplicaFetchRequestTask {
   readonly follower: string;
   readonly followerIncarnation: number;
   readonly leader: string;
+  /** The leader process the request was sent to; a parked fetch dies with it. */
+  readonly leaderIncarnation: number;
   readonly partitions: readonly ReplicaFetchPartition[];
   /** replica.fetch.wait.max.ms of the follower. */
   readonly maxWaitMs: number;
@@ -87,6 +89,11 @@ export type ReplicaFetchResult = ReplicaFetchPartition &
  */
 export interface ParkedProduce {
   readonly produceId: number;
+  /** The leader broker process holding it: the purgatory dies with that process. */
+  readonly broker: string;
+  readonly brokerIncarnation: number;
+  /** The topic life (KIP-516) the record was appended to. */
+  readonly topicId: number;
   readonly producerId: string;
   readonly incarnation: number;
   readonly topic: string;
@@ -144,6 +151,23 @@ export type EngineTask =
   | ReplicaFetchRequestTask
   /** replica.fetch.wait.max.ms passed for a parked follower fetch. */
   | { readonly type: 'ReplicaFetchExpire'; readonly fetchId: number }
+  /**
+   * The follower's connection to the leader failed (the leader process is gone): it backs off
+   * replica.fetch.backoff.ms before fetching again (AbstractFetcherThread).
+   */
+  | {
+      readonly type: 'ReplicaFetchDisconnected';
+      readonly follower: string;
+      readonly followerIncarnation: number;
+      readonly leader: string;
+    }
+  /** replica.fetch.backoff.ms after a failed fetch: try again. */
+  | {
+      readonly type: 'ReplicaFetchBackoff';
+      readonly follower: string;
+      readonly followerIncarnation: number;
+      readonly leader: string;
+    }
   /** The leader's answer reaches the follower broker. */
   | {
       readonly type: 'ReplicaFetchResponse';

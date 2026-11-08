@@ -24,6 +24,8 @@ import {
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
 import {
   handleDelayedProduceExpire,
+  handleReplicaFetchBackoff,
+  handleReplicaFetchDisconnected,
   handleReplicaFetchExpire,
   handleReplicaFetchRequest,
   handleReplicaFetchResponse,
@@ -57,6 +59,12 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'ReplicaFetchResponse':
       handleReplicaFetchResponse(ctx, task);
+      return;
+    case 'ReplicaFetchDisconnected':
+      handleReplicaFetchDisconnected(ctx, task);
+      return;
+    case 'ReplicaFetchBackoff':
+      handleReplicaFetchBackoff(ctx, task);
       return;
     case 'DelayedProduceExpire':
       handleDelayedProduceExpire(ctx, task);

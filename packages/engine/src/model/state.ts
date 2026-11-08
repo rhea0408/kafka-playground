@@ -262,8 +262,11 @@ export interface EngineState {
   readonly parkedFetches: Map<number, FetchRequestTask>;
   /** Follower fetches the leaders are holding (replica.fetch.wait.max.ms), by fetch id. */
   readonly parkedReplicaFetches: Map<number, ReplicaFetchRequestTask>;
-  /** Replica fetchers with a request in flight, as "follower>leader" (at most one each). */
-  readonly replicaFetchers: Set<string>;
+  /**
+   * Replica fetchers with a request in flight, as "follower>leader" (at most one each), and the
+   * follower incarnation that sent it.
+   */
+  readonly replicaFetchers: Map<string, number>;
   /** acks=all produces waiting for the HW (DelayedProduce purgatory), by produce id. */
   readonly parkedProduces: Map<number, ParkedProduce>;
   /**
@@ -292,7 +295,7 @@ export function createState(): EngineState {
     connections: [],
     parkedFetches: new Map(),
     parkedReplicaFetches: new Map(),
-    replicaFetchers: new Set(),
+    replicaFetchers: new Map(),
     parkedProduces: new Map(),
     counters: {
       incarnation: 0,

@@ -23,7 +23,12 @@ import {
 import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
-import { startFollowers } from '../protocols/replication.ts';
+import {
+  ensureReplicaFetcher,
+  onBrokerStopped,
+  onTopicRemovedReplication,
+  startFollowers,
+} from '../protocols/replication.ts';
 import { updateConfig } from './update-config.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
@@ -166,6 +171,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       component = (state.topics.get(id) as { config: Component }).config;
       state.topics.delete(id);
       onTopicRemoved(ctx, id);
+      onTopicRemovedReplication(ctx, id);
       deleteCommittedOffsets(ctx, id);
       break;
     case 'producer':
@@ -294,6 +300,16 @@ function brokerLifecycle(
       broker.status = 'running';
       broker.incarnation = ++ctx.state.counters.brokerIncarnation;
       ctx.emit({ type: 'BrokerStarted', brokerId: id });
+      // Its replica fetchers start again for every partition it follows (re-registration with
+      // the controller and truncation come in M4-T5/T6).
+      for (const topic of ctx.state.topics.values()) {
+        for (const partition of topic.partitions) {
+          const { leader } = partition;
+          if (leader !== null && leader !== id && partition.replicas.includes(id)) {
+            ensureReplicaFetcher(ctx, id, leader);
+          }
+        }
+      }
       break;
     case 'KillBroker':
     case 'StopBroker':
@@ -302,6 +318,7 @@ function brokerLifecycle(
       }
       broker.status = command.type === 'KillBroker' ? 'crashed' : 'stopped';
       broker.incarnation = ++ctx.state.counters.brokerIncarnation;
+      onBrokerStopped(ctx, id);
       ctx.emit({
         type: 'BrokerStopped',
         brokerId: id,

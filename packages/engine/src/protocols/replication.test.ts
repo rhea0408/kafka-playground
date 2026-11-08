@@ -175,7 +175,7 @@ describe('min.insync.replicas', () => {
       partition: 0,
       traceId: 'x',
     };
-    parkProduce(context, target, 0, 10_000);
+    parkProduce(context, target, { broker: p.leader, topicId: topic.topicId }, 0, 10_000);
     const leaderLog = p.replicaLogs.get(p.leader);
     if (leaderLog === undefined) throw new Error('setup');
     leaderLog.highWatermark = 1;
@@ -183,10 +183,13 @@ describe('min.insync.replicas', () => {
     completeDelayedProduces(context, topic, p);
     engine.runUntil(10);
     expect(context.state.parkedProduces.size).toBe(0);
-    // The answer goes to producer p1's incarnation 1 (dropped if that life is gone).
-    expect(events.filter((e) => e.type === 'ProduceFailed' || e.type === 'ProduceAcked')).toEqual(
-      ofType(events, 'ProduceFailed').filter((e) => e.error === 'NOT_ENOUGH_REPLICAS_AFTER_APPEND'),
-    );
+    const answers = events.filter((e) => e.type === 'ProduceFailed' || e.type === 'ProduceAcked');
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({
+      type: 'ProduceFailed',
+      traceId: 'x',
+      error: 'NOT_ENOUGH_REPLICAS_AFTER_APPEND',
+    });
   });
 });
 
@@ -202,5 +205,115 @@ describe('consumer fetch offsets (M2 F-c TODO)', () => {
     expect(at(1)).toMatchObject({ error: null, records: [] });
     expect(at(2)).toMatchObject({ error: 'OFFSET_OUT_OF_RANGE' });
     expect(at(0)).toMatchObject({ error: null, records: [] });
+  });
+});
+
+describe('replication robustness (review of M4-T3)', () => {
+  const leaderOf = (engine: Engine) => partition0(engine)?.leader ?? '';
+  const followersOf = (engine: Engine) => {
+    const p = partition0(engine);
+    return p?.replicas.map((r) => r.broker).filter((b) => b !== p.leader) ?? [];
+  };
+
+  it('followers keep fetching after their leader was killed and restarted while they waited', () => {
+    const engine = createEngine({ seed: 1, topology: cluster() });
+    engine.runUntil(1100); // both followers' fetches are parked at the leader
+    const leader = leaderOf(engine);
+    engine.dispatch({ type: 'KillBroker', id: leader });
+    engine.runUntil(1500);
+    engine.dispatch({ type: 'RestartBroker', id: leader });
+    engine.runUntil(6100); // followers retry after replica.fetch.backoff.ms (1 s)
+    const p = partition0(engine);
+    expect(new Set(p?.replicas.map((r) => r.logEndOffset)).size).toBe(1);
+    expect(p?.logEndOffset).toBeGreaterThan(1);
+    expect(p?.highWatermark).toBe(p?.logEndOffset);
+  });
+
+  it('a follower restarted while its fetch was in flight fetches again', () => {
+    const engine = createEngine({ seed: 1, topology: cluster() });
+    engine.runUntil(1100);
+    const [follower] = followersOf(engine);
+    engine.dispatch({ type: 'KillBroker', id: follower ?? '' });
+    engine.dispatch({ type: 'RestartBroker', id: follower ?? '' });
+    engine.runUntil(5100);
+    const p = partition0(engine);
+    expect(p?.replicas.map((r) => r.logEndOffset)).toEqual([5, 5, 5]);
+    expect(p?.highWatermark).toBe(5);
+  });
+
+  it('deleting a topic answers its parked acks=all writes; a re-created topic never acks them', () => {
+    const engine = createEngine({ seed: 1, topology: cluster() });
+    const events = record(engine);
+    engine.runUntil(500);
+    for (const b of followersOf(engine)) engine.dispatch({ type: 'KillBroker', id: b });
+    engine.runUntil(3500); // records 0–2 are parked (the HW is stuck)
+    engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
+    expect(
+      engine.dispatch({
+        type: 'AddComponent',
+        component: { kind: 'topic', id: 'orders', replicationFactor: 1 },
+      }),
+    ).toEqual({ ok: true });
+    engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
+    engine.runUntil(7100);
+    const old = (e: { traceId: string }) => ['p1@1#1', 'p1@1#2', 'p1@1#3'].includes(e.traceId);
+    expect(ofType(events, 'ProduceAcked').filter(old)).toEqual([]);
+    expect(
+      ofType(events, 'ProduceFailed')
+        .filter(old)
+        .map((e) => e.error),
+    ).toEqual([
+      'UNKNOWN_TOPIC_OR_PARTITION',
+      'UNKNOWN_TOPIC_OR_PARTITION',
+      'UNKNOWN_TOPIC_OR_PARTITION',
+    ]);
+    // Records sent to the new topic are acked with its own offsets.
+    expect(ofType(events, 'ProduceAcked').map((e) => e.offset)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('partitions added to a replicated topic are replicated too', () => {
+    const engine = createEngine({
+      seed: 1,
+      topology: {
+        ...cluster(),
+        producers: [{ kind: 'producer', id: 'p1', ratePerSec: 10, metadataMaxAgeMs: 0 }],
+      },
+    });
+    engine.runUntil(100);
+    engine.dispatch({ type: 'UpdateConfig', id: 'orders', patch: { partitions: 3 } });
+    engine.runUntil(5000);
+    const partitions = engine.getSnapshot().topics[0]?.partitions ?? [];
+    expect(partitions).toHaveLength(3);
+    expect(partitions.slice(1).some((p) => p.logEndOffset > 0)).toBe(true);
+    for (const p of partitions) {
+      expect(p.replicas).toHaveLength(3);
+      expect(new Set(p.replicas.map((r) => r.logEndOffset)).size).toBe(1);
+      expect(p.highWatermark).toBe(p.logEndOffset);
+    }
+  });
+
+  it('acks=0 with RF 3: nothing waits at the leader, records still replicate', () => {
+    const { engine, context } = createEngineInternal({ seed: 1, topology: cluster({ acks: '0' }) });
+    engine.runUntil(1001);
+    expect(context.state.parkedProduces.size).toBe(0);
+    engine.runUntil(1100);
+    expect(partition0(engine)?.highWatermark).toBe(1);
+  });
+
+  it('acks=1 with RF 3: the consumer gets a record only after the followers have it', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ acks: '1', consumer: true }) });
+    const events = record(engine);
+    engine.runUntil(8000);
+    const appended = ofType(events, 'RecordAppended');
+    const consumed = ofType(events, 'RecordConsumed');
+    expect(consumed.length).toBeGreaterThan(0);
+    for (const c of consumed) {
+      const append = appended.find((a) => a.offset === c.offset);
+      const replicated = ofType(events, 'ReplicaFetched').filter(
+        (r) => r.toOffset > c.offset && r.t <= c.t,
+      );
+      expect(append).toBeDefined();
+      expect(new Set(replicated.map((r) => r.broker)).size).toBe(2);
+    }
   });
 });
