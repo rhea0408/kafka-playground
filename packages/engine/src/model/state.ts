@@ -302,3 +302,34 @@ export function topicsOfConsumer(state: EngineState, consumerId: string): TopicS
     .map((c) => state.topics.get(c.from))
     .filter((t): t is TopicState => t !== undefined);
 }
+
+/**
+ * Registered brokers for replica placement, with whether each is fenced. Until the controller
+ * models fencing (M4-T5), a broker that is not running counts as fenced.
+ */
+export function placementBrokers(state: EngineState): { id: string; fenced: boolean }[] {
+  return [...state.brokers.values()].map((b) => ({
+    id: b.config.id,
+    fenced: b.status !== 'running',
+  }));
+}
+
+/**
+ * A broker's replica manager view (ReplicaManager): how many partitions it leads and how many it
+ * holds as a follower, over every topic.
+ */
+export function replicaView(
+  state: EngineState,
+  brokerId: string,
+): { led: number; followed: number } {
+  let led = 0;
+  let followed = 0;
+  for (const topic of state.topics.values()) {
+    for (const p of topic.partitions) {
+      if (!p.replicas.includes(brokerId)) continue;
+      if (p.leader === brokerId) led++;
+      else followed++;
+    }
+  }
+  return { led, followed };
+}

@@ -66,7 +66,12 @@ const keyStrategy = fc.oneof(
 export const topologyArb: fc.Arbitrary<TopologyInput> = fc
   .record({
     topics: fc.array(
-      fc.record({ partitions: fc.integer({ min: 1, max: 4 }), unclean: fc.boolean() }),
+      fc.record({
+        partitions: fc.integer({ min: 1, max: 4 }),
+        unclean: fc.boolean(),
+        rf: fc.integer({ min: 1, max: 3 }),
+        minIsr: fc.constantFrom(1, 1, 2, 3),
+      }),
       { minLength: 1, maxLength: 2 },
     ),
     producers: fc.array(
@@ -112,16 +117,24 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     // application do; otherwise most groups end in INCONSISTENT_GROUP_PROTOCOL.
     shared: fc.record(groupFields),
     initialDelay: fc.constantFrom(0, 0, 3000),
+    // M4-T2: mostly one broker as before; sometimes two or three with replicated topics.
+    brokerCount: fc.constantFrom(1, 1, 2, 3),
   })
-  .map(({ topics, producers, consumers, shared, initialDelay }) => {
+  .map(({ topics, producers, consumers, shared, initialDelay, brokerCount }) => {
     const topicIds = topics.map((_, i) => `t${String(i)}`);
     const picked = (mask: number) => topicIds.filter((_, i) => (mask & (1 << i)) !== 0);
     return {
-      brokers: [{ kind: 'broker' as const, id: 'b1', groupInitialRebalanceDelayMs: initialDelay }],
-      topics: topics.map(({ partitions, unclean }, i) => ({
+      brokers: Array.from({ length: brokerCount }, (_, i) => ({
+        kind: 'broker' as const,
+        id: `b${String(i + 1)}`,
+        groupInitialRebalanceDelayMs: initialDelay,
+      })),
+      topics: topics.map(({ partitions, unclean, rf, minIsr }, i) => ({
         kind: 'topic' as const,
         id: `t${String(i)}`,
         partitions,
+        replicationFactor: Math.min(rf, brokerCount),
+        minInsyncReplicas: minIsr,
         uncleanLeaderElectionEnable: unclean,
       })),
       producers: producers.map(({ topicMask, ...p }, i) => ({
@@ -146,7 +159,7 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     };
   });
 
-const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 'c2', 't0', 't1', 'b1', 'ghost');
+const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 'c2', 't0', 't1', 'b1', 'b2', 'ghost');
 
 const commandArb: fc.Arbitrary<Command> = fc.oneof(
   ids.map((id): Command => ({ type: 'KillConsumer', id })),
@@ -244,7 +257,7 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
   fc
     .record({
       type: fc.constantFrom('KillBroker' as const, 'StopBroker' as const, 'RestartBroker' as const),
-      id: fc.constantFrom('b1', 'b1', 'ghost'),
+      id: fc.constantFrom('b1', 'b2', 'b3', 'ghost'),
     })
     .map(({ type, id }): Command => ({ type, id })),
   // Re-adding a removed producer or topic with the same id (a new life / a re-created topic).

@@ -72,7 +72,7 @@ function snapshotTables(snap: EngineSnapshot): string[] {
         ['partition', 'leader', 'LSO', 'LEO', 'HW', 'keys in log (oldest → newest)'],
         topic.partitions.map((p) => [
           `${topic.config.id}-${String(p.index)}`,
-          p.leader,
+          p.leader ?? 'none',
           String(p.logStartOffset),
           String(p.logEndOffset),
           String(p.highWatermark),

@@ -18,11 +18,29 @@ import type {
   GroupState,
   ProducerStats,
 } from '../model/state.ts';
+import { replicaView } from '../model/state.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
+
+/** One replica of a partition: its broker and its own log end and high watermark (M4). */
+export interface ReplicaSnapshot {
+  readonly broker: string;
+  readonly logEndOffset: number;
+  readonly highWatermark: number;
+}
 
 export interface PartitionSnapshot {
   readonly index: number;
-  readonly leader: string;
+  /** The leader's broker id, or null while the partition is offline. */
+  readonly leader: string | null;
+  /** Assigned replicas in replica order (preferred leader first), each with its own offsets. */
+  readonly replicas: readonly ReplicaSnapshot[];
+  /** In-sync replicas, as the controller committed them. */
+  readonly isr: readonly string[];
+  /** Eligible Leader Replicas (KIP-966). */
+  readonly elr: readonly string[];
+  readonly leaderEpoch: number;
+  readonly partitionEpoch: number;
+  /** The leader's offsets (the last leader's while offline): what consumers see. */
   readonly logStartOffset: number;
   readonly logEndOffset: number;
   readonly highWatermark: number;
@@ -170,6 +188,9 @@ export interface BrokerSnapshot {
   readonly config: Broker;
   /** The broker process: running, stopped (controlled shutdown) or crashed. */
   readonly status: BrokerProcessStatus;
+  /** Its replica manager's view: partitions it leads, and partitions it holds as a follower. */
+  readonly partitionsLed: number;
+  readonly partitionsFollowed: number;
 }
 
 export interface EngineSnapshot {
@@ -208,16 +229,33 @@ export function buildSnapshot(
 ): EngineSnapshot {
   return {
     t,
-    brokers: [...state.brokers.values()].map((b) => ({
-      config: copyPlain(b.config),
-      status: b.status,
-    })),
+    brokers: [...state.brokers.values()].map((b) => {
+      const view = replicaView(state, b.config.id);
+      return {
+        config: copyPlain(b.config),
+        status: b.status,
+        partitionsLed: view.led,
+        partitionsFollowed: view.followed,
+      };
+    }),
     topics: [...state.topics.values()].map((topic) => ({
       topicId: topic.topicId,
       config: copyPlain(topic.config),
       partitions: topic.partitions.map((p) => ({
         index: p.index,
         leader: p.leader,
+        replicas: p.replicas.map((broker) => {
+          const r = p.replicaLogs.get(broker);
+          return {
+            broker,
+            logEndOffset: r?.logEndOffset ?? 0,
+            highWatermark: r?.highWatermark ?? 0,
+          };
+        }),
+        isr: [...p.isr],
+        elr: [...p.elr],
+        leaderEpoch: p.leaderEpoch,
+        partitionEpoch: p.partitionEpoch,
         logStartOffset: p.logStartOffset,
         logEndOffset: p.logEndOffset,
         highWatermark: p.highWatermark,

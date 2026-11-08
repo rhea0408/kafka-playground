@@ -35,7 +35,8 @@ import { parseComponent, type Component } from '@kp/schema';
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
-import type { TopicState } from '../model/state.ts';
+import { placementBrokers, type TopicState } from '../model/state.ts';
+import { placeReplicas } from '../model/placement.ts';
 import { closeConsumer, runConsumer } from '../protocols/consume.ts';
 import { restartSchedule } from '../protocols/produce.ts';
 import { kindOf, reject, type ApplyResult } from './apply.ts';
@@ -116,7 +117,10 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
       if (after.replicationFactor !== before.replicationFactor) {
         return 'The replication factor of an existing topic is changed by reassigning partitions, not through its config. Partition reassignment arrives in v0.2.';
       }
-      addPartitions(topic, after.partitions, [...state.brokers.keys()]);
+      if (after.partitions > current && !placementBrokers(state).some((b) => !b.fenced)) {
+        return 'INVALID_REPLICATION_FACTOR: no broker is running, so the new partitions would have no leader.';
+      }
+      addPartitions(ctx, topic, after.partitions);
       topic.config = after;
       return undefined;
     }
@@ -151,17 +155,21 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
 }
 
 /**
- * Adds empty partitions up to `count` (CreatePartitions). Leaders continue the topic's stripe
- * over the current brokers sorted by id, from partition 0's leader (placement.ts stripes the same
- * way). With one broker (M2) every new partition lands on it.
+ * Adds empty partitions up to `count` (CreatePartitions). The controller places the new
+ * partitions' replicas with the same StripedReplicaPlacer as at creation (a fresh random offset
+ * for this request), with the topic's replication factor.
  */
-function addPartitions(topic: TopicState, count: number, brokerIds: readonly string[]): void {
-  const first = topic.partitions[0]?.leader;
-  const sorted = [...brokerIds].sort();
-  const start = Math.max(0, first === undefined ? 0 : sorted.indexOf(first));
-  for (let index = topic.partitions.length; index < count; index++) {
-    const leader = sorted[(start + index) % sorted.length] ?? first ?? '';
-    topic.partitions.push(createPartition(topic.config.id, index, leader));
+function addPartitions(ctx: EngineContext, topic: TopicState, count: number): void {
+  const added = count - topic.partitions.length;
+  if (added <= 0) return;
+  const assignments = placeReplicas(
+    added,
+    topic.config.replicationFactor,
+    placementBrokers(ctx.state),
+    ctx.kernel.rng.fork(`placement:${topic.config.id}:${String(topic.partitions.length)}`),
+  );
+  for (const replicas of assignments) {
+    topic.partitions.push(createPartition(topic.config.id, topic.partitions.length, replicas));
   }
 }
 

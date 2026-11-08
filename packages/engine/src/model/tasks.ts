@@ -68,7 +68,7 @@ export type EngineTask =
       readonly topic: string;
       readonly partition: number;
       readonly acks: Acks;
-      readonly record: Omit<LogRecord, 'offset'>;
+      readonly record: Omit<LogRecord, 'offset' | 'leaderEpoch'>;
     }
   /** The leader's produce response reaches the producer (acks = 1 / all). */
   | {

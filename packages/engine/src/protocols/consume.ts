@@ -570,16 +570,19 @@ function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assi
       continue;
     }
     const position = consumer.positions.get(a.key);
-    if (position === undefined || consumer.fetchesInFlight.has(partition.leader)) continue;
+    // TODO(M4-T7): the client's metadata decides where to fetch; an offline partition is skipped.
+    const { leader } = partition;
+    if (leader === null) continue;
+    if (position === undefined || consumer.fetchesInFlight.has(leader)) continue;
     if (consumer.buffer.some((chunk) => chunk.key === a.key)) continue;
-    const list = byLeader.get(partition.leader) ?? [];
+    const list = byLeader.get(leader) ?? [];
     list.push({
       topic: a.topic,
       partition: a.partition,
       topicId: position.topicId,
       fetchOffset: position.offset,
     });
-    byLeader.set(partition.leader, list);
+    byLeader.set(leader, list);
   }
   for (const [broker, partitions] of byLeader) {
     consumer.fetchesInFlight.add(broker);

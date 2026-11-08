@@ -12,7 +12,8 @@
  */
 
 import type { EngineContext } from '../model/context.ts';
-import { placePartitions } from '../model/placement.ts';
+import { placeReplicas } from '../model/placement.ts';
+import { placementBrokers } from '../model/state.ts';
 
 /** offsets.topic.num.partitions default. */
 export const OFFSETS_TOPIC_PARTITIONS = 50;
@@ -40,11 +41,13 @@ export function coordinatorFor(ctx: EngineContext, groupId: string): string | nu
   const { state } = ctx;
   if (state.offsetsTopicLeaders === null) {
     if (state.brokers.size === 0) return null;
-    state.offsetsTopicLeaders = placePartitions(
+    // TODO(M4-T8): a real replicated internal topic; for now only the leaders are kept.
+    state.offsetsTopicLeaders = placeReplicas(
       OFFSETS_TOPIC_PARTITIONS,
-      [...state.brokers.keys()],
+      1,
+      placementBrokers(state).map((b) => ({ ...b, fenced: false })),
       ctx.kernel.rng.fork('placement:__consumer_offsets'),
-    );
+    ).map((replicas) => replicas[0] as string);
   }
   const leader = state.offsetsTopicLeaders[partitionFor(groupId)];
   return leader !== undefined && state.brokers.has(leader) ? leader : null;

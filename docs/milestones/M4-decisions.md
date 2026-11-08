@@ -113,3 +113,27 @@ Checked against the **Apache Kafka 4.4.0** tag (commit 1156b27, `MetadataVersion
 | K12 | Election = first acceptable replica in **replica order** (preferred first) among the ISR (or ELR); acceptable = unfenced, not shutting down. | Confirmed. |
 | K13 | `StripedReplicaPlacer` with no racks: brokers sorted, random start offset; partition p's leader is the next unfenced broker at offset + p, followers the next brokers in the list (unfenced, then fenced); after `numUnfenced` partitions the list is shuffled. Shutting-down brokers excluded; RF > registered brokers → `INVALID_REPLICATION_FACTOR`. | T2, with the seeded RNG. |
 | K14 | With unclean election on, the controller elects an unclean leader at the fence or at a later unfence; a config turned on later for an offline partition is picked up by the periodic task (`unclean.leader.election.interval.ms`, 300 s) or the next broker event. Order: ISR, ELR, last known leader, then any active replica; ISR forced to [leader], ELR cleared. | T5. Turning the config on applies at the next broker event or immediately (game simplification, since the 5-minute task would be invisible); simplifications row. |
+
+## T1 – Schema and commands
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T1-1 | Broker fields are static configs: read-only in the panel, changeable only in a scene or level. | Editable with "applies at restart". | Kafka reads them only at startup; dynamic broker configs (`kafka-configs --alter`) are out of scope. |
+| T1-2 | `offsetsTopicReplicationFactor` holds the real default 3; the engine applies min(3, registered brokers) when it creates `__consumer_offsets` (Q9). | Store the computed value. | The field shows the real config; the game rule is visible where it's applied. |
+| T1-3 | The rule `replica.fetch.wait.max.ms < replica.lag.time.max.ms` is **not** enforced. | Enforce it. | Kafka only documents it; enforcing would invent behaviour. |
+| T1-4 | `delivery.timeout.ms ≥ request.timeout.ms` is enforced with the client's ConfigException text (linger.ms is 0 here). | — | `KafkaProducer#configureDeliveryTimeout` (K7). |
+| T1-5 | Brokers have their own incarnation counter. | Share the producer/consumer counter. | Sharing would renumber every client trace id in existing scenes. |
+| T1-6 | Until T5 the broker commands only change the process status and emit `BrokerStopped` / `BrokerStarted`; nothing reacts yet. | Hold the commands back until T5. | The plan puts them in T1; the UI doesn't expose them before T11. |
+
+## T2 – Replica model and placement
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T2-1 | Each replica has its own `ReplicaLog` (records, LEO, HW, leader-epoch cache); records are frozen and shared between replica logs. `partition.log` / offsets read the **view replica** (the leader, or the last leader while offline). | A single log plus per-replica LEOs (cheaper, but truncation and divergence can't be shown). | Q8 / T6 need divergent logs. Sharing keeps memory at one slot per record per replica. |
+| T2-2 | Records carry `leaderEpoch` (the batch header's partitionLeaderEpoch). | Derive epochs from the leader's cache when replicating. | Followers build their epoch cache from it, as Kafka does. |
+| T2-3 | Partition metadata: `replicas`, `isr` (all replicas at creation), `elr`, `lastKnownElr`, `leader` (null = offline), `leaderEpoch`, `partitionEpoch`. | — | `PartitionRegistration` fields (K1). |
+| T2-4 | Until T3, the HW is still decided by the leader alone (HW = LEO after every append), so RF > 1 topics behave like RF 1. | — | Replication is T3; RF 1 is unchanged, as the plan requires. |
+| T2-5 | Placement treats non-running brokers as fenced until the controller models fencing (T5). Creating a topic needs at least one running broker. | — | The placer needs an unfenced leader (K13). |
+| T2-6 | `__consumer_offsets` still keeps only its partition leaders (placed with the new placer, RF 1) until T8. | — | T8 makes it a real topic. |
+| T2-7 | Broker snapshots gain `partitionsLed` / `partitionsFollowed` (the replica manager's view); partition snapshots gain `replicas` (with each replica's LEO and HW), `isr`, `elr`, `leaderEpoch`, `partitionEpoch`; the diff carries every summary field. | — | Needed by T10/T11; the diff round-trip property covers it. |
+| T2-8 | The general arbitraries now use 1–3 brokers (mostly 1) with RF up to 3 and minISR 1–3. | Wait until T9. | Multi-broker placement is exercised from the start. |

@@ -50,16 +50,20 @@ export interface KeyedDiff<C> {
 export type PartitionDiff =
   /** The whole partition: a new partition, or its records do not continue `prev`'s. */
   | { readonly index: number; readonly full: PartitionSnapshot }
-  /** Offsets and leader as in `next`; records = prev.records.slice(drop) + append. */
-  | {
+  /** Every summary field as in `next`; records = prev.records.slice(drop) + append. */
+  | (PartitionSummary & {
       readonly index: number;
-      readonly leader: string;
-      readonly logStartOffset: number;
-      readonly logEndOffset: number;
-      readonly highWatermark: number;
       readonly drop: number;
       readonly append: readonly LogRecord[];
-    };
+    });
+
+/** A partition snapshot without its index and records: offsets, leader, replicas, ISR. */
+export type PartitionSummary = Omit<PartitionSnapshot, 'index' | 'records'>;
+
+function summaryOf(p: PartitionSnapshot): PartitionSummary {
+  const { index: _index, records: _records, ...summary } = p;
+  return summary;
+}
 
 /** A topic that changed, by name. */
 export type TopicDiff =
@@ -271,23 +275,11 @@ function diffPartition(
   }
   if (!continues) return { index: next.index, full: next };
 
+  const summary = summaryOf(next);
   const unchanged =
-    kept === next.records.length &&
-    drop === 0 &&
-    prev.leader === next.leader &&
-    prev.logStartOffset === next.logStartOffset &&
-    prev.logEndOffset === next.logEndOffset &&
-    prev.highWatermark === next.highWatermark;
+    kept === next.records.length && drop === 0 && deepEqual(summaryOf(prev), summary);
   if (unchanged) return undefined;
-  return {
-    index: next.index,
-    leader: next.leader,
-    logStartOffset: next.logStartOffset,
-    logEndOffset: next.logEndOffset,
-    highWatermark: next.highWatermark,
-    drop,
-    append: next.records.slice(kept),
-  };
+  return { ...summary, index: next.index, drop, append: next.records.slice(kept) };
 }
 
 function applyTopic(prev: TopicSnapshot | undefined, change: TopicDiff): TopicSnapshot {
@@ -312,12 +304,10 @@ function applyPartition(
   if (prev === undefined) {
     throw new Error(`Snapshot diff does not fit: no partition ${String(change.index)}.`);
   }
+  const { index: _index, drop: _drop, append: _append, ...summary } = change;
   return {
+    ...summary,
     index: prev.index,
-    leader: change.leader,
-    logStartOffset: change.logStartOffset,
-    logEndOffset: change.logEndOffset,
-    highWatermark: change.highWatermark,
     records:
       change.drop === 0 && change.append.length === 0
         ? prev.records
@@ -336,7 +326,8 @@ function sameRecord(a: LogRecord | undefined, b: LogRecord | undefined): boolean
     a.value === b.value &&
     a.timestamp === b.timestamp &&
     a.producerId === b.producerId &&
-    a.sizeBytes === b.sizeBytes
+    a.sizeBytes === b.sizeBytes &&
+    a.leaderEpoch === b.leaderEpoch
   );
 }
 

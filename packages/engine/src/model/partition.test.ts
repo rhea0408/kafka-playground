@@ -43,7 +43,7 @@ describe('partition log', () => {
 
   it('keeps the record fields and adds the offset', () => {
     const p = createPartition('orders', 1, 'b1');
-    expect(appendRecord(p, rec(7, 'A'))).toEqual({ offset: 0, ...rec(7, 'A') });
+    expect(appendRecord(p, rec(7, 'A'))).toEqual({ offset: 0, ...rec(7, 'A'), leaderEpoch: 0 });
   });
 
   it('reads from an offset, at most max records, never at or above the HW', () => {
@@ -68,5 +68,27 @@ describe('partition log', () => {
 
   it('names partitions like Kafka tools do', () => {
     expect(partitionName('orders', 2)).toBe('orders-2');
+  });
+
+  it('gives every replica its own log; the partition reads the leader’s (M4-T2)', () => {
+    const p = createPartition('orders', 0, ['b2', 'b1', 'b3']);
+    expect(p).toMatchObject({ leader: 'b2', isr: ['b2', 'b1', 'b3'], leaderEpoch: 0 });
+    appendRecord(p, rec(0));
+    expect(p.replicaLogs.get('b2')?.logEndOffset).toBe(1);
+    expect(p.replicaLogs.get('b1')?.logEndOffset).toBe(0);
+    expect(p.logEndOffset).toBe(1);
+    expect(p.replicaLogs.get('b2')?.epochs).toEqual([{ epoch: 0, startOffset: 0 }]);
+  });
+
+  it('starts a new leader-epoch cache entry when the epoch changes', () => {
+    const p = createPartition('orders', 0, 'b1');
+    appendRecord(p, rec(0));
+    p.leaderEpoch = 2;
+    appendRecord(p, rec(1));
+    appendRecord(p, rec(2));
+    expect(p.replicaLogs.get('b1')?.epochs).toEqual([
+      { epoch: 0, startOffset: 0 },
+      { epoch: 2, startOffset: 1 },
+    ]);
   });
 });

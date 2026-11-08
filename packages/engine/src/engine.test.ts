@@ -27,7 +27,12 @@ describe('createEngine', () => {
     const snap = engine.getSnapshot();
     expect(snap.t).toBe(0);
     expect(snap.brokers).toEqual([
-      { config: BrokerSchema.parse({ kind: 'broker', id: 'b1' }), status: 'running' },
+      {
+        config: BrokerSchema.parse({ kind: 'broker', id: 'b1' }),
+        status: 'running',
+        partitionsLed: 3,
+        partitionsFollowed: 0,
+      },
     ]);
     expect(snap.topics[0]?.partitions.map((p) => [p.index, p.leader, p.logEndOffset])).toEqual([
       [0, 'b1', 0],

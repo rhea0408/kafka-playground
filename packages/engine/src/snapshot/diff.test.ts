@@ -126,8 +126,10 @@ describe('diffSnapshot / applyDiff', () => {
     const applied = applyDiff(prev, diff);
     expect(applied).toEqual(next);
     expect(JSON.stringify(prev)).toBe(before);
-    // Structural sharing: the unchanged broker list is the same array.
-    expect(applied.brokers).toBe(prev.brokers);
+    // Structural sharing: the unchanged connection list is the same array. (The broker list
+    // changed: the broker now leads the two new partitions.)
+    expect(applied.connections).toBe(prev.connections);
+    expect(applied.brokers[0]?.partitionsLed).toBe(4);
   });
 
   it('throws when a diff does not fit the snapshot it is applied to', () => {
