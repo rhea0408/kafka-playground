@@ -48,6 +48,10 @@ export function applyCommand(ctx: EngineContext, command: Command): ApplyResult 
     case 'StopConsumer':
     case 'RestartConsumer':
       return consumerLifecycle(ctx, command);
+    case 'KillBroker':
+    case 'StopBroker':
+    case 'RestartBroker':
+      return brokerLifecycle(ctx, command);
     case 'UpdateConfig':
       return updateConfig(ctx, command);
     default:
@@ -77,7 +81,11 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
   const { state } = ctx;
   switch (component.kind) {
     case 'broker':
-      state.brokers.set(component.id, { config: component });
+      state.brokers.set(component.id, {
+        config: component,
+        status: 'running',
+        incarnation: ++state.counters.brokerIncarnation,
+      });
       break;
     case 'topic': {
       const leaders = placePartitions(
@@ -114,9 +122,6 @@ function checkAdd(ctx: EngineContext, component: Component): string | undefined 
     if (component.replicationFactor > brokers) {
       return `Replication factor ${String(component.replicationFactor)} is larger than the number of brokers (${String(brokers)}). Add a broker first.`;
     }
-    if (component.replicationFactor > 1) {
-      return 'This version keeps one copy of each partition, so replication factor must be 1. Replication arrives in a later milestone (M4).';
-    }
   }
   return undefined;
 }
@@ -132,13 +137,13 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       for (const topic of state.topics.values()) {
         if (topic.partitions.some((p) => p.leader === id)) {
           return reject(
-            `Broker ${id} leads partitions of topic "${topic.config.id}". Remove the topic first; moving partitions to other brokers arrives in M4.`,
+            `Broker ${id} holds replicas of topic "${topic.config.id}". Remove the topic first: moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
           );
         }
       }
       if (hostsOffsetsTopic(ctx, id)) {
         return reject(
-          `Broker ${id} leads partitions of __consumer_offsets, the internal topic where consumer groups keep their committed offsets, so it is a group coordinator. Moving them to another broker arrives in M4.`,
+          `Broker ${id} holds replicas of __consumer_offsets, the internal topic where consumer groups keep their committed offsets. Moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
         );
       }
       component = (state.brokers.get(id) as { config: Component }).config;
@@ -254,6 +259,42 @@ function consumerLifecycle(
         return reject(`Consumer ${id} is already stopping: it finishes its current batch first.`);
       }
       stopConsumer(ctx, consumer);
+      break;
+  }
+  return { ok: true, logged: command };
+}
+
+/**
+ * KillBroker (crash), StopBroker (controlled shutdown) and RestartBroker (the process comes back
+ * with its log on disk), M4 Q3. What the controller, the replicas and the clients do about it
+ * follows in M4-T5–T7.
+ */
+function brokerLifecycle(
+  ctx: EngineContext,
+  command: Extract<Command, { type: 'KillBroker' | 'StopBroker' | 'RestartBroker' }>,
+): ApplyResult {
+  const { id } = command;
+  const broker = ctx.state.brokers.get(id);
+  if (broker === undefined) return reject(`There is no broker with id "${id}".`);
+  switch (command.type) {
+    case 'RestartBroker':
+      if (broker.status === 'running') return reject(`Broker ${id} is already running.`);
+      broker.status = 'running';
+      broker.incarnation = ++ctx.state.counters.brokerIncarnation;
+      ctx.emit({ type: 'BrokerStarted', brokerId: id });
+      break;
+    case 'KillBroker':
+    case 'StopBroker':
+      if (broker.status !== 'running') {
+        return reject(`Broker ${id} is not running (${broker.status}).`);
+      }
+      broker.status = command.type === 'KillBroker' ? 'crashed' : 'stopped';
+      broker.incarnation = ++ctx.state.counters.brokerIncarnation;
+      ctx.emit({
+        type: 'BrokerStopped',
+        brokerId: id,
+        reason: command.type === 'KillBroker' ? 'crash' : 'shutdown',
+      });
       break;
   }
   return { ok: true, logged: command };

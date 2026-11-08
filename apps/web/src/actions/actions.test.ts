@@ -1,3 +1,4 @@
+import { BrokerSchema, TopicSchema } from '@kp/schema';
 import type { EngineSnapshot } from '@kp/engine';
 import type { Component } from '@kp/schema';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -261,8 +262,8 @@ describe('nextComponentId', () => {
       ...state,
       components: [
         ...state.components,
-        { kind: 'broker', id: 'b7', rack: null, groupInitialRebalanceDelayMs: 3000 },
-        { kind: 'topic', id: 'orders', partitions: 1, replicationFactor: 1, minInsyncReplicas: 1 },
+        BrokerSchema.parse({ kind: 'broker', id: 'b7' }),
+        TopicSchema.parse({ kind: 'topic', id: 'orders', partitions: 1 }),
       ],
     };
     expect(nextComponentId(withGaps, 'broker')).toBe('b8');

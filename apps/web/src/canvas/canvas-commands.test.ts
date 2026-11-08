@@ -1,4 +1,4 @@
-import { parseComponent } from '@kp/schema';
+import { parseComponent, TopicSchema, ProducerSchema } from '@kp/schema';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { Actions } from '../actions/actions.ts';
 import { resetTopologyStore, INITIAL_TOPOLOGY_STATE } from '../stores/topology-store.ts';
@@ -19,17 +19,8 @@ describe('connectChecked', () => {
       ...INITIAL_TOPOLOGY_STATE,
       components: [
         ...INITIAL_TOPOLOGY_STATE.components,
-        {
-          kind: 'producer',
-          id: 'p1',
-          ratePerSec: 1,
-          keyStrategy: { type: 'null' },
-          acks: 'all',
-          batchSize: 16384,
-          messageSizeBytes: 1024,
-          metadataMaxAgeMs: 300_000,
-        },
-        { kind: 'topic', id: 't1', partitions: 1, replicationFactor: 1, minInsyncReplicas: 1 },
+        ProducerSchema.parse({ kind: 'producer', id: 'p1' }),
+        TopicSchema.parse({ kind: 'topic', id: 't1', partitions: 1 }),
       ],
     });
   });
@@ -82,7 +73,7 @@ describe('consumer groups (M3-T8)', () => {
       ...INITIAL_TOPOLOGY_STATE,
       components: [
         ...INITIAL_TOPOLOGY_STATE.components,
-        { kind: 'topic', id: 't1', partitions: 1, replicationFactor: 1, minInsyncReplicas: 1 },
+        TopicSchema.parse({ kind: 'topic', id: 't1', partitions: 1 }),
         consumer('c1', 'g'),
         consumer('c2', 'g'),
         consumer('c3', 'other'),

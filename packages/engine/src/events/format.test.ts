@@ -126,6 +126,7 @@ describe('formatEvent', () => {
       partitions: 3,
       replicationFactor: 1,
       minInsyncReplicas: 1,
+      uncleanLeaderElectionEnable: false,
     } as const;
     expect(
       formatEvent({
@@ -137,5 +138,14 @@ describe('formatEvent', () => {
         after: { ...before, partitions: 4 },
       }),
     ).toBe('00:02.000  ConfigUpdated    topic orders  partitions: 3 → 4');
+  });
+
+  it('formats broker lifecycle events (M4-T1)', () => {
+    expect(
+      formatEvent({ t: 9000, seq: 1, type: 'BrokerStopped', brokerId: 'b2', reason: 'crash' }),
+    ).toBe('00:09.000  BrokerStopped    b2  crash');
+    expect(formatEvent({ t: 9500, seq: 2, type: 'BrokerStarted', brokerId: 'b2' })).toBe(
+      '00:09.500  BrokerStarted    b2',
+    );
   });
 });

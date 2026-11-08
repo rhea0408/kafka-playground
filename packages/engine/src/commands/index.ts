@@ -37,6 +37,22 @@ export type Command =
   /** Starts a crashed or stopped consumer again as a new group member; it resumes from the group's committed offsets. */
   | { readonly type: 'RestartConsumer'; readonly id: string }
   /**
+   * Crashes a broker (FR-3.1, M4 Q3): the process stops at once. Requests in flight to it are
+   * lost and it stops heartbeating, so the KRaft controller fences it only after
+   * broker.session.timeout.ms. Its log stays on disk.
+   */
+  | { readonly type: 'KillBroker'; readonly id: string }
+  /**
+   * Shuts a broker down cleanly (controlled shutdown, M4 Q3): the controller moves leadership to
+   * other in-sync replicas first, then the broker stops. Nothing acknowledged is lost.
+   */
+  | { readonly type: 'StopBroker'; readonly id: string }
+  /**
+   * Starts a crashed or stopped broker again with the log it had on disk: it registers with the
+   * controller, truncates records the new leaders don't have, catches up and rejoins the ISR.
+   */
+  | { readonly type: 'RestartBroker'; readonly id: string }
+  /**
    * Changes a component's config (properties panel, FR-1.3). `patch` holds only the fields to
    * change; the merged config is validated like AddComponent. Rules per kind are in apply.ts.
    */

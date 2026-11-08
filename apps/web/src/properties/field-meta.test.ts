@@ -82,8 +82,20 @@ describe('field metadata', () => {
       [
         'broker.rack',
         'broker.groupInitialRebalanceDelayMs',
+        'broker.replicaLagTimeMaxMs',
+        'broker.replicaFetchWaitMaxMs',
+        'broker.offsetsTopicReplicationFactor',
+        'broker.autoLeaderRebalanceEnable',
+        'broker.leaderImbalanceCheckIntervalSeconds',
         'topic.minInsyncReplicas',
         'topic.replicationFactor',
+        'topic.uncleanLeaderElectionEnable',
+        'producer.retries',
+        'producer.deliveryTimeoutMs',
+        'producer.requestTimeoutMs',
+        'producer.retryBackoffMs',
+        'producer.retryBackoffMaxMs',
+        'producer.enableIdempotence',
       ].sort(),
     );
   });

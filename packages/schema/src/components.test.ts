@@ -16,6 +16,21 @@ describe('component defaults', () => {
       partitions: 1,
       replicationFactor: 1,
       minInsyncReplicas: 1,
+      uncleanLeaderElectionEnable: false,
+    });
+  });
+
+  it('fill a broker with Kafka defaults and the game-tuned replication timers (M4)', () => {
+    expect(BrokerSchema.parse({ kind: 'broker', id: 'b1' })).toEqual({
+      kind: 'broker',
+      id: 'b1',
+      rack: null,
+      groupInitialRebalanceDelayMs: 3000,
+      replicaLagTimeMaxMs: 10_000, // game-tuned; Kafka 30000
+      replicaFetchWaitMaxMs: 500,
+      offsetsTopicReplicationFactor: 3,
+      autoLeaderRebalanceEnable: true,
+      leaderImbalanceCheckIntervalSeconds: 30, // game-tuned; Kafka 300
     });
   });
 
@@ -29,6 +44,12 @@ describe('component defaults', () => {
       batchSize: 16384,
       messageSizeBytes: 1024,
       metadataMaxAgeMs: 300_000,
+      retries: 2_147_483_647,
+      deliveryTimeoutMs: 30_000, // game-tuned; Kafka 120000
+      requestTimeoutMs: 10_000, // game-tuned; Kafka 30000
+      retryBackoffMs: 100,
+      retryBackoffMaxMs: 1000,
+      enableIdempotence: true,
     });
   });
 
@@ -96,7 +117,7 @@ describe('parseComponent', () => {
   it('parses by kind and applies defaults', () => {
     expect(parseComponent({ kind: 'broker', id: 'b1' })).toEqual({
       ok: true,
-      value: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 },
+      value: BrokerSchema.parse({ kind: 'broker', id: 'b1' }),
     });
   });
 
@@ -141,10 +162,7 @@ describe('group and commit configs (M3)', () => {
     parseComponent({ kind: 'consumer', id: 'c1', ...extra });
 
   it('give the broker the real group.initial.rebalance.delay.ms', () => {
-    expect(BrokerSchema.parse({ kind: 'broker', id: 'b1' })).toEqual({
-      kind: 'broker',
-      id: 'b1',
-      rack: null,
+    expect(BrokerSchema.parse({ kind: 'broker', id: 'b1' })).toMatchObject({
       groupInitialRebalanceDelayMs: 3000,
     });
   });
@@ -188,5 +206,52 @@ describe('group and commit configs (M3)', () => {
     }
     expect(consumer({ commitMode: 'manual' }).ok).toBe(false);
     expect(consumer({ maxPollIntervalMs: 0 }).ok).toBe(false);
+  });
+});
+
+describe('replication and producer retry rules (M4-T1)', () => {
+  it('accept min.insync.replicas above the replication factor, as Kafka does', () => {
+    expect(
+      parseComponent({ kind: 'topic', id: 't', replicationFactor: 2, minInsyncReplicas: 3 }).ok,
+    ).toBe(true);
+  });
+
+  it('reject delivery.timeout.ms below linger.ms + request.timeout.ms with the client text', () => {
+    expect(
+      parseComponent({
+        kind: 'producer',
+        id: 'p',
+        deliveryTimeoutMs: 5000,
+        requestTimeoutMs: 6000,
+      }),
+    ).toEqual({
+      ok: false,
+      errors: [
+        'deliveryTimeoutMs: delivery.timeout.ms should be equal to or larger than linger.ms + request.timeout.ms.',
+      ],
+    });
+    expect(
+      parseComponent({ kind: 'producer', id: 'p', deliveryTimeoutMs: 6000, requestTimeoutMs: 6000 })
+        .ok,
+    ).toBe(true);
+  });
+
+  it('keep enable.idempotence fixed to true', () => {
+    expect(parseComponent({ kind: 'producer', id: 'p', enableIdempotence: false })).toEqual({
+      ok: false,
+      errors: [
+        'enableIdempotence: enable.idempotence is fixed to true here (turning it off: v0.4).',
+      ],
+    });
+  });
+
+  it('limit retries to Integer.MAX_VALUE and accept 0', () => {
+    expect(parseComponent({ kind: 'producer', id: 'p', retries: 0 }).ok).toBe(true);
+    expect(parseComponent({ kind: 'producer', id: 'p', retries: 2_147_483_648 }).ok).toBe(false);
+  });
+
+  it('reject a zero replica.lag.time.max.ms and a negative replica.fetch.wait.max.ms', () => {
+    expect(parseComponent({ kind: 'broker', id: 'b', replicaLagTimeMaxMs: 0 }).ok).toBe(false);
+    expect(parseComponent({ kind: 'broker', id: 'b', replicaFetchWaitMaxMs: -1 }).ok).toBe(false);
   });
 });

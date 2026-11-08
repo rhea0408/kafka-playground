@@ -12,9 +12,9 @@
  *   metadata refresh (metadata.max.age.ms, see protocols/metadata.ts). The replication factor
  *   cannot be changed through config (it takes a partition reassignment, M4).
  *   min.insync.replicas is a dynamic topic config and is accepted.
- * - Broker: `rack` (broker.rack) and `groupInitialRebalanceDelayMs`
- *   (group.initial.rebalance.delay.ms) are static broker configs that need a broker restart, so
- *   changing them is rejected.
+ * - Broker: every field is a static broker config that Kafka reads only at startup (broker.rack,
+ *   group.initial.rebalance.delay.ms, and the M4 replication settings), so changing one is
+ *   rejected. Dynamic broker configs (kafka-configs --alter) are not modelled.
  * - Producer: every field. A rate change starts a new send schedule from now; stats are kept.
  *   Requests already in flight keep the acks they were sent with; other fields apply from the
  *   next record.
@@ -96,11 +96,15 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
   const { state } = ctx;
   switch (after.kind) {
     case 'broker': {
-      const name =
-        before.kind === 'broker' && after.rack === before.rack
-          ? 'group.initial.rebalance.delay.ms'
-          : 'broker.rack';
-      return `${name} is a static broker config: Kafka only reads it when the broker starts. Restarting brokers arrives in M4.`;
+      const changed =
+        before.kind === 'broker'
+          ? Object.keys(after).find(
+              (k) =>
+                JSON.stringify((after as Record<string, unknown>)[k]) !==
+                JSON.stringify((before as Record<string, unknown>)[k]),
+            )
+          : undefined;
+      return `${kafkaBrokerName(changed)} is a static broker config: Kafka only reads it when the broker starts. Set it in the scene or level instead.`;
     }
     case 'topic': {
       const topic = state.topics.get(after.id);
@@ -110,7 +114,7 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
         return `The topic ${after.id} currently has ${String(current)} partition(s); ${String(after.partitions)} would not be an increase. Kafka can add partitions to a topic but never remove them.`;
       }
       if (after.replicationFactor !== before.replicationFactor) {
-        return 'The replication factor of an existing topic is changed by reassigning partitions, not through its config. That arrives in M4.';
+        return 'The replication factor of an existing topic is changed by reassigning partitions, not through its config. Partition reassignment arrives in v0.2.';
       }
       addPartitions(topic, after.partitions, [...state.brokers.keys()]);
       topic.config = after;
@@ -158,5 +162,27 @@ function addPartitions(topic: TopicState, count: number, brokerIds: readonly str
   for (let index = topic.partitions.length; index < count; index++) {
     const leader = sorted[(start + index) % sorted.length] ?? first ?? '';
     topic.partitions.push(createPartition(topic.config.id, index, leader));
+  }
+}
+
+/** The Kafka config name of a broker field, for messages. */
+function kafkaBrokerName(field: string | undefined): string {
+  switch (field) {
+    case 'rack':
+      return 'broker.rack';
+    case 'groupInitialRebalanceDelayMs':
+      return 'group.initial.rebalance.delay.ms';
+    case 'replicaLagTimeMaxMs':
+      return 'replica.lag.time.max.ms';
+    case 'replicaFetchWaitMaxMs':
+      return 'replica.fetch.wait.max.ms';
+    case 'offsetsTopicReplicationFactor':
+      return 'offsets.topic.replication.factor';
+    case 'autoLeaderRebalanceEnable':
+      return 'auto.leader.rebalance.enable';
+    case 'leaderImbalanceCheckIntervalSeconds':
+      return 'leader.imbalance.check.interval.seconds';
+    default:
+      return 'This setting';
   }
 }

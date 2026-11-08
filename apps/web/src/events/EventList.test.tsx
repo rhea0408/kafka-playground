@@ -167,7 +167,7 @@ describe('<EventList>', () => {
     expect(connected).toHaveProperty('checked', false);
     expect(rows().map((r) => r.getAttribute('data-seq'))).toEqual(['1', '3', '5']);
     expect(screen.getByTestId('event-count').textContent).toBe('6 events · 3 shown');
-    expect(screen.getByRole('button', { name: 'Filter: 23 of 24 types' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Filter: 25 of 26 types' })).toBeTruthy();
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Hide all' }));
     expect(scroller().textContent).toContain('No events of the selected types.');

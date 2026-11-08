@@ -217,6 +217,20 @@ export type EngineEventPayload =
     }
   /** The consumer process started again (RestartConsumer); it resumes from committed offsets. */
   | { readonly type: 'ConsumerStarted'; readonly consumerId: string }
+  /**
+   * A broker process started again (RestartBroker) with the log it had on disk. It registers with
+   * the KRaft controller, which unfences it.
+   */
+  | { readonly type: 'BrokerStarted'; readonly brokerId: string }
+  /**
+   * A broker process stopped: `crash` (KillBroker: at once, requests in flight are lost) or
+   * `shutdown` (StopBroker: a controlled shutdown, after leadership moved away).
+   */
+  | {
+      readonly type: 'BrokerStopped';
+      readonly brokerId: string;
+      readonly reason: 'crash' | 'shutdown';
+    }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */
   | {
       readonly type: 'ConfigUpdated';
