@@ -29,3 +29,7 @@ jobs:
       - run: pnpm --filter @kp/engine exec vitest run src/invariants.prop.test.ts
         env:
           KP_INVARIANT_RUNS: '1000'
+      # Replication invariants (M4).
+      - run: pnpm --filter @kp/engine exec vitest run src/replication.prop.test.ts
+        env:
+          KP_INVARIANT_RUNS: '1000'

@@ -33,12 +33,12 @@ describe('partition log', () => {
     expect(p.log.map((r) => r.offset)).toEqual([0, 1, 2, 3, 4]);
   });
 
-  it('keeps LEO = last offset + 1, and HW = LEO with a single replica', () => {
+  it('keeps LEO = last offset + 1; the append alone does not move the HW (replication does)', () => {
     const p = createPartition('orders', 0, 'b1');
     appendRecord(p, rec(0));
     appendRecord(p, rec(1));
     expect(p.logEndOffset).toBe(2);
-    expect(p.highWatermark).toBe(2);
+    expect(p.highWatermark).toBe(0);
   });
 
   it('keeps the record fields and adds the offset', () => {
@@ -49,6 +49,7 @@ describe('partition log', () => {
   it('reads from an offset, at most max records, never at or above the HW', () => {
     const p = createPartition('orders', 0, 'b1');
     for (let n = 0; n < 5; n++) appendRecord(p, rec(n));
+    p.highWatermark = 5;
     expect(readRecords(p, 1, 2).map((r) => r.offset)).toEqual([1, 2]);
     expect(readRecords(p, 3, 100).map((r) => r.offset)).toEqual([3, 4]);
     expect(readRecords(p, 5, 100)).toEqual([]);
@@ -59,6 +60,7 @@ describe('partition log', () => {
   it('counts the bytes a fetch could return: records from the offset up to the HW', () => {
     const p = createPartition('orders', 0, 'b1');
     for (let n = 0; n < 4; n++) appendRecord(p, rec(n));
+    p.highWatermark = 4;
     expect(bytesAvailable(p, 0)).toBe(400);
     expect(bytesAvailable(p, 3)).toBe(100);
     expect(bytesAvailable(p, 4)).toBe(0);

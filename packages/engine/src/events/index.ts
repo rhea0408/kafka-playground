@@ -231,6 +231,20 @@ export type EngineEventPayload =
       readonly brokerId: string;
       readonly reason: 'crash' | 'shutdown';
     }
+  /**
+   * A follower copied records from the leader: offsets `fromOffset` up to (not including)
+   * `toOffset` are now in its log. One per follower fetch that returned records (M4 Q11; there is
+   * no per-record replication event).
+   */
+  | {
+      readonly type: 'ReplicaFetched';
+      readonly broker: string;
+      readonly leader: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly fromOffset: number;
+      readonly toOffset: number;
+    }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */
   | {
       readonly type: 'ConfigUpdated';

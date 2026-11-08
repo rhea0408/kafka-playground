@@ -11,8 +11,9 @@
  *   offset given back for each record will always be set to -1." Modelled as ProduceAcked at send
  *   time with offset null, before the broker has the record.
  * - acks=1: the leader acknowledges after writing to its local log.
- * - acks=all: the leader waits for the full ISR. With one replica (M1) the ISR is the leader
- *   alone, so acks=1 and acks=all behave the same until replication arrives (M4).
+ * - acks=all: the leader waits until every replica in the ISR has the record (the HW passes it),
+ *   and refuses the write when the ISR is below min.insync.replicas (M4-T3, K6). With one replica
+ *   the ISR is the leader alone, so acks=1 and acks=all behave the same.
  *
  * The partition count used by the partitioner is the producer's cached metadata (metadata.ts),
  * so partitions added to a topic are used only after the next metadata refresh.
@@ -26,7 +27,14 @@ import type { KeyStrategy } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { EngineContext } from '../model/context.ts';
 import { appendRecord } from '../model/partition.ts';
-import { onHighWatermarkAdvanced } from './fetch.ts';
+import {
+  effectiveMinIsr,
+  onLeaderAppended,
+  onLeaderStateChanged,
+  parkProduce,
+  sendProduceResponse,
+  type ProduceTarget,
+} from './replication.ts';
 import { createClientMetadata, knownPartitionCount, refreshIfStale } from './metadata.ts';
 import { topicsOfProducer, type ProducerState, type TopicState } from '../model/state.ts';
 import type { EngineTask } from '../model/tasks.ts';
@@ -169,9 +177,12 @@ export function sendRecord(
     type: 'LeaderAppend',
     producerId: config.id,
     incarnation: producer.incarnation,
+    // TODO(M4-T7): the producer's cached metadata names the leader; for now the current one.
+    broker: topic.partitions[partition]?.leader ?? '',
     topic: topic.config.id,
     partition,
     acks: config.acks,
+    timeoutMs: config.requestTimeoutMs,
     record: {
       key,
       value,
@@ -183,23 +194,40 @@ export function sendRecord(
   });
 }
 
+/**
+ * A produce request reaches the broker (Partition#appendRecordsToLeader, K6):
+ * - not the leader (any more) → NOT_LEADER_OR_FOLLOWER;
+ * - acks=all with the ISR below min.insync.replicas → NOT_ENOUGH_REPLICAS, nothing appended;
+ * - otherwise append; acks=1 is answered now, acks=all once the HW passes the record
+ *   (DelayedProduce, protocols/replication.ts) or after the request's timeout.
+ */
 export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'>): void {
-  const partition = ctx.state.topics.get(task.topic)?.partitions[task.partition];
+  const topic = ctx.state.topics.get(task.topic);
+  const partition = topic?.partitions[task.partition];
+  const target: ProduceTarget = {
+    producerId: task.producerId,
+    incarnation: task.incarnation,
+    topic: task.topic,
+    partition: task.partition,
+    traceId: task.record.traceId,
+  };
   const respond = (result: Task<'ProduceResponse'>['result']): void => {
     if (task.acks === '0') return; // nobody is waiting for an answer
-    ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
-      type: 'ProduceResponse',
-      producerId: task.producerId,
-      incarnation: task.incarnation,
-      topic: task.topic,
-      partition: task.partition,
-      traceId: task.record.traceId,
-      result,
-    });
+    sendProduceResponse(ctx, target, result);
   };
-  if (partition === undefined) {
+  const broker = ctx.state.brokers.get(task.broker);
+  if (broker?.status !== 'running') return; // no process to answer; the producer times out (T7)
+  if (topic === undefined || partition === undefined) {
     // The topic was deleted while the request was in flight.
     respond({ ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });
+    return;
+  }
+  if (partition.leader === null || partition.leader !== task.broker) {
+    respond({ ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
+    return;
+  }
+  if (task.acks === 'all' && partition.isr.length < effectiveMinIsr(topic.config, partition)) {
+    respond({ ok: false, error: 'NOT_ENOUGH_REPLICAS' });
     return;
   }
   const appended = appendRecord(partition, task.record);
@@ -213,8 +241,20 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     producerId: appended.producerId,
     traceId: appended.traceId,
   });
-  // With one replica the HW moved with the append: parked fetches may now have enough data.
-  onHighWatermarkAdvanced(ctx, partition);
+  // Followers waiting in a long poll get the record; with no other replica in the ISR the HW
+  // moves at once (and parked consumer fetches may complete).
+  onLeaderAppended(ctx, partition);
+  onLeaderStateChanged(ctx, topic, partition);
+  if (task.acks === 'all' && partition.highWatermark <= appended.offset) {
+    parkProduce(
+      ctx,
+      target,
+      { broker: task.broker, topicId: topic.topicId },
+      appended.offset,
+      task.timeoutMs,
+    );
+    return;
+  }
   respond({ ok: true, offset: appended.offset });
 }
 
@@ -234,8 +274,12 @@ export function handleProduceResponse(ctx: EngineContext, task: Task<'ProduceRes
     });
   } else {
     producer.stats.failed += 1;
-    // A metadata error makes the client refresh its metadata soon (Metadata#requestUpdate).
-    producer.metadata.updateRequested = true;
+    // An InvalidMetadataException makes the client refresh its metadata soon
+    // (Metadata#requestUpdate); NOT_ENOUGH_REPLICAS and timeouts on the broker do not (K7).
+    const error = task.result.error;
+    if (error === 'UNKNOWN_TOPIC_OR_PARTITION' || error === 'NOT_LEADER_OR_FOLLOWER') {
+      producer.metadata.updateRequested = true;
+    }
     ctx.emit({
       type: 'ProduceFailed',
       producerId,

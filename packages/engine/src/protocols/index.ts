@@ -22,6 +22,14 @@ import {
   handleMemberSessionExpire,
 } from './group-coordinator.ts';
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
+import {
+  handleDelayedProduceExpire,
+  handleReplicaFetchBackoff,
+  handleReplicaFetchDisconnected,
+  handleReplicaFetchExpire,
+  handleReplicaFetchRequest,
+  handleReplicaFetchResponse,
+} from './replication.ts';
 
 export function runTask(ctx: EngineContext, task: EngineTask): void {
   switch (task.type) {
@@ -42,6 +50,24 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'FetchExpire':
       handleFetchExpire(ctx, task);
+      return;
+    case 'ReplicaFetchRequest':
+      handleReplicaFetchRequest(ctx, task);
+      return;
+    case 'ReplicaFetchExpire':
+      handleReplicaFetchExpire(ctx, task);
+      return;
+    case 'ReplicaFetchResponse':
+      handleReplicaFetchResponse(ctx, task);
+      return;
+    case 'ReplicaFetchDisconnected':
+      handleReplicaFetchDisconnected(ctx, task);
+      return;
+    case 'ReplicaFetchBackoff':
+      handleReplicaFetchBackoff(ctx, task);
+      return;
+    case 'DelayedProduceExpire':
+      handleDelayedProduceExpire(ctx, task);
       return;
     case 'FetchResponse':
       handleFetchResponse(ctx, task);

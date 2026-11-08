@@ -40,6 +40,8 @@ const GROUPS = [
   { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
   // Broker processes (FR-3.1, M4): crashes, controlled shutdowns and restarts.
   { label: 'Broker', types: ['BrokerStarted', 'BrokerStopped'] },
+  // Copying records between replicas (FR-2.5, M4).
+  { label: 'Replication', types: ['ReplicaFetched'] },
   {
     label: 'Topology',
     types: ['ComponentAdded', 'ComponentRemoved', 'Connected', 'Disconnected', 'ConfigUpdated'],

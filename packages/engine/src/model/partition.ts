@@ -87,6 +87,11 @@ export interface PartitionState {
   readonly replicas: readonly string[];
   /** In-sync replicas, as the controller last committed them. */
   isr: string[];
+  /**
+   * The leader's maximal ISR while an AlterPartition is in flight (K4): the committed ISR plus a
+   * replica being added, or the old ISR during a shrink. Null when nothing is pending (M4-T4).
+   */
+  pendingIsr: string[] | null;
   /** Eligible Leader Replicas (KIP-966): may lead when the ISR is empty. */
   elr: string[];
   /** The last leader before the partition went leaderless (KIP-966 lastKnownElr). */
@@ -133,6 +138,7 @@ export function createPartition(
     index,
     replicas: list,
     isr: [...list],
+    pendingIsr: null,
     elr: [],
     lastKnownElr: [],
     leader: first,
@@ -197,9 +203,7 @@ export function appendRecord(
     leaderEpoch: partition.leaderEpoch,
   });
   appendToReplica(leader, appended);
-  // TODO(M4-T3): followers fetch, and the HW becomes min LEO over the (maximal) ISR. Until then
-  // the leader alone decides, as with one replica: everything appended is committed.
-  leader.highWatermark = leader.logEndOffset;
+  // The HW moves only once the in-sync followers have the record (protocols/replication.ts).
   return appended;
 }
 

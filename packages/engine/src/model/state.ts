@@ -12,7 +12,7 @@ import type { LogRecord, PartitionState } from './partition.ts';
 import type { Assignor } from '@kp/schema';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 import type { GroupState, JoinReason } from './group.ts';
-import type { FetchRequestTask } from './tasks.ts';
+import type { FetchRequestTask, ParkedProduce, ReplicaFetchRequestTask } from './tasks.ts';
 
 export type { GroupState } from './group.ts';
 
@@ -260,6 +260,15 @@ export interface EngineState {
    * available or fetch.max.wait.ms passes, by fetch id, oldest first.
    */
   readonly parkedFetches: Map<number, FetchRequestTask>;
+  /** Follower fetches the leaders are holding (replica.fetch.wait.max.ms), by fetch id. */
+  readonly parkedReplicaFetches: Map<number, ReplicaFetchRequestTask>;
+  /**
+   * Replica fetchers with a request in flight, as "follower>leader" (at most one each), and the
+   * follower incarnation that sent it.
+   */
+  readonly replicaFetchers: Map<string, number>;
+  /** acks=all produces waiting for the HW (DelayedProduce purgatory), by produce id. */
+  readonly parkedProduces: Map<number, ParkedProduce>;
   /**
    * Sources of incarnation numbers (producers and consumers; brokers have their own so broker
    * lifecycles don't renumber client trace ids), request ids and topic IDs.
@@ -270,6 +279,8 @@ export interface EngineState {
     fetch: number;
     topic: number;
     commit: number;
+    replicaFetch: number;
+    produce: number;
   };
 }
 
@@ -283,7 +294,18 @@ export function createState(): EngineState {
     offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
-    counters: { incarnation: 0, brokerIncarnation: 0, fetch: 0, topic: 0, commit: 0 },
+    parkedReplicaFetches: new Map(),
+    replicaFetchers: new Map(),
+    parkedProduces: new Map(),
+    counters: {
+      incarnation: 0,
+      brokerIncarnation: 0,
+      fetch: 0,
+      topic: 0,
+      commit: 0,
+      replicaFetch: 0,
+      produce: 0,
+    },
   };
 }
 

@@ -41,13 +41,14 @@ const events: EngineEvent[] = [
 describe('event types', () => {
   it('lists every type once', () => {
     expect(new Set(ALL_EVENT_TYPES).size).toBe(ALL_EVENT_TYPES.length);
-    expect(ALL_EVENT_TYPES).toHaveLength(26);
+    expect(ALL_EVENT_TYPES).toHaveLength(27);
     expect(EVENT_TYPE_GROUPS.map((g) => g.label)).toEqual([
       'Records',
       'Commit',
       'Group',
       'Consumers',
       'Broker',
+      'Replication',
       'Topology',
     ]);
   });
@@ -84,7 +85,9 @@ describe('toggleType / setGroup', () => {
 describe('filterSummary', () => {
   it('says how many types are shown', () => {
     expect(filterSummary(NO_HIDDEN_TYPES)).toBe('All types');
-    expect(filterSummary(new Set(['Connected']))).toBe('25 of 26 types');
+    expect(filterSummary(new Set(['Connected']))).toBe(
+      `${String(ALL_EVENT_TYPES.length - 1)} of ${String(ALL_EVENT_TYPES.length)} types`,
+    );
     expect(filterSummary(new Set(ALL_EVENT_TYPES))).toBe('No types');
   });
 });
