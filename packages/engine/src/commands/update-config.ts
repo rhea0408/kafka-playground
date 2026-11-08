@@ -39,6 +39,7 @@ import { placementBrokers, type TopicState } from '../model/state.ts';
 import { placeReplicas } from '../model/placement.ts';
 import { closeConsumer, runConsumer } from '../protocols/consume.ts';
 import { restartSchedule } from '../protocols/produce.ts';
+import { startFollowers } from '../protocols/replication.ts';
 import { kindOf, reject, type ApplyResult } from './apply.ts';
 import type { Command } from './index.ts';
 
@@ -169,7 +170,9 @@ function addPartitions(ctx: EngineContext, topic: TopicState, count: number): vo
     ctx.kernel.rng.fork(`placement:${topic.config.id}:${String(topic.partitions.length)}`),
   );
   for (const replicas of assignments) {
-    topic.partitions.push(createPartition(topic.config.id, topic.partitions.length, replicas));
+    const partition = createPartition(topic.config.id, topic.partitions.length, replicas);
+    topic.partitions.push(partition);
+    startFollowers(ctx, partition);
   }
 }
 

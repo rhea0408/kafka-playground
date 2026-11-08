@@ -17,7 +17,12 @@
 
 import type { EngineContext } from '../model/context.ts';
 import { bytesAvailable, readRecords, type PartitionState } from '../model/partition.ts';
-import type { EngineTask, FetchPartitionResult, FetchRequestTask } from '../model/tasks.ts';
+import type {
+  EngineTask,
+  FetchPartition,
+  FetchPartitionResult,
+  FetchRequestTask,
+} from '../model/tasks.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
@@ -80,28 +85,34 @@ function readPartitions(
   task: FetchRequestTask,
   withRecords: boolean,
 ): PartitionRead[] {
-  return task.partitions.map((p): PartitionRead => {
-    const topic = ctx.state.topics.get(p.topic);
-    const partition = topic?.partitions[p.partition];
-    if (topic === undefined || partition === undefined) {
-      return { ...p, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
-    }
-    // The topic was deleted and re-created since the consumer's position was set (KIP-516:
-    // FetchRequest v13+ carries topic IDs; the broker answers UNKNOWN_TOPIC_ID on a mismatch).
-    if (topic.topicId !== p.topicId) {
-      return { ...p, error: 'UNKNOWN_TOPIC_ID', records: [], bytes: 0 };
-    }
-    // Valid fetch offsets run from the log start offset to the HW (the end for consumers).
-    // TODO(M4): Kafka checks the upper bound against the log end offset, not the HW; an offset
-    // between HW and LEO gets an empty response. They are equal while each partition has one
-    // replica (simplifications: "Fetch offset range").
-    if (p.fetchOffset < partition.logStartOffset || p.fetchOffset > partition.highWatermark) {
-      return { ...p, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
-    }
-    const bytes = bytesAvailable(partition, p.fetchOffset);
-    const records = withRecords ? readRecords(partition, p.fetchOffset) : [];
-    return { ...p, error: null, records, bytes };
-  });
+  return task.partitions.map((p) => readFetchPartition(ctx, p, withRecords));
+}
+
+/** The leader's answer for one partition of a consumer fetch, read now. */
+export function readFetchPartition(
+  ctx: EngineContext,
+  p: FetchPartition,
+  withRecords = true,
+): PartitionRead {
+  const topic = ctx.state.topics.get(p.topic);
+  const partition = topic?.partitions[p.partition];
+  if (topic === undefined || partition === undefined) {
+    return { ...p, error: 'UNKNOWN_TOPIC_OR_PARTITION', records: [], bytes: 0 };
+  }
+  // The topic was deleted and re-created since the consumer's position was set (KIP-516:
+  // FetchRequest v13+ carries topic IDs; the broker answers UNKNOWN_TOPIC_ID on a mismatch).
+  if (topic.topicId !== p.topicId) {
+    return { ...p, error: 'UNKNOWN_TOPIC_ID', records: [], bytes: 0 };
+  }
+  // Valid fetch offsets run from the log start offset to the log end offset (LocalLog#read,
+  // K5). An offset between the HW and the LEO is valid but returns nothing yet: those records
+  // are not on every in-sync replica.
+  if (p.fetchOffset < partition.logStartOffset || p.fetchOffset > partition.logEndOffset) {
+    return { ...p, error: 'OFFSET_OUT_OF_RANGE', records: [], bytes: 0 };
+  }
+  const bytes = bytesAvailable(partition, p.fetchOffset);
+  const records = withRecords ? readRecords(partition, p.fetchOffset) : [];
+  return { ...p, error: null, records, bytes };
 }
 
 /** Builds the response now (records read at this moment) and sends it back (+ network delay). */

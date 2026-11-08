@@ -69,6 +69,8 @@ export function describeEvent(e: EngineEvent): string {
       return `${e.consumerId}  ${partitionName(e.topic, e.partition)}  offsets ${String(e.from)}–${String(e.to)} never processed by ${e.groupId}`;
     case 'ConfigUpdated':
       return `${e.after.kind} ${e.id}  ${configChanges(e.before, e.after)}`;
+    case 'ReplicaFetched':
+      return `${e.broker} ← ${e.leader}  ${partitionName(e.topic, e.partition)}  offsets ${String(e.fromOffset)}–${String(e.toOffset - 1)}`;
     case 'BrokerStarted':
       return e.brokerId;
     case 'BrokerStopped':

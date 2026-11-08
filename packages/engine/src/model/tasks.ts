@@ -41,6 +41,60 @@ export type FetchPartitionResult = FetchPartition &
     | { readonly error: FetchError; readonly records: readonly [] }
   );
 
+/** One partition in a follower's fetch: from its own LEO, with its last epoch (K9). */
+export interface ReplicaFetchPartition {
+  readonly topic: string;
+  readonly partition: number;
+  readonly topicId: number;
+  /** The follower's LEO: the leader learns the follower's progress from it (K3). */
+  readonly fetchOffset: number;
+  /** The epoch of the follower's last record (-1 for an empty log); used to find divergence. */
+  readonly lastFetchedEpoch: number;
+  /** The leader epoch the follower knows; a mismatch gets FENCED_LEADER_EPOCH. */
+  readonly currentLeaderEpoch: number;
+}
+
+/** A follower broker's fetch reaches the leader broker (replica fetcher, one per pair). */
+export interface ReplicaFetchRequestTask {
+  readonly type: 'ReplicaFetchRequest';
+  readonly fetchId: number;
+  readonly follower: string;
+  readonly followerIncarnation: number;
+  readonly leader: string;
+  readonly partitions: readonly ReplicaFetchPartition[];
+  /** replica.fetch.wait.max.ms of the follower. */
+  readonly maxWaitMs: number;
+}
+
+/** Per-partition result of a follower fetch. */
+export type ReplicaFetchResult = ReplicaFetchPartition &
+  (
+    | {
+        readonly error: null;
+        /** The leader's records from the fetch offset to its LEO. */
+        readonly records: readonly LogRecord[];
+        readonly highWatermark: number;
+      }
+    | {
+        readonly error:
+          'NOT_LEADER_OR_FOLLOWER' | 'FENCED_LEADER_EPOCH' | 'UNKNOWN_TOPIC_OR_PARTITION';
+      }
+  );
+
+/**
+ * An acks=all produce waiting at the leader (the DelayedProduce purgatory) until the HW passes
+ * `offset`, or its timeout: who to answer, and where the record went.
+ */
+export interface ParkedProduce {
+  readonly produceId: number;
+  readonly producerId: string;
+  readonly incarnation: number;
+  readonly topic: string;
+  readonly partition: number;
+  readonly traceId: string;
+  readonly offset: number;
+}
+
 export type EngineTask =
   /**
    * The consumer application calls poll(), or wakes up inside a blocked poll() for an
@@ -60,14 +114,18 @@ export type EngineTask =
       readonly schedule: number;
       readonly n: number;
     }
-  /** A produce request reaches the partition leader. */
+  /** A produce request reaches the broker the producer believes leads the partition. */
   | {
       readonly type: 'LeaderAppend';
       readonly producerId: string;
       readonly incarnation: number;
+      /** The broker the request was sent to. */
+      readonly broker: string;
       readonly topic: string;
       readonly partition: number;
       readonly acks: Acks;
+      /** The request's timeout (request.timeout.ms): how long an acks=all write may wait. */
+      readonly timeoutMs: number;
       readonly record: Omit<LogRecord, 'offset' | 'leaderEpoch'>;
     }
   /** The leader's produce response reaches the producer (acks = 1 / all). */
@@ -83,6 +141,20 @@ export type EngineTask =
         | { readonly ok: false; readonly error: ProduceError };
     }
   | FetchRequestTask
+  | ReplicaFetchRequestTask
+  /** replica.fetch.wait.max.ms passed for a parked follower fetch. */
+  | { readonly type: 'ReplicaFetchExpire'; readonly fetchId: number }
+  /** The leader's answer reaches the follower broker. */
+  | {
+      readonly type: 'ReplicaFetchResponse';
+      readonly fetchId: number;
+      readonly follower: string;
+      readonly followerIncarnation: number;
+      readonly leader: string;
+      readonly partitions: readonly ReplicaFetchResult[];
+    }
+  /** A parked acks=all produce reached its request timeout. */
+  | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
   | { readonly type: 'FetchExpire'; readonly fetchId: number }
   /** A consumer's request reaches the coordinator broker of its group. */
@@ -229,7 +301,16 @@ export type CoordinatorResponse =
     };
 
 /** Kafka protocol error names, as the client reports them. */
-export type ProduceError = 'UNKNOWN_TOPIC_OR_PARTITION';
+export type ProduceError =
+  | 'UNKNOWN_TOPIC_OR_PARTITION'
+  /** The broker does not lead the partition (any more). */
+  | 'NOT_LEADER_OR_FOLLOWER'
+  /** acks=all and the ISR is below min.insync.replicas before the append (K6). */
+  | 'NOT_ENOUGH_REPLICAS'
+  /** The record reached the HW, but the ISR had shrunk below min.insync.replicas (K6). */
+  | 'NOT_ENOUGH_REPLICAS_AFTER_APPEND'
+  /** The acks=all write waited longer than the request's timeout (DelayedProduce). */
+  | 'REQUEST_TIMED_OUT';
 
 /** Per-partition fetch errors (Kafka protocol error codes). */
 export type FetchError = 'UNKNOWN_TOPIC_OR_PARTITION' | 'UNKNOWN_TOPIC_ID' | 'OFFSET_OUT_OF_RANGE';

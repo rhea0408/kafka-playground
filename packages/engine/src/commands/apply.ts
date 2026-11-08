@@ -23,6 +23,7 @@ import {
 import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
+import { startFollowers } from '../protocols/replication.ts';
 import { updateConfig } from './update-config.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
@@ -95,13 +96,16 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
         placementBrokers(state),
         ctx.kernel.rng.fork(`placement:${component.id}`),
       );
-      state.topics.set(component.id, {
+      const topic = {
         topicId: ++state.counters.topic,
         config: component,
         partitions: assignments.map((replicas, index) =>
           createPartition(component.id, index, replicas),
         ),
-      });
+      };
+      state.topics.set(component.id, topic);
+      // The followers' replica fetchers start copying from the leaders.
+      for (const partition of topic.partitions) startFollowers(ctx, partition);
       break;
     }
     case 'producer':
