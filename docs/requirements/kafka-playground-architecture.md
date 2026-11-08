@@ -119,8 +119,8 @@ Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map
 | Produce & acks | acks=0: no wait; acks=1: leader append; acks=all: every **current ISR** member has it (HW ≥ offset). NotEnoughReplicas if ISR < minIsr | No request queueing until the v0.2 resource model |
 | Replication | Followers fetch from the leader on an interval; the leader tracks replica LEO; HW = min LEO over the ISR | Fixed fetch interval |
 | ISR | Follower removed if it hasn't caught up within `replica.lag.time.max.ms`; re-added once caught up | |
-| Controller & election | On broker down, the controller picks the new leader from the ISR (clean election only); leader epoch++ | Election delay is a fixed configurable value |
-| Data loss | Records that exist only on a failed leader are truncated when it rejoins as a follower. Happens with acks=0/1, **and with acks=all when the ISR had shrunk to the leader alone and min.insync.replicas = 1** | Truncation to HW, epoch-based |
+| Controller & election | On broker down, the controller picks the new leader from the ISR (clean election by default; unclean election from any live replica when the topic enables it); leader epoch++ | One abstract KRaft controller quorum, always up (ADR 0005); it fences a broker after `broker.session.timeout.ms` without heartbeats |
+| Data loss | Records that exist only on a failed leader are truncated when it rejoins as a follower. Happens with acks=0/1. With acks=all it needs an **unclean election** (`unclean.leader.election.enable=true`, default false): with clean elections only ISR members can lead, and in KRaft the last ISR member stays in the ISR when its broker is fenced, so the partition goes offline (no leader) until that broker returns with its data (M4 Q6) | Truncation by leader epoch (KIP-101 / KIP-320) |
 | Group coordinator | Classic protocol (ADR 0004): FindCoordinator via `__consumer_offsets` partition, JoinGroup / SyncGroup / Heartbeat / LeaveGroup, initial rebalance delay, rebalance and session timeouts, generations, the client leader running range / round-robin / sticky / cooperative-sticky; eager vs cooperative rebalancing; the poll timeout (zombies) | KIP-848 later; no static membership or rack-aware assignment; MEMBER_ID_REQUIRED round trip not modelled (simplifications) |
 | Commits | Auto (interval) or the `commitMode` game setting (commitSync / commitAsync after processing, commitSync before processing); OffsetCommit validated by member and generation; on crash the new owner resumes from the last committed offset → `DuplicateProcessed` / `RecordsSkipped` (teaching aid) | Commits stored in coordinator memory, not a replicated `__consumer_offsets` |
 
@@ -128,7 +128,7 @@ Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map
 
 ### 4.4 Commands (UI → engine)
 Built (M1–M3): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer` (a crash, M3), `StopConsumer` (graceful close, M3), `RestartConsumer` (a new member, M3), `ProduceManual`. Planned: `KillBroker`, `RestartBroker` (M4).
-**Not commands:** `SetSpeed`, `Step`, `Pause` / `Play` and `Reset` are calls on the worker host (`setSpeed`, `step` / `stepBy`, `pause` / `play`, `init`); Reset re-initialises the engine from the current canvas. They never change what happens in the simulation, so they stay out of the command log. Rewind (`RewindTo`, scrubber / "Try again", §4.7, M4) replays the command log and so is expected to be a host operation too.
+**Not commands:** `SetSpeed`, `Step`, `Pause` / `Play` and `Reset` are calls on the worker host (`setSpeed`, `step` / `stepBy`, `pause` / `play`, `init`); Reset re-initialises the engine from the current canvas. They never change what happens in the simulation, so they stay out of the command log. Rewind (`RewindTo`, scrubber / "Try again", §4.7, M4b) replays the command log and so is expected to be a host operation too.
 `UpdateConfig { id, patch }` is validated with `@kp/schema` on the merged config: topic partitions can only grow (the KRaft controller's `InvalidPartitionsException` text otherwise), producer changes apply to the next record (a rate change restarts the send schedule), consumer changes apply from the next `poll()` (a `group.id` change closes the consumer and joins the other group, M3); ids, the replication factor and the broker configs can't change (see `docs/simplifications.md`, "Config changes at run time"). A patch that changes nothing is accepted without an event or log entry.
 Each accepted command is appended to the **command log** as `{ t, afterStep, command }` (sim time plus the number of tasks already processed, so a command dispatched between two tasks of the same millisecond replays at the same place). The log is used for replay, save files, the failure replay in Fix, and CI playback.
 
@@ -146,6 +146,7 @@ Typed as a discriminated union in `packages/engine/events`. This single stream f
 - An eager assignment covers every partition of an assigned topic from 0 without gaps (M3; the leader's metadata may not know the newest partitions yet, and cooperative rounds leave moving partitions unowned on purpose)
 - An accepted commit comes from a member of the current generation that owns the partition; generations never go backwards; a member only reads partitions the rebalance listener gave it (M3). Deliberately not an invariant: "two consumers never read one partition at the same time" (zombies can)
 - With `acks=all` and `ISR ≥ minIsr ≥ 2` at ack time, an acknowledged record is never truncated after a single broker failure
+- Without an unclean election, a record that was ever below a leader's HW is never truncated (any acks). With `minIsr = 1` an acks=all record is still safe under clean elections: the partition goes offline instead (M4 Q6)
 - Per partition, offsets are contiguous and records with the same key keep produce order
 
 ### 4.7 Rewind (scrubber and "Try again")
@@ -288,7 +289,8 @@ packages/fidelity/scenarios/*.json   ← shared scenario definitions
 | M1 | Engine core: clock, queue, RNG, single broker, produce/consume, partitioning, offsets | unit + determinism tests pass (`docs/milestones/M1-engine-core.md`) |
 | M2 | Web app shell: React Flow canvas, palette, properties, worker + Comlink, snapshot rendering, message overlay | a producer → topic → consumer flow animates |
 | M3 | Consumer groups + rebalancing + commits | invariants pass; idle-consumer case visible |
-| M4 | Multi-broker: replication, ISR, controller election, acks, failures, rewind | invariants pass; kill-broker works in UI |
+| M4 | Multi-broker: replication, ISR, controller election, acks, broker failures, `__consumer_offsets` and coordinator failover (`docs/milestones/M4-replication.md`) | invariants pass; kill-broker works in UI |
+| M4b | Rewind (replay from the command log), event timeline and scrubber, lag chart (split from M4, M4 Q1; independent of M5, needed by M6) | rewinding gives the original snapshot at that time; Playwright scrubs a broker-kill scene |
 | M5 | Fidelity harness + docker compose | all MVP scenarios agree |
 | M6 | Level runtime (phases, Not quite, stars) + dialogues + World 1 | levels 1–5 playable; CI playback green |
 | M7 | World 2 + code panel (Java/Go/CLI) | levels 6–10 playable |

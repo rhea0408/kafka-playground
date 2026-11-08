@@ -1,6 +1,6 @@
 name: Nightly
 
-# Deep property search (M4-T0): the liveness and group-safety properties with 1000 cases each,
+# Deep property search (M4-T0): the liveness, group-safety and engine invariant properties with 1000 cases each,
 # without coverage. PR CI runs 50 to keep coverage fast; this is the search that found M4-decisions
 # L1–L3. Runs on the default branch (develop); "Run workflow" starts it by hand.
 on:
@@ -25,3 +25,7 @@ jobs:
       - run: pnpm --filter @kp/engine exec vitest run src/liveness.prop.test.ts
         env:
           KP_LIVENESS_RUNS: '1000'
+      # The general engine invariants (architecture §4.6) over random topologies and commands.
+      - run: pnpm --filter @kp/engine exec vitest run src/invariants.prop.test.ts
+        env:
+          KP_INVARIANT_RUNS: '1000'

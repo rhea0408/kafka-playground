@@ -68,7 +68,7 @@ Further decisions (D5–D11) are in the Real Kafka Lab and roadmap docs.
 | FR-2.3 | Partitioning (key-hash / round-robin / sticky), with visible ordering-per-partition | P0 |
 | FR-2.4 | Each partition is a log with offsets, log-start-offset, high-watermark, log-end-offset | P0 |
 | FR-2.5 | Replication: leader/followers, in-sync replica set (ISR), follower lag, leader election on broker failure | P0 |
-| FR-2.6 | acks semantics, with data loss possible under acks=0/1, and under acks=all when ISR has shrunk to 1 and min.insync.replicas=1; NotEnoughReplicas when ISR < min.insync.replicas | P0 |
+| FR-2.6 | acks semantics, with data loss possible under acks=0/1, and under acks=all only with an unclean leader election (`unclean.leader.election.enable=true`, default false): with clean elections an out-of-ISR replica never becomes leader, so a partition whose ISR shrank to one replica goes offline until that replica returns instead of losing acknowledged records (M4 Q6). NotEnoughReplicas when ISR < min.insync.replicas | P0 |
 | FR-2.7 | Consumer group assignment and rebalancing (eager vs cooperative); idle consumers when consumers > partitions | P0 |
 | FR-2.8 | Offset commits showing duplicates (at-least-once) or skipped messages (at-most-once) after a crash | P0 |
 | FR-2.9 | Consumer lag per partition and per group | P0 |

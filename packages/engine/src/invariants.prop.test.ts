@@ -11,14 +11,16 @@ import type { EngineEvent } from './events/index.ts';
 import { stepsArb, topologyArb } from './testing/arbitraries.ts';
 import { commitViolations, cooperativeCoverageViolations } from './testing/group-checks.ts';
 import { runScenario } from './testing/run.ts';
+import { runsFromEnv } from './testing/runs.ts';
 
 const seedArb = fc.integer({ min: 0, max: 0xffffffff });
-const NUM_RUNS = 150;
+/** KP_INVARIANT_RUNS, default 150; the nightly job runs 1000 (M4-T0). */
+const NUM_RUNS = runsFromEnv('KP_INVARIANT_RUNS', 150);
 
 type Ev<T extends EngineEvent['type']> = Extract<EngineEvent, { type: T }>;
 const tp = (e: { topic: string; partition: number }) => `${e.topic}-${String(e.partition)}`;
 
-describe('engine invariants (fast-check)', { timeout: 30_000 }, () => {
+describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS * 400) }, () => {
   it('offsets in every partition are contiguous from 0, in append order', () => {
     fc.assert(
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
