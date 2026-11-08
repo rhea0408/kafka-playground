@@ -235,7 +235,8 @@ function joinGroup(
   const metadata: MemberMetadata = {
     protocols: config.partitionAssignmentStrategy,
     subscription,
-    ownedPartitions: group.lastOwned,
+    ownedPartitions: group.owned,
+    stickyUserData: group.lastOwned,
     ownedGeneration: group.lastOwnedGeneration,
     sessionTimeoutMs: config.sessionTimeoutMs,
     rebalanceTimeoutMs: config.maxPollIntervalMs,

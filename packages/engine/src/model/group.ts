@@ -55,8 +55,18 @@ export interface MemberMetadata {
   readonly protocols: readonly Assignor[];
   /** Subscribed topics. */
   readonly subscription: readonly string[];
-  /** Partitions it owned when it rejoined, and their generation (Subscription user data). */
+  /**
+   * Subscription#ownedPartitions: the partitions it still holds when it sends JoinGroup
+   * (`subscriptions.assignedPartitionsList()`). Empty for an eager member, which revoked
+   * everything in onJoinPrepare.
+   */
   readonly ownedPartitions: readonly TopicPartition[];
+  /**
+   * StickyAssignor's user data: its previous assignment, kept even after an eager revoke, so the
+   * eager sticky assignor can stay sticky (StickyAssignor#subscriptionUserData).
+   */
+  readonly stickyUserData: readonly TopicPartition[];
+  /** The generation of those partitions (in the assignors' user data). */
   readonly ownedGeneration: number;
   readonly sessionTimeoutMs: number;
   /** The rebalance timeout: the client's max.poll.interval.ms. */

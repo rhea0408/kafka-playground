@@ -407,7 +407,10 @@ function sendJoinResponse(ctx: EngineContext, group: GroupState, member: GroupMe
       ? [...group.members.values()].map((m): AssignorMember => ({
           memberId: m.memberId,
           topics: m.metadata.subscription,
-          ownedPartitions: m.metadata.ownedPartitions,
+          // The chosen assignor reads its own view: StickyAssignor its user data (the previous
+          // assignment, kept by eager members), the others Subscription#ownedPartitions.
+          ownedPartitions:
+            group.protocol === 'sticky' ? m.metadata.stickyUserData : m.metadata.ownedPartitions,
           generation: m.metadata.ownedGeneration,
         }))
       : [],

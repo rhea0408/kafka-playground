@@ -452,3 +452,49 @@ describe('snapshots of groups and members (M3-T7)', () => {
     expect(byId.c4).toMatchObject({ status: 'stopped' });
   });
 });
+
+describe('eager rebalance with the cooperative-sticky assignor (M4-T2 fix)', () => {
+  it('an eager member reports no owned partitions, so nothing is held back as "transferring"', () => {
+    // [cooperative-sticky, range] rebalances eagerly (K2): members revoke everything before
+    // rejoining, and Subscription#ownedPartitions is empty. The cooperative assignor must then
+    // assign every partition. Found by the invariants property (cooperative coverage check).
+    const consumer = (id: string) => ({
+      kind: 'consumer' as const,
+      id,
+      groupId: 'h',
+      autoOffsetReset: 'earliest' as const,
+      enableAutoCommit: false,
+      sessionTimeoutMs: 6000,
+      heartbeatIntervalMs: 500,
+      maxPollIntervalMs: 1000,
+      partitionAssignmentStrategy: ['cooperative-sticky' as const, 'range' as const],
+    });
+    const engine = createEngine({
+      seed: 0,
+      topology: {
+        brokers: [{ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: 0 }],
+        topics: [
+          { kind: 'topic', id: 't0', partitions: 2 },
+          { kind: 'topic', id: 't1', partitions: 2 },
+        ],
+        consumers: [consumer('c1'), consumer('c2')],
+        connections: [
+          { from: 't1', to: 'c1' },
+          { from: 't1', to: 'c2' },
+        ],
+      },
+    });
+    const events = record(engine);
+    engine.runUntil(0); // both join with [t1]; then c1 subscribes to t0 as well
+    engine.dispatch({ type: 'Connect', from: 't0', to: 'c1' });
+    engine.runUntil(5000);
+    const gen2 = ofType(events, 'RebalanceCompleted').find((e) => e.generation === 2);
+    const owners = new Map(
+      gen2?.members.flatMap((m) =>
+        m.partitions.map((tp) => [`${tp.topic}-${String(tp.partition)}`, m.consumerId]),
+      ),
+    );
+    expect([...owners.keys()].sort()).toEqual(['t0-0', 't0-1', 't1-0', 't1-1']);
+    expect(owners.get('t0-0')).toBe('c1');
+  });
+});
