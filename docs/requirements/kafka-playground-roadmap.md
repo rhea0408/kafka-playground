@@ -14,7 +14,7 @@
 ### MVP (v0.1): "Core Kafka"
 - Engine (TypeScript, Web Worker, seeded, per-message mode): partitions & keys, offsets, consumer groups + rebalancing, replication + ISR + leader election, acks + min.insync.replicas, auto/manual commits
 - Canvas (React Flow): Producer, Broker, Topic, Consumer, Consumer Group; connection rules; properties panel
-- Play / pause / step / speed / reset; kill/restart broker and consumer, slow consumer
+- Play / pause / step / speed / reset; kill/stop/restart broker and consumer, slow consumer
 - Partition log viewer, event timeline, lag badges, manual "produce message"
 - **Campaign World 1 + World 2** (10 levels, Learn → Break → Fix), scripted tips and dialogues, stars, progress save
 - **Basic Sandbox** (≤ 5 brokers); **code panel** (read-only, Java / Go / CLI)
@@ -46,4 +46,4 @@ Planning missions, hint ladder, quizzes, own-code challenges, AI tutor, Schema R
 Where AI speeds things up most: React UI, canvas wiring, panels, code-panel templates, level YAML, tests, docker-compose, Go runner boilerplate.
 Where time is still spent: verifying Kafka semantics, designing levels that teach, game-feel iteration, debugging timing-sensitive simulation logic.
 
-MVP milestone order: see architecture §11 (M1–M8). Milestones are broken into tasks one at a time, in `docs/milestones/`.
+MVP milestone order: see architecture §11 (M1–M8, plus M4b: M4 was split on 2026-11-08 into replication and failures (M4) and rewind, timeline and lag chart (M4b), M4 Q1). Milestones are broken into tasks one at a time, in `docs/milestones/`.

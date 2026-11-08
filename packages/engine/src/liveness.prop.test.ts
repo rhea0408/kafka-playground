@@ -18,6 +18,7 @@ import { rebalanceProtocol } from './protocols/assignors/index.ts';
 import type { Step } from './testing/arbitraries.ts';
 import { commitViolations, cooperativeCoverageViolations } from './testing/group-checks.ts';
 import { runScenario } from './testing/run.ts';
+import { runsFromEnv } from './testing/runs.ts';
 
 const seedArb = fc.integer({ min: 0, max: 0xffffffff });
 
@@ -124,21 +125,9 @@ function run(seed: number, { s, steps }: Scenario) {
  * Cases per run: KP_LIVENESS_RUNS, default 50. Each case simulates minutes of a busy group, and
  * coverage instrumentation makes that about 4× slower, so the PR job runs 50; the nightly job
  * (.github/workflows/nightly.yml) runs 1000 without coverage. That deep search is how L1–L3 were
- * found: 1500 and 2000 cases take about 4 and 6 minutes locally. The engine has no Node types, so
- * the environment is read through globalThis (test-only code).
+ * found: 1500 and 2000 cases take about 4 and 6 minutes locally.
  */
-const RUNS = runsFromEnv(
-  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[
-    'KP_LIVENESS_RUNS'
-  ],
-);
-
-function runsFromEnv(value: string | undefined): number {
-  if (value === undefined || value === '') return 50;
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) throw new Error(`KP_LIVENESS_RUNS must be a positive integer`);
-  return n;
-}
+const RUNS = runsFromEnv('KP_LIVENESS_RUNS', 50);
 
 /** About 0.3 s per case without coverage, 1.2 s with; generous so slow CI runners pass too. */
 const TIMEOUT_MS = Math.max(300_000, RUNS * 2_000);
