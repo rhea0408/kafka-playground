@@ -41,7 +41,7 @@ const events: EngineEvent[] = [
 describe('event types', () => {
   it('lists every type once', () => {
     expect(new Set(ALL_EVENT_TYPES).size).toBe(ALL_EVENT_TYPES.length);
-    expect(ALL_EVENT_TYPES).toHaveLength(34);
+    expect(ALL_EVENT_TYPES).toHaveLength(35);
     expect(EVENT_TYPE_GROUPS.map((g) => g.label)).toEqual([
       'Records',
       'Commit',

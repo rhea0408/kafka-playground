@@ -90,11 +90,6 @@ describe('field metadata', () => {
         'topic.minInsyncReplicas',
         'topic.replicationFactor',
         'topic.uncleanLeaderElectionEnable',
-        'producer.retries',
-        'producer.deliveryTimeoutMs',
-        'producer.requestTimeoutMs',
-        'producer.retryBackoffMs',
-        'producer.retryBackoffMaxMs',
         'producer.enableIdempotence',
       ].sort(),
     );

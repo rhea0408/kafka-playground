@@ -21,7 +21,12 @@ import {
   handleGroupSyncTimer,
   handleMemberSessionExpire,
 } from './group-coordinator.ts';
-import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
+import {
+  handleLeaderAppend,
+  handleProduceResponse,
+  handleProducerTask,
+  handleProducerTick,
+} from './produce.ts';
 import {
   handleAlterPartitionRequest,
   handleBrokerHeartbeatRequest,
@@ -113,6 +118,11 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'PreferredLeaderCheck':
       handlePreferredLeaderCheck(ctx);
+      return;
+    case 'ProducerDrain':
+    case 'ProduceRequestTimeout':
+    case 'ProduceDeliveryTimeout':
+      handleProducerTask(ctx, task);
       return;
     case 'DelayedProduceExpire':
       handleDelayedProduceExpire(ctx, task);

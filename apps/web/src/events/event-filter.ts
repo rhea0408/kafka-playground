@@ -16,7 +16,14 @@ export interface EventTypeGroup {
 const GROUPS = [
   {
     label: 'Records',
-    types: ['RecordProduced', 'RecordAppended', 'ProduceAcked', 'ProduceFailed', 'RecordConsumed'],
+    types: [
+      'RecordProduced',
+      'RecordAppended',
+      'ProduceAcked',
+      'ProduceRetried',
+      'ProduceFailed',
+      'RecordConsumed',
+    ],
   },
   // Commits and what they mean for delivery (FR-2.8): duplicates and skipped records.
   {

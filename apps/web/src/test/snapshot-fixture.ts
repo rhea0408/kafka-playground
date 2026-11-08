@@ -36,6 +36,9 @@ export function record(offset: number, key: string | null): LogRecord {
     traceId: `p1@1#${String(offset)}`,
     sizeBytes: 1024,
     leaderEpoch: 0,
+    pid: -1,
+    producerEpoch: -1,
+    sequence: -1,
   };
 }
 

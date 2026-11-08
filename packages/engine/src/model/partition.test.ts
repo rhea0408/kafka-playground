@@ -43,7 +43,14 @@ describe('partition log', () => {
 
   it('keeps the record fields and adds the offset', () => {
     const p = createPartition('orders', 1, 'b1');
-    expect(appendRecord(p, rec(7, 'A'))).toEqual({ offset: 0, ...rec(7, 'A'), leaderEpoch: 0 });
+    expect(appendRecord(p, rec(7, 'A'))).toEqual({
+      offset: 0,
+      ...rec(7, 'A'),
+      leaderEpoch: 0,
+      pid: -1,
+      producerEpoch: -1,
+      sequence: -1,
+    });
   });
 
   it('reads from an offset, at most max records, never at or above the HW', () => {

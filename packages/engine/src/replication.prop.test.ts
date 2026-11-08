@@ -34,19 +34,38 @@ describe(
   'replication invariants (fast-check)',
   { timeout: Math.max(30_000, NUM_RUNS * 400) },
   () => {
-    it('every acknowledged offset is where the leader appended that record', () => {
+    it('every acknowledged offset is where a leader appended that record', () => {
       fc.assert(
         fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
           const { events } = run(seed, topology, steps);
-          const appended = new Map<string, number>();
+          // Retries can append a record again (acks=1 has no idempotence; a deleted and re-created
+          // topic is a new log), so an ack matches one of the record's appends (M4-T7).
+          const appended = new Map<string, Set<number>>();
           for (const e of events) {
             if (e.type === 'RecordAppended') {
-              // Without retries (until M4-T7) each record is appended at most once.
-              expect(appended.has(e.traceId)).toBe(false);
-              appended.set(e.traceId, e.offset);
+              const set = appended.get(e.traceId) ?? new Set<number>();
+              set.add(e.offset);
+              appended.set(e.traceId, set);
             }
             if (e.type === 'ProduceAcked' && e.offset !== null) {
-              expect(appended.get(e.traceId)).toBe(e.offset);
+              expect(appended.get(e.traceId)?.has(e.offset)).toBe(true);
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
+    it('an idempotent (acks=all) producer never writes a record twice into one log', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context } = run(seed, topology, steps);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              for (const replica of p.replicaLogs.values()) {
+                const ids = replica.log.filter((r) => r.pid >= 0).map((r) => r.traceId);
+                expect(new Set(ids).size).toBe(ids.length);
+              }
             }
           }
         }),

@@ -22,6 +22,11 @@ import type { TopicState } from '../model/state.ts';
 export interface ClientMetadata {
   /** Partition count per topic, as of this client's last refresh. */
   readonly partitionCounts: Map<string, number>;
+  /**
+   * Leader per partition ("topic-partition" → broker id, or null while offline), as of the last
+   * refresh (M4-T7). Requests go to this broker until an error or the age forces a refresh.
+   */
+  readonly leaders: Map<string, string | null>;
   /** Sim time of the last full refresh; the next is due metadata.max.age.ms later. */
   refreshedAt: number;
   /** Set after a metadata error: refresh at the next opportunity, whatever the age. */
@@ -29,12 +34,18 @@ export interface ClientMetadata {
 }
 
 export function createClientMetadata(now: number): ClientMetadata {
-  return { partitionCounts: new Map(), refreshedAt: now, updateRequested: false };
+  return {
+    partitionCounts: new Map(),
+    leaders: new Map(),
+    refreshedAt: now,
+    updateRequested: false,
+  };
 }
 
 /** Forgets everything, as a freshly started client process would. */
 export function resetClientMetadata(metadata: ClientMetadata, now: number): void {
   metadata.partitionCounts.clear();
+  metadata.leaders.clear();
   metadata.refreshedAt = now;
   metadata.updateRequested = false;
 }
@@ -52,6 +63,14 @@ export function refreshIfStale(
   if (!metadata.updateRequested && now - metadata.refreshedAt < maxAgeMs) return [];
   metadata.refreshedAt = now;
   metadata.updateRequested = false;
+  for (const key of [...metadata.leaders.keys()]) {
+    const dash = key.lastIndexOf('-');
+    const partition = ctx.state.topics.get(key.slice(0, dash))?.partitions[
+      Number(key.slice(dash + 1))
+    ];
+    if (partition === undefined) metadata.leaders.delete(key);
+    else metadata.leaders.set(key, partition.leader);
+  }
   const changed: string[] = [];
   for (const [topic, count] of metadata.partitionCounts) {
     const actual = ctx.state.topics.get(topic)?.partitions.length;
@@ -69,5 +88,19 @@ export function knownPartitionCount(metadata: ClientMetadata, topic: TopicState)
   if (known !== undefined) return known;
   const actual = topic.partitions.length;
   metadata.partitionCounts.set(topic.config.id, actual);
+  return actual;
+}
+
+/** The leader this client believes `topic`-`partition` has, fetching it on first use. */
+export function knownLeader(
+  metadata: ClientMetadata,
+  topic: TopicState,
+  partition: number,
+): string | null {
+  const key = `${topic.config.id}-${String(partition)}`;
+  const known = metadata.leaders.get(key);
+  if (known !== undefined) return known;
+  const actual = topic.partitions[partition]?.leader ?? null;
+  metadata.leaders.set(key, actual);
   return actual;
 }
