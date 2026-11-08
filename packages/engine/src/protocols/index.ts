@@ -32,6 +32,7 @@ import {
 } from './controller.ts';
 import {
   handleBrokerRegistrationResponse,
+  handleBrokerRegistrationRetry,
   handleBrokerShutdownAllowed,
 } from '../commands/broker-lifecycle.ts';
 import {
@@ -103,6 +104,9 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'BrokerRegistrationResponse':
       handleBrokerRegistrationResponse(ctx, task);
+      return;
+    case 'BrokerRegistrationRetry':
+      handleBrokerRegistrationRetry(ctx, task);
       return;
     case 'ControllerSessionExpire':
       handleControllerSessionExpire(ctx, task);

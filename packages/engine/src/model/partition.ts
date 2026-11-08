@@ -178,13 +178,23 @@ export function leaderLog(partition: PartitionState): ReplicaLog | undefined {
 }
 
 /** Appends a record to a replica's log, keeping its leader-epoch cache in step. */
+/**
+ * LeaderEpochFileCache#assign with maybeTruncateNonMonotonicEntries: a new epoch starting at
+ * `startOffset` replaces later entries that start at or after it.
+ */
+export function assignEpoch(replica: ReplicaLog, epoch: number, startOffset: number): void {
+  const last = replica.epochs[replica.epochs.length - 1];
+  if (last !== undefined && last.epoch >= epoch) return;
+  while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= startOffset) {
+    replica.epochs.pop();
+  }
+  replica.epochs.push({ epoch, startOffset });
+}
+
 export function appendToReplica(replica: ReplicaLog, record: LogRecord): void {
   replica.log.push(record);
   replica.logEndOffset = record.offset + 1;
-  const last = replica.epochs[replica.epochs.length - 1];
-  if (last === undefined || last.epoch < record.leaderEpoch) {
-    replica.epochs.push({ epoch: record.leaderEpoch, startOffset: record.offset });
-  }
+  assignEpoch(replica, record.leaderEpoch, record.offset);
 }
 
 /**
@@ -233,6 +243,11 @@ export function endOffsetForEpoch(
 
 /** Removes every record at `offset` and above (truncation), with their epoch cache entries. */
 export function truncateReplica(replica: ReplicaLog, offset: number): LogRecord[] {
+  // UnifiedLog#truncateTo trims the epoch cache even when no record goes (an epoch whose leader
+  // appended nothing would otherwise make the follower diverge for ever).
+  while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= offset) {
+    replica.epochs.pop();
+  }
   if (offset >= replica.logEndOffset) return [];
   const from = Math.max(offset, replica.logStartOffset);
   const removed = replica.log.splice(from - replica.logStartOffset);

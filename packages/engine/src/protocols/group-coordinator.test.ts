@@ -47,6 +47,7 @@ function harness(delayMs = 3000) {
     status: 'running',
     incarnation: 0,
     brokerEpoch: 1,
+    cleanShutdownEpoch: -1,
   });
   ctx.state.topics.set('t', {
     topicId: 1,

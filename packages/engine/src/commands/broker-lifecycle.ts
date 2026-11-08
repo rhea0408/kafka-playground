@@ -44,13 +44,9 @@ export function brokerLifecycle(
       if (isAlive(broker.status)) return reject(`Broker ${id} is already running.`);
       broker.status = 'running';
       broker.incarnation = ++ctx.state.counters.brokerIncarnation;
+      broker.brokerEpoch = -1; // not registered in this life yet
       ctx.emit({ type: 'BrokerStarted', brokerId: id });
-      ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
-        type: 'BrokerRegistrationRequest',
-        broker: id,
-        incarnation: broker.incarnation,
-        previousBrokerEpoch: broker.brokerEpoch,
-      });
+      sendRegistration(ctx, broker);
       break;
     case 'KillBroker':
       if (!isAlive(broker.status)) return reject(`Broker ${id} is not running (${broker.status}).`);
@@ -69,9 +65,20 @@ export function brokerLifecycle(
   return { ok: true, logged: command };
 }
 
+/** BrokerRegistrationRequest, with the previous epoch only after a clean shutdown (K1). */
+function sendRegistration(ctx: EngineContext, broker: BrokerState): void {
+  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+    type: 'BrokerRegistrationRequest',
+    broker: broker.config.id,
+    incarnation: broker.incarnation,
+    previousBrokerEpoch: broker.cleanShutdownEpoch,
+  });
+}
+
 /** The process is gone: its memory (purgatories, fetchers, connections) goes with it. */
 function stopProcess(ctx: EngineContext, broker: BrokerState, status: 'crashed' | 'stopped'): void {
   const id = broker.config.id;
+  if (status === 'crashed') broker.cleanShutdownEpoch = -1;
   broker.status = status;
   broker.incarnation = ++ctx.state.counters.brokerIncarnation;
   onBrokerStopped(ctx, id);
@@ -92,6 +99,7 @@ export function handleBrokerShutdownAllowed(
 ): void {
   const broker = ctx.state.brokers.get(task.broker);
   if (broker?.incarnation !== task.incarnation || broker.status !== 'shutting-down') return;
+  broker.cleanShutdownEpoch = broker.brokerEpoch; // the clean-shutdown marker on disk
   stopProcess(ctx, broker, 'stopped');
   ctx.emit({ type: 'BrokerStopped', brokerId: task.broker, reason: 'shutdown' });
 }
@@ -103,6 +111,15 @@ export function handleBrokerRegistrationResponse(
 ): void {
   const broker = ctx.state.brokers.get(task.broker);
   if (broker?.incarnation !== task.incarnation || !isAlive(broker.status)) return;
+  if (task.brokerEpoch < 0) {
+    // Rejected (the old session is still valid): try again later.
+    ctx.kernel.scheduleIn(REGISTRATION_RETRY_MS, {
+      type: 'BrokerRegistrationRetry',
+      broker: task.broker,
+      incarnation: task.incarnation,
+    });
+    return;
+  }
   broker.brokerEpoch = task.brokerEpoch;
   sendBrokerHeartbeat(ctx, task.broker);
   scheduleBrokerHeartbeat(ctx, task.broker, BROKER_HEARTBEAT_INTERVAL_MS);
@@ -115,4 +132,16 @@ export function handleBrokerRegistrationResponse(
       }
     }
   }
+}
+
+/** BrokerLifecycleManager retries a rejected registration (simplified: a fixed 1 s). */
+export const REGISTRATION_RETRY_MS = 1000;
+
+export function handleBrokerRegistrationRetry(
+  ctx: EngineContext,
+  task: Task<'BrokerRegistrationRetry'>,
+): void {
+  const broker = ctx.state.brokers.get(task.broker);
+  if (broker?.incarnation !== task.incarnation || !isAlive(broker.status)) return;
+  sendRegistration(ctx, broker);
 }

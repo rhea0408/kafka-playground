@@ -94,6 +94,7 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
         status: 'running',
         incarnation: ++state.counters.brokerIncarnation,
         brokerEpoch: -1,
+        cleanShutdownEpoch: -1,
       });
       registerNewBroker(ctx, component.id);
       scheduleIsrExpiration(ctx, component.id);
@@ -173,6 +174,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       }
       component = (state.brokers.get(id) as { config: Component }).config;
       state.brokers.delete(id);
+      state.controller.brokers.delete(id); // unregistered
       break;
     }
     case 'topic':

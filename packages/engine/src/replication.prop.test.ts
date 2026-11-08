@@ -135,5 +135,37 @@ describe(
         { numRuns: NUM_RUNS },
       );
     });
+
+    it('acks=all with effective minISR ≥ 2 and no unclean election never loses an acknowledged record', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context, events } = run(seed, topology, steps);
+          const acksAll = new Set<string>();
+          const acked = new Set<string>();
+          for (const e of events) {
+            if (e.type === 'RecordProduced' && e.acks === 'all') acksAll.add(e.traceId);
+            if (e.type === 'ProduceAcked') acked.add(e.traceId);
+            if (e.type !== 'RecordsTruncated') continue;
+            const topic = context.state.topics.get(e.topic);
+            const p = topic?.partitions[e.partition];
+            if (
+              topic === undefined ||
+              p === undefined ||
+              topic.config.uncleanLeaderElectionEnable
+            ) {
+              continue;
+            }
+            if (Math.min(topic.config.minInsyncReplicas, p.replicas.length) < 2) continue;
+            for (const t of e.traceIds) {
+              expect({ lost: t, acked: acked.has(t) && acksAll.has(t) }).toEqual({
+                lost: t,
+                acked: false,
+              });
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
   },
 );

@@ -39,8 +39,6 @@ export interface ControllerBrokerState {
   inControlledShutdown: boolean;
   /** Only the ControllerSessionExpire task with this token is current. */
   sessionToken: number;
-  /** The epoch the broker would present after a clean shutdown (matches → clean, K1). */
-  cleanShutdownEpoch: number | null;
 }
 
 /** The abstract KRaft controller quorum (ADR 0005): always up. */
@@ -50,6 +48,8 @@ export interface ControllerState {
   nextBrokerEpoch: number;
   /** Whether the periodic preferred-leader check is scheduled. */
   preferredCheckScheduled: boolean;
+  /** Source of session timer tokens (unique across brokers and re-adds). */
+  nextSessionToken: number;
 }
 
 export interface BrokerState {
@@ -60,8 +60,13 @@ export interface BrokerState {
    * requests and tasks of an earlier life are ignored (M4-T5).
    */
   incarnation: number;
-  /** The broker epoch the controller gave this process at registration (-1 before). */
+  /**
+   * The broker epoch the controller gave this process at registration; -1 from a restart until
+   * the registration is accepted (the broker serves nothing meanwhile).
+   */
   brokerEpoch: number;
+  /** The broker epoch of the last life if it ended with a finished controlled shutdown. */
+  cleanShutdownEpoch: number;
 }
 
 export interface TopicState {
@@ -330,7 +335,12 @@ export function createState(): EngineState {
     producers: new Map(),
     consumers: new Map(),
     groups: new Map(),
-    controller: { brokers: new Map(), nextBrokerEpoch: 1, preferredCheckScheduled: false },
+    controller: {
+      brokers: new Map(),
+      nextBrokerEpoch: 1,
+      preferredCheckScheduled: false,
+      nextSessionToken: 0,
+    },
     offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),

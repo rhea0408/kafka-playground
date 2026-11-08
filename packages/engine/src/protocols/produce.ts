@@ -27,6 +27,7 @@ import type { KeyStrategy } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { EngineContext } from '../model/context.ts';
 import { appendRecord } from '../model/partition.ts';
+import { canServe } from './controller.ts';
 import {
   effectiveMinIsr,
   onLeaderAppended,
@@ -218,6 +219,11 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
   };
   const broker = ctx.state.brokers.get(task.broker);
   if (broker === undefined || !isAlive(broker.status)) return; // no process to answer (T7)
+  if (!canServe(ctx, task.broker)) {
+    // A restarted broker that is not registered and unfenced yet serves nothing.
+    respond({ ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
+    return;
+  }
   if (topic === undefined || partition === undefined) {
     // The topic was deleted while the request was in flight.
     respond({ ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });

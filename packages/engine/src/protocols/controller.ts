@@ -124,6 +124,7 @@ export function handleAlterPartitionRequest(
       type: 'AlterPartitionResponse',
       leader: task.leader,
       leaderIncarnation: task.leaderIncarnation,
+      leaderEpoch: task.leaderEpoch,
       topic: task.topic,
       topicId: task.topicId,
       partition: task.partition,
@@ -184,15 +185,10 @@ type ElectionReason = Extract<EngineEventPayload, { type: 'LeaderElected' }>['re
 
 /** Whether the controller would accept `brokerId` as a leader (LeaderAcceptor, K12). */
 export function isActive(ctx: EngineContext, brokerId: string): boolean {
+  // LeaderAcceptor: registration state only. The controller can't see a crashed process before
+  // its session times out, so it may elect one (the partition then waits for the fencing).
   const entry = ctx.state.controller.brokers.get(brokerId);
-  const broker = ctx.state.brokers.get(brokerId);
-  return (
-    entry !== undefined &&
-    broker !== undefined &&
-    isAlive(broker.status) &&
-    !entry.fenced &&
-    !entry.inControlledShutdown
-  );
+  return entry !== undefined && !entry.fenced && !entry.inControlledShutdown;
 }
 
 /**
@@ -210,7 +206,6 @@ export function registerNewBroker(ctx: EngineContext, brokerId: string): void {
     fenced: false,
     inControlledShutdown: false,
     sessionToken: 0,
-    cleanShutdownEpoch: null,
   });
   broker.brokerEpoch = epoch;
   armSession(ctx, brokerId);
@@ -237,7 +232,7 @@ export function scheduleBrokerHeartbeat(
 function armSession(ctx: EngineContext, brokerId: string): void {
   const entry = ctx.state.controller.brokers.get(brokerId);
   if (entry === undefined) return;
-  entry.sessionToken += 1;
+  entry.sessionToken = ++ctx.state.controller.nextSessionToken;
   ctx.kernel.scheduleIn(BROKER_SESSION_TIMEOUT_MS, {
     type: 'ControllerSessionExpire',
     broker: brokerId,
@@ -310,7 +305,6 @@ function controlledShutdown(ctx: EngineContext, brokerId: string, incarnation: n
   if (leadsSomething) return; // it asks again with its next heartbeat
   if (!entry.fenced) {
     entry.fenced = true;
-    entry.cleanShutdownEpoch = entry.brokerEpoch;
     ctx.emit({ type: 'BrokerFenced', brokerId, reason: 'controlled-shutdown' });
   }
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
@@ -344,20 +338,29 @@ export function handleBrokerRegistrationRequest(
   const { controller } = ctx.state;
   const entry = controller.brokers.get(task.broker);
   if (entry === undefined) return;
-  const clean =
-    entry.cleanShutdownEpoch !== null && entry.cleanShutdownEpoch === task.previousBrokerEpoch;
+  const answer = (brokerEpoch: number): void => {
+    ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+      type: 'BrokerRegistrationResponse',
+      broker: task.broker,
+      incarnation: task.incarnation,
+      brokerEpoch,
+    });
+  };
+  // DuplicateBrokerRegistrationException: the old registration's session is still valid (a
+  // restart within broker.session.timeout.ms of a crash); the broker retries.
+  if (!entry.fenced) {
+    answer(-1);
+    return;
+  }
+  // isCleanShutdown = storedBrokerEpoch == previousBrokerEpoch (the broker sends its epoch only
+  // if it finished a controlled shutdown), K1.
+  const clean = task.previousBrokerEpoch === entry.brokerEpoch;
   if (!clean) removeBrokerFromPartitions(ctx, task.broker, 'failover', true);
   entry.brokerEpoch = controller.nextBrokerEpoch++;
   entry.fenced = true;
   entry.inControlledShutdown = false;
-  entry.cleanShutdownEpoch = null;
   armSession(ctx, task.broker);
-  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
-    type: 'BrokerRegistrationResponse',
-    broker: task.broker,
-    incarnation: task.incarnation,
-    brokerEpoch: entry.brokerEpoch,
-  });
+  answer(entry.brokerEpoch);
 }
 
 /**
@@ -409,6 +412,18 @@ function changePartition(
 ): void {
   const previousLeader = partition.leader;
   const election = electLeader(ctx, topic, partition, targetIsr);
+  // changeRecordIsNoOp: nothing to write when the ISR, the ELR and the leader stay the same.
+  const sameIsr =
+    election?.isr === undefined &&
+    targetIsr.length === partition.isr.length &&
+    targetIsr.every((b) => partition.isr.includes(b));
+  if (
+    sameIsr &&
+    (election?.leader ?? null) === previousLeader &&
+    uncleanShutdown.every((b) => !partition.elr.includes(b))
+  ) {
+    return;
+  }
   let isr = election?.isr ?? targetIsr;
   if (election === null && isr.length === 0 && partition.isr.length > 0 && !elrEnabled()) {
     isr = partition.isr; // ELR off: the last member stays in the ISR (unreachable while ELR is on)
@@ -557,4 +572,15 @@ export function handlePreferredLeaderCheck(ctx: EngineContext): void {
     }
   }
   schedulePreferredLeaderCheck(ctx);
+}
+
+/**
+ * Whether a broker process serves requests: alive, registered in this life and unfenced
+ * (BrokerServer: a restarting broker doesn't serve until it is caught up and unfenced).
+ */
+export function canServe(ctx: EngineContext, brokerId: string): boolean {
+  const broker = ctx.state.brokers.get(brokerId);
+  const entry = ctx.state.controller.brokers.get(brokerId);
+  if (broker === undefined || entry === undefined || !isAlive(broker.status)) return false;
+  return broker.brokerEpoch === entry.brokerEpoch && broker.brokerEpoch >= 0;
 }

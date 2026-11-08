@@ -17,6 +17,7 @@
 
 import type { EngineContext } from '../model/context.ts';
 import { isAlive } from '../model/state.ts';
+import { canServe } from './controller.ts';
 import { bytesAvailable, readRecords, type PartitionState } from '../model/partition.ts';
 import type {
   EngineTask,
@@ -108,8 +109,9 @@ export function readFetchPartition(
   if (topic.topicId !== p.topicId) {
     return { ...p, error: 'UNKNOWN_TOPIC_ID', records: [], bytes: 0 };
   }
-  // Only the leader serves consumer fetches (no follower fetching, KIP-392, here).
-  if (broker !== undefined && partition.leader !== broker) {
+  // Only the leader serves consumer fetches (no follower fetching, KIP-392, here), and only once
+  // it is registered and unfenced in this life.
+  if (broker !== undefined && (partition.leader !== broker || !canServe(ctx, broker))) {
     return { ...p, error: 'NOT_LEADER_OR_FOLLOWER', records: [], bytes: 0 };
   }
   // Valid fetch offsets run from the log start offset to the log end offset (LocalLog#read,

@@ -204,6 +204,7 @@ export type EngineTask =
       readonly type: 'AlterPartitionResponse';
       readonly leader: string;
       readonly leaderIncarnation: number;
+      readonly leaderEpoch: number;
       readonly topic: string;
       readonly topicId: number;
       readonly partition: number;
@@ -245,6 +246,12 @@ export type EngineTask =
       readonly broker: string;
       readonly incarnation: number;
       readonly brokerEpoch: number;
+    }
+  /** A rejected broker registration is sent again. */
+  | {
+      readonly type: 'BrokerRegistrationRetry';
+      readonly broker: string;
+      readonly incarnation: number;
     }
   /** broker.session.timeout.ms passed since the broker's last heartbeat (if the token is current). */
   | { readonly type: 'ControllerSessionExpire'; readonly broker: string; readonly token: number }

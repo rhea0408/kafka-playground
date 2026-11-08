@@ -244,8 +244,14 @@ describe('replication robustness (review of M4-T3)', () => {
     engine.dispatch({ type: 'KillBroker', id: leader });
     engine.runUntil(1500);
     engine.dispatch({ type: 'RestartBroker', id: leader });
-    engine.runUntil(6100); // followers retry after replica.fetch.backoff.ms (1 s)
+    // Its registration is refused until its old session expires (~9 s): meanwhile it is fenced,
+    // a follower takes over, and the old leader then registers and catches up as a follower.
+    engine.runUntil(13_000);
+    engine.dispatch({ type: 'RemoveComponent', id: 'p1' });
+    engine.runUntil(15_000);
     const p = partition0(engine);
+    expect(p?.leader).not.toBe(leader);
+    expect(p?.isr).toContain(leader);
     expect(new Set(p?.replicas.map((r) => r.logEndOffset)).size).toBe(1);
     expect(p?.logEndOffset).toBeGreaterThan(1);
     expect(p?.highWatermark).toBe(p?.logEndOffset);
@@ -356,7 +362,7 @@ describe('ISR management (M4-T4)', () => {
     const follower = p?.replicas.map((r) => r.broker).find((b) => b !== p.leader) ?? '';
     const epoch = context.state.brokers.get(follower)?.brokerEpoch ?? -1;
     engine.dispatch({ type: 'KillBroker', id: follower });
-    for (let t = 2000; t <= 60_000; t += 2000) {
+    for (let t = 2000; t <= 18_000; t += 2000) {
       kernel.scheduleAt(t, {
         type: 'BrokerHeartbeatRequest',
         broker: follower,
@@ -400,17 +406,18 @@ describe('ISR management (M4-T4)', () => {
 
   it('a follower that catches up rejoins the ISR', () => {
     const { engine, events, follower } = oneFollowerStops();
-    engine.runUntil(20_000);
+    // Its (injected) heartbeats stop at 18 s: fenced at 27 s; restarted at 28 s, it registers.
+    engine.runUntil(28_000);
     engine.dispatch({ type: 'RestartBroker', id: follower });
-    engine.runUntil(21_100);
+    engine.runUntil(28_100);
     const expanded = ofType(events, 'IsrExpanded');
     expect(expanded).toHaveLength(1);
     expect(expanded[0]).toMatchObject({ added: [follower] });
-    expect(expanded[0]?.t).toBeLessThan(20_010);
+    expect(expanded[0]?.t).toBeLessThan(28_010);
     expect(partition0(engine)?.isr).toContain(follower);
     expect(partition0(engine)?.underReplicated).toBe(false);
     const p = partition0(engine);
-    expect(p?.replicas.map((r) => r.logEndOffset)).toEqual([21, 21, 21]);
+    expect(new Set(p?.replicas.map((r) => r.logEndOffset)).size).toBe(1);
   });
 
   it('shrinking below min.insync.replicas moves the removed replicas into the ELR (KIP-966)', () => {

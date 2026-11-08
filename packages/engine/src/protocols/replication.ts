@@ -29,6 +29,7 @@ import type { Topic } from '@kp/schema';
 import type { EngineContext } from '../model/context.ts';
 import {
   appendToReplica,
+  assignEpoch,
   endOffsetForEpoch,
   leaderLog,
   truncateReplica,
@@ -44,7 +45,7 @@ import type {
   ReplicaFetchRequestTask,
   ReplicaFetchResult,
 } from '../model/tasks.ts';
-import { isrEligible, sendAlterPartition } from './controller.ts';
+import { canServe, isrEligible, sendAlterPartition } from './controller.ts';
 import { onHighWatermarkAdvanced, onLeaderMovedForConsumers } from './fetch.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
@@ -274,7 +275,7 @@ export function handleAlterPartitionResponse(
   const topic = ctx.state.topics.get(task.topic);
   const partition = topic?.partitions[task.partition];
   if (topic === undefined || partition === undefined || topic.topicId !== task.topicId) return;
-  if (partition.leader !== task.leader) return; // it lost leadership meanwhile
+  if (partition.leader !== task.leader || partition.leaderEpoch !== task.leaderEpoch) return;
   partition.pendingIsr = null;
   // With the confirmed (possibly smaller) ISR the HW may move, unblocking acks=all produces.
   onLeaderStateChanged(ctx, topic, partition);
@@ -359,6 +360,10 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
     disconnect(ctx, task); // the leader process is gone: the connection fails
     return;
   }
+  if (!canServe(ctx, task.leader)) {
+    respondToReplicaFetch(ctx, task, true); // not registered/unfenced yet: NOT_LEADER for all
+    return;
+  }
   // A request from an earlier life of the follower doesn't count (Kafka fences it by broker
   // epoch in updateFetchStateOrThrow); its answer is dropped on arrival.
   if (runningBroker(ctx, task.follower, task.followerIncarnation) !== undefined) {
@@ -370,6 +375,10 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
       if (partition.leader !== task.leader || partition.leaderEpoch !== p.currentLeaderEpoch) {
         continue;
       }
+      const leaderReplica = leaderLog(partition);
+      // A diverged follower's offset says nothing about what it holds: it truncates first
+      // (Partition#fetchRecords: no fetch-state update when divergingEpoch is set).
+      if (leaderReplica === undefined || divergence(leaderReplica, p) !== null) continue;
       updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
       onLeaderStateChanged(ctx, topic, partition);
       maybeExpandIsr(ctx, topic, partition, task.follower);
@@ -434,8 +443,13 @@ function hasDataFor(ctx: EngineContext, task: ReplicaFetchRequestTask): boolean 
 }
 
 /** Builds the response from the leader's log now and sends it back (+ network delay). */
-function respondToReplicaFetch(ctx: EngineContext, task: ReplicaFetchRequestTask): void {
+function respondToReplicaFetch(
+  ctx: EngineContext,
+  task: ReplicaFetchRequestTask,
+  notServing = false,
+): void {
   const partitions = task.partitions.map((p): ReplicaFetchResult => {
+    if (notServing) return { ...p, error: 'NOT_LEADER_OR_FOLLOWER' };
     const topic = ctx.state.topics.get(p.topic);
     const partition = topic?.partitions[p.partition];
     if (topic === undefined || partition === undefined || topic.topicId !== p.topicId) {
@@ -735,10 +749,7 @@ export function onLeaderChanged(
     partition.view = leader.broker;
     partition.leaderEpochStartOffset = leader.logEndOffset;
     // makeLeader: the new epoch starts at the leader's LEO (leaderEpochCache.assign).
-    const last = leader.epochs[leader.epochs.length - 1];
-    if (last === undefined || last.epoch < partition.leaderEpoch) {
-      leader.epochs.push({ epoch: partition.leaderEpoch, startOffset: leader.logEndOffset });
-    }
+    assignEpoch(leader, partition.leaderEpoch, leader.logEndOffset);
     resetFollowers(ctx, partition);
   }
   const touches = (p: { topic: string; partition: number }) =>

@@ -327,3 +327,88 @@ describe('truncation by leader epoch (M4-T6, K9)', () => {
     expect(new Set(replicas.map((r) => r.logEndOffset)).size).toBe(1);
   });
 });
+
+describe('review of M4-T5/T6: regressions', () => {
+  it('successive leaders that append nothing do not leave followers diverging for ever', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ rate: 10 }) });
+    engine.runUntil(1100);
+    engine.dispatch({ type: 'RemoveComponent', id: 'p1' });
+    engine.runUntil(1200);
+    const first = p0(engine).leader ?? '';
+    engine.dispatch({ type: 'StopBroker', id: first });
+    engine.runUntil(1300);
+    const second = p0(engine).leader ?? '';
+    engine.dispatch({ type: 'StopBroker', id: second });
+    engine.runUntil(1400);
+    engine.dispatch({ type: 'RestartBroker', id: first });
+    engine.dispatch({ type: 'RestartBroker', id: second });
+    engine.runUntil(3000);
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'producer', id: 'p2', ratePerSec: 10, acks: 'all' },
+    });
+    engine.dispatch({ type: 'Connect', from: 'p2', to: 'orders' });
+    engine.runUntil(8000);
+    engine.dispatch({ type: 'RemoveComponent', id: 'p2' });
+    engine.runUntil(9000);
+    const p = p0(engine);
+    expect(p.logEndOffset).toBeGreaterThan(40);
+    expect(new Set(p.replicas.map((r) => r.logEndOffset)).size).toBe(1);
+    expect(p.isr).toHaveLength(3);
+  });
+
+  it('a diverged follower truncates before it can rejoin the ISR', () => {
+    const engine = createEngine({
+      seed: 1,
+      topology: cluster({ rf: 2, brokers: 2, acks: '1', unclean: true }),
+    });
+    const events = record(engine);
+    engine.runUntil(500);
+    const [follower] = followers(engine);
+    const leader = p0(engine).leader ?? '';
+    engine.dispatch({ type: 'KillBroker', id: follower ?? '' });
+    engine.runUntil(12_000);
+    engine.dispatch({ type: 'KillBroker', id: leader });
+    engine.dispatch({ type: 'RestartBroker', id: follower ?? '' });
+    engine.runUntil(30_000);
+    engine.dispatch({ type: 'RestartBroker', id: leader });
+    engine.runUntil(32_000);
+    const truncated = ofType(events, 'RecordsTruncated').find((e) => e.broker === leader);
+    const expanded = ofType(events, 'IsrExpanded').find((e) => e.added.includes(leader));
+    expect(truncated).toBeDefined();
+    expect(expanded).toBeDefined();
+    expect((expanded?.seq ?? 0) > (truncated?.seq ?? 0)).toBe(true);
+  });
+
+  it('a broker restarted before its session expires is fenced first and serves nothing meanwhile', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ acks: '1', minIsr: 1 }) });
+    const events = record(engine);
+    engine.runUntil(4500);
+    const leader = p0(engine).leader ?? '';
+    engine.dispatch({ type: 'KillBroker', id: leader });
+    engine.runUntil(6000);
+    engine.dispatch({ type: 'RestartBroker', id: leader });
+    engine.runUntil(20_000);
+    // No appends on the restarted process before it is registered and unfenced.
+    const unfencedAt = ofType(events, 'BrokerUnfenced').find((e) => e.brokerId === leader)?.t ?? 0;
+    expect(unfencedAt).toBeGreaterThan(13_000);
+    expect(ofType(events, 'BrokerFenced')).toMatchObject([
+      { brokerId: leader, reason: 'session-timeout' },
+    ]);
+    // Nothing acknowledged was lost (it never led again on stale metadata).
+    expect(ofType(events, 'RecordsTruncated').reduce((n, e) => n + e.acked, 0)).toBe(0);
+  });
+
+  it('a removed and re-added broker is not fenced by its old session timer', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ rf: 1, brokers: 1, minIsr: 1 }) });
+    const events = record(engine);
+    engine.runUntil(1000);
+    engine.dispatch({ type: 'AddComponent', component: { kind: 'broker', id: 'b4' } });
+    engine.runUntil(1500);
+    engine.dispatch({ type: 'RemoveComponent', id: 'b4' });
+    engine.runUntil(9000);
+    engine.dispatch({ type: 'AddComponent', component: { kind: 'broker', id: 'b4' } });
+    engine.runUntil(20_000);
+    expect(ofType(events, 'BrokerFenced')).toEqual([]);
+  });
+});
