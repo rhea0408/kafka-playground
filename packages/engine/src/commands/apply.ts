@@ -27,6 +27,7 @@ import {
   ensureReplicaFetcher,
   onBrokerStopped,
   onTopicRemovedReplication,
+  scheduleIsrExpiration,
   startFollowers,
 } from '../protocols/replication.ts';
 import { updateConfig } from './update-config.ts';
@@ -93,6 +94,7 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
         status: 'running',
         incarnation: ++state.counters.brokerIncarnation,
       });
+      scheduleIsrExpiration(ctx, component.id);
       break;
     case 'topic': {
       const assignments = placeReplicas(
@@ -299,6 +301,7 @@ function brokerLifecycle(
       if (broker.status === 'running') return reject(`Broker ${id} is already running.`);
       broker.status = 'running';
       broker.incarnation = ++ctx.state.counters.brokerIncarnation;
+      scheduleIsrExpiration(ctx, id);
       ctx.emit({ type: 'BrokerStarted', brokerId: id });
       // Its replica fetchers start again for every partition it follows (re-registration with
       // the controller and truncation come in M4-T5/T6).

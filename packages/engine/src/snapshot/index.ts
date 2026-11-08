@@ -38,6 +38,13 @@ export interface PartitionSnapshot {
   readonly isr: readonly string[];
   /** Eligible Leader Replicas (KIP-966). */
   readonly elr: readonly string[];
+  /** Fewer in-sync replicas than assigned ones (kafka-topics --under-replicated-partitions). */
+  readonly underReplicated: boolean;
+  /**
+   * Fewer in-sync replicas than min(min.insync.replicas, RF): acks=all writes fail and the HW
+   * does not move (strict min ISR).
+   */
+  readonly underMinIsr: boolean;
   readonly leaderEpoch: number;
   readonly partitionEpoch: number;
   /** The leader's offsets (the last leader's while offline): what consumers see. */
@@ -254,6 +261,8 @@ export function buildSnapshot(
         }),
         isr: [...p.isr],
         elr: [...p.elr],
+        underReplicated: p.isr.length < p.replicas.length,
+        underMinIsr: p.isr.length < Math.min(topic.config.minInsyncReplicas, p.replicas.length),
         leaderEpoch: p.leaderEpoch,
         partitionEpoch: p.partitionEpoch,
         logStartOffset: p.logStartOffset,

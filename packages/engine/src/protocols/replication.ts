@@ -41,6 +41,7 @@ import type {
   ReplicaFetchRequestTask,
   ReplicaFetchResult,
 } from '../model/tasks.ts';
+import { isrEligible, sendAlterPartition } from './controller.ts';
 import { onHighWatermarkAdvanced } from './fetch.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
@@ -194,6 +195,88 @@ export function onLeaderStateChanged(
   completeDelayedProduces(ctx, topic, partition);
 }
 
+// ── ISR management (M4-T4) ───────────────────────────────────────────────────────────────────
+
+/** Starts a broker's periodic ISR expiration check (every replica.lag.time.max.ms / 2). */
+export function scheduleIsrExpiration(ctx: EngineContext, brokerId: string): void {
+  const broker = ctx.state.brokers.get(brokerId);
+  if (broker === undefined) return;
+  ctx.kernel.scheduleIn(Math.max(1, Math.floor(broker.config.replicaLagTimeMaxMs / 2)), {
+    type: 'IsrExpirationCheck',
+    broker: brokerId,
+    incarnation: broker.incarnation,
+  });
+}
+
+/**
+ * ReplicaManager#maybeShrinkIsr → Partition#maybeShrinkIsr (K3): every partition this broker
+ * leads drops the followers that have not caught up within replica.lag.time.max.ms. Skipped
+ * while an AlterPartition is in flight.
+ */
+export function handleIsrExpirationCheck(
+  ctx: EngineContext,
+  task: Task<'IsrExpirationCheck'>,
+): void {
+  if (runningBroker(ctx, task.broker, task.incarnation) === undefined) return; // an old life
+  const now = ctx.kernel.now();
+  for (const topic of ctx.state.topics.values()) {
+    for (const partition of topic.partitions) {
+      if (partition.leader !== task.broker || partition.pendingIsr !== null) continue;
+      const leader = leaderLog(partition);
+      if (leader === undefined) continue;
+      const lag = replicaLagTimeMaxMs(ctx, partition);
+      const outOfSync = partition.isr.filter((b) => {
+        if (b === partition.leader) return false;
+        const f = partition.followers.get(b);
+        return f === undefined || !isCaughtUp(f, leader.logEndOffset, now, lag);
+      });
+      if (outOfSync.length === 0) continue;
+      sendAlterPartition(
+        ctx,
+        topic,
+        partition,
+        partition.isr.filter((b) => !outOfSync.includes(b)),
+      );
+    }
+  }
+  scheduleIsrExpiration(ctx, task.broker);
+}
+
+/**
+ * Partition#maybeExpandIsr (K4): a follower outside the ISR rejoins once its LEO reaches the HW
+ * and the start of the current leader epoch, if its broker is eligible (KIP-841).
+ */
+function maybeExpandIsr(
+  ctx: EngineContext,
+  topic: TopicState,
+  partition: PartitionState,
+  follower: string,
+): void {
+  if (partition.pendingIsr !== null || partition.isr.includes(follower)) return;
+  const f = partition.followers.get(follower);
+  const leader = leaderLog(partition);
+  if (f === undefined || leader === undefined) return;
+  if (f.logEndOffset < leader.highWatermark) return;
+  if (f.logEndOffset < partition.leaderEpochStartOffset) return;
+  if (!isrEligible(ctx, follower)) return;
+  sendAlterPartition(ctx, topic, partition, [...partition.isr, follower]);
+}
+
+/** The controller answered an AlterPartition: the leader adopts the committed ISR. */
+export function handleAlterPartitionResponse(
+  ctx: EngineContext,
+  task: Task<'AlterPartitionResponse'>,
+): void {
+  if (runningBroker(ctx, task.leader, task.leaderIncarnation) === undefined) return;
+  const topic = ctx.state.topics.get(task.topic);
+  const partition = topic?.partitions[task.partition];
+  if (topic === undefined || partition === undefined || topic.topicId !== task.topicId) return;
+  if (partition.leader !== task.leader) return; // it lost leadership meanwhile
+  partition.pendingIsr = null;
+  // With the confirmed (possibly smaller) ISR the HW may move, unblocking acks=all produces.
+  onLeaderStateChanged(ctx, topic, partition);
+}
+
 // ── Fetchers ──────────────────────────────────────────────────────────────────────────────────
 
 /** replica.fetch.backoff.ms default: the wait after a failed fetch (AbstractFetcherThread). */
@@ -286,6 +369,7 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
       }
       updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
       onLeaderStateChanged(ctx, topic, partition);
+      maybeExpandIsr(ctx, topic, partition, task.follower);
     }
   }
   if (task.maxWaitMs === 0 || hasDataFor(ctx, task)) {

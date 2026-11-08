@@ -120,34 +120,49 @@ describe('follower fetching and the high watermark', () => {
 });
 
 describe('min.insync.replicas', () => {
-  /** RF 3, minISR 2, with the ISR forced down to the leader alone. */
+  /**
+   * RF 3, minISR 2: both followers stop at 500 ms, so the leader shrinks the ISR to itself at the
+   * expiration check at 15 s (replica.lag.time.max.ms 10 s, checked every 5 s). Events from 16 s.
+   */
   function underMinIsr(acks: '1' | 'all') {
-    const { engine, context } = createEngineInternal({
+    const engine = createEngine({
       seed: 1,
       topology: cluster({ acks, minIsr: 2, consumer: true }),
     });
-    const p = context.state.topics.get('orders')?.partitions[0];
-    if (p === undefined || p.leader === null) throw new Error('no partition');
-    p.isr = [p.leader];
+    engine.runUntil(500);
+    const p = partition0(engine);
+    for (const r of p?.replicas ?? []) {
+      if (r.broker !== p?.leader) engine.dispatch({ type: 'KillBroker', id: r.broker });
+    }
+    engine.runUntil(16_000);
+    expect(partition0(engine)?.isr).toEqual([p?.leader]);
+    expect(partition0(engine)?.underMinIsr).toBe(true);
     return { engine, events: record(engine) };
   }
 
   it('acks=all with the ISR below minISR fails with NOT_ENOUGH_REPLICAS, nothing is appended', () => {
     const { engine, events } = underMinIsr('all');
-    engine.runUntil(1100);
-    expect(ofType(events, 'ProduceFailed').map((e) => [e.error, e.t])).toEqual([
-      ['NOT_ENOUGH_REPLICAS', 1002],
+    engine.runUntil(17_100);
+    // New writes are refused; writes parked before the shrink time out meanwhile.
+    const failed = ofType(events, 'ProduceFailed');
+    expect(failed.filter((e) => e.error === 'NOT_ENOUGH_REPLICAS').map((e) => e.t)).toEqual([
+      16_002, 17_002,
+    ]);
+    expect(failed.filter((e) => e.error !== 'NOT_ENOUGH_REPLICAS').map((e) => e.error)).toEqual([
+      'REQUEST_TIMED_OUT',
+      'REQUEST_TIMED_OUT',
     ]);
     expect(ofType(events, 'RecordAppended')).toEqual([]);
   });
 
   it('strict min ISR: acks=1 writes are appended and acked, but the HW does not move', () => {
     const { engine, events } = underMinIsr('1');
-    engine.runUntil(5100);
+    const hw = partition0(engine)?.highWatermark;
+    engine.runUntil(20_100);
     expect(ofType(events, 'ProduceAcked')).toHaveLength(5);
     const p = partition0(engine);
-    expect(p?.logEndOffset).toBe(5);
-    expect(p?.highWatermark).toBe(0);
+    expect(p?.logEndOffset).toBe(20);
+    expect(p?.highWatermark).toBe(hw);
     expect(ofType(events, 'RecordConsumed')).toEqual([]);
   });
 
@@ -315,5 +330,90 @@ describe('replication robustness (review of M4-T3)', () => {
       expect(append).toBeDefined();
       expect(new Set(replicated.map((r) => r.broker)).size).toBe(2);
     }
+  });
+});
+
+describe('ISR management (M4-T4)', () => {
+  /** RF 3, acks=all: one follower stops at 500 ms. */
+  function oneFollowerStops() {
+    const engine = createEngine({ seed: 1, topology: cluster({ consumer: true }) });
+    const events = record(engine);
+    engine.runUntil(500);
+    const p = partition0(engine);
+    const follower = p?.replicas.map((r) => r.broker).find((b) => b !== p.leader) ?? '';
+    engine.dispatch({ type: 'KillBroker', id: follower });
+    return { engine, events, follower, leader: p?.leader ?? '' };
+  }
+
+  it('a stopped follower leaves the ISR after replica.lag.time.max.ms (± the check interval)', () => {
+    const { engine, events, follower, leader } = oneFollowerStops();
+    engine.runUntil(20_000);
+    const shrunk = ofType(events, 'IsrShrunk');
+    expect(shrunk).toHaveLength(1);
+    // Last caught up at ~500 ms; out of sync once 10 s have passed; checks run every 5 s.
+    expect(shrunk[0]?.t).toBeGreaterThanOrEqual(10_500);
+    expect(shrunk[0]?.t).toBeLessThanOrEqual(10_500 + 5000 + 2);
+    expect(shrunk[0]).toMatchObject({ removed: [follower], elr: [] });
+    expect(partition0(engine)?.isr).not.toContain(follower);
+    expect(partition0(engine)?.isr).toContain(leader);
+    expect(partition0(engine)?.underReplicated).toBe(true);
+    expect(partition0(engine)?.partitionEpoch).toBe(1);
+  });
+
+  it('the HW moves on as soon as the slow follower leaves the ISR: parked acks=all writes complete', () => {
+    const { engine, events } = oneFollowerStops();
+    engine.runUntil(20_000);
+    const shrunkAt = ofType(events, 'IsrShrunk')[0]?.t ?? 0;
+    const acked = ofType(events, 'ProduceAcked');
+    // Records waiting when the shrink is confirmed (+1 ms) are acked right after (+1 ms).
+    expect(acked[0]?.t).toBe(shrunkAt + 2);
+    // Records appended before the shrink but within request.timeout.ms were waiting: acked now.
+    const failed = ofType(events, 'ProduceFailed');
+    for (const f of failed) expect(f.error).toBe('REQUEST_TIMED_OUT');
+    expect(acked.length + failed.length).toBe(19);
+    // The consumer sees everything below the HW.
+    expect(ofType(events, 'RecordConsumed').length).toBeGreaterThan(0);
+  });
+
+  it('a follower that catches up rejoins the ISR', () => {
+    const { engine, events, follower } = oneFollowerStops();
+    engine.runUntil(20_000);
+    engine.dispatch({ type: 'RestartBroker', id: follower });
+    engine.runUntil(21_100);
+    const expanded = ofType(events, 'IsrExpanded');
+    expect(expanded).toHaveLength(1);
+    expect(expanded[0]).toMatchObject({ added: [follower] });
+    expect(expanded[0]?.t).toBeLessThan(20_010);
+    expect(partition0(engine)?.isr).toContain(follower);
+    expect(partition0(engine)?.underReplicated).toBe(false);
+    const p = partition0(engine);
+    expect(p?.replicas.map((r) => r.logEndOffset)).toEqual([21, 21, 21]);
+  });
+
+  it('shrinking below min.insync.replicas moves the removed replicas into the ELR (KIP-966)', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ minIsr: 2 }) });
+    const events = record(engine);
+    engine.runUntil(500);
+    const p = partition0(engine);
+    const followers = p?.replicas.map((r) => r.broker).filter((b) => b !== p.leader) ?? [];
+    for (const b of followers) engine.dispatch({ type: 'KillBroker', id: b });
+    engine.runUntil(16_000);
+    const shrunk = ofType(events, 'IsrShrunk');
+    expect(shrunk).toHaveLength(1);
+    expect([...(shrunk[0]?.elr ?? [])].sort()).toEqual([...followers].sort());
+    expect(partition0(engine)?.elr.length).toBe(2);
+  });
+
+  it('expanding back to min.insync.replicas clears the ELR', () => {
+    const engine = createEngine({ seed: 1, topology: cluster({ minIsr: 2 }) });
+    engine.runUntil(500);
+    const p = partition0(engine);
+    const followers = p?.replicas.map((r) => r.broker).filter((b) => b !== p.leader) ?? [];
+    for (const b of followers) engine.dispatch({ type: 'KillBroker', id: b });
+    engine.runUntil(16_000);
+    engine.dispatch({ type: 'RestartBroker', id: followers[0] ?? '' });
+    engine.runUntil(17_000);
+    expect(partition0(engine)?.isr).toHaveLength(2);
+    expect(partition0(engine)?.elr).toEqual([]);
   });
 });

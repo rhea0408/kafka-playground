@@ -100,6 +100,8 @@ export interface PartitionState {
   leader: string | null;
   /** Bumped on every leader change. */
   leaderEpoch: number;
+  /** The leader's LEO when it became leader: where its epoch starts (leaderEpochStartOffsetOpt). */
+  leaderEpochStartOffset: number;
   /** Bumped on every change of the partition's metadata (leader, ISR, ELR). */
   partitionEpoch: number;
   /** One log per replica, in replica order. */
@@ -143,6 +145,7 @@ export function createPartition(
     lastKnownElr: [],
     leader: first,
     leaderEpoch: 0,
+    leaderEpochStartOffset: 0,
     partitionEpoch: 0,
     replicaLogs,
     followers: new Map(),
