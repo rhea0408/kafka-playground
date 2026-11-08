@@ -131,7 +131,8 @@ describe('<PropertiesPanel>', () => {
     }
     expect(screen.getByLabelText('Acks')).toHaveProperty('value', 'all');
     expect(document.querySelector('[data-field="batchSize"] code')?.textContent).toBe('batch.size');
-    expect(screen.getByLabelText('Idempotence')).toHaveProperty('disabled', true);
+    // M4-T1: in the schema now, fixed to true: shown read-only with its reason.
+    expect(screen.getByLabelText('Idempotence')).toHaveProperty('readOnly', true);
   });
 
   it('shows the game-setting tooltip on keyboard focus', async () => {

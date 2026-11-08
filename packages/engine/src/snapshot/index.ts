@@ -11,7 +11,13 @@ import type { Assignor, Broker, Connection, Consumer, Producer, Topic } from '@k
 import type { SimTime } from '../core/clock.ts';
 import type { GroupStateName } from '../model/group.ts';
 import { partitionName, type LogRecord } from '../model/partition.ts';
-import type { ConsumerState, EngineState, GroupState, ProducerStats } from '../model/state.ts';
+import type {
+  BrokerProcessStatus,
+  ConsumerState,
+  EngineState,
+  GroupState,
+  ProducerStats,
+} from '../model/state.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 
 export interface PartitionSnapshot {
@@ -162,6 +168,8 @@ export interface GroupSnapshot {
 
 export interface BrokerSnapshot {
   readonly config: Broker;
+  /** The broker process: running, stopped (controlled shutdown) or crashed. */
+  readonly status: BrokerProcessStatus;
 }
 
 export interface EngineSnapshot {
@@ -200,7 +208,10 @@ export function buildSnapshot(
 ): EngineSnapshot {
   return {
     t,
-    brokers: [...state.brokers.values()].map((b) => ({ config: copyPlain(b.config) })),
+    brokers: [...state.brokers.values()].map((b) => ({
+      config: copyPlain(b.config),
+      status: b.status,
+    })),
     topics: [...state.topics.values()].map((topic) => ({
       topicId: topic.topicId,
       config: copyPlain(topic.config),

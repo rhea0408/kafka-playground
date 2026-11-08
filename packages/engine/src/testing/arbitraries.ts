@@ -37,6 +37,14 @@ const groupFields = {
   commitMode,
 };
 
+/** Producer retry settings (M4-T1). Always valid: delivery.timeout.ms ≥ request.timeout.ms. */
+const producerRetryFields = {
+  requestTimeoutMs: fc.integer({ min: 500, max: 10_000 }),
+  deliveryTimeoutMs: fc.integer({ min: 10_000, max: 40_000 }),
+  retryBackoffMs: fc.integer({ min: 0, max: 500 }),
+  retryBackoffMaxMs: fc.integer({ min: 500, max: 2000 }),
+};
+
 const keyStrategy = fc.oneof(
   fc.constant({ type: 'null' as const }),
   fc.record({ type: fc.constant('fixed' as const), key: fc.constantFrom('A', 'B', 'é') }),
@@ -57,7 +65,10 @@ const keyStrategy = fc.oneof(
 
 export const topologyArb: fc.Arbitrary<TopologyInput> = fc
   .record({
-    topics: fc.array(fc.integer({ min: 1, max: 4 }), { minLength: 1, maxLength: 2 }),
+    topics: fc.array(
+      fc.record({ partitions: fc.integer({ min: 1, max: 4 }), unclean: fc.boolean() }),
+      { minLength: 1, maxLength: 2 },
+    ),
     producers: fc.array(
       fc.record({
         ratePerSec: fc.integer({ min: 1, max: 20 }),
@@ -66,6 +77,7 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
         batchSize: fc.integer({ min: 1, max: 8192 }),
         messageSizeBytes: fc.integer({ min: 100, max: 2048 }),
         metadataMaxAgeMs: fc.oneof(fc.constant(300_000), fc.integer({ min: 0, max: 3000 })),
+        ...producerRetryFields,
         topicMask: fc.integer({ min: 1, max: 3 }),
       }),
       { minLength: 1, maxLength: 2 },
@@ -106,10 +118,11 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     const picked = (mask: number) => topicIds.filter((_, i) => (mask & (1 << i)) !== 0);
     return {
       brokers: [{ kind: 'broker' as const, id: 'b1', groupInitialRebalanceDelayMs: initialDelay }],
-      topics: topics.map((partitions, i) => ({
+      topics: topics.map(({ partitions, unclean }, i) => ({
         kind: 'topic' as const,
         id: `t${String(i)}`,
         partitions,
+        uncleanLeaderElectionEnable: unclean,
       })),
       producers: producers.map(({ topicMask, ...p }, i) => ({
         kind: 'producer' as const,
@@ -200,6 +213,7 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
           batchSize: fc.integer({ min: 1, max: 8192 }),
           messageSizeBytes: fc.integer({ min: 100, max: 2048 }),
           metadataMaxAgeMs: fc.integer({ min: 0, max: 3000 }),
+          ...producerRetryFields,
         },
         { requiredKeys: [] },
       ),
@@ -226,6 +240,13 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
     })
     .map(({ id, patch }): Command => ({ type: 'UpdateConfig', id, patch })),
   fc.constant<Command>({ type: 'UpdateConfig', id: 'b1', patch: { rack: 'az-1' } }),
+  // Broker crashes, controlled shutdowns and restarts (M4-T1; effects from M4-T5).
+  fc
+    .record({
+      type: fc.constantFrom('KillBroker' as const, 'StopBroker' as const, 'RestartBroker' as const),
+      id: fc.constantFrom('b1', 'b1', 'ghost'),
+    })
+    .map(({ type, id }): Command => ({ type, id })),
   // Re-adding a removed producer or topic with the same id (a new life / a re-created topic).
   fc.constantFrom('p0', 'p1').map((id): Command => ({
     type: 'AddComponent',

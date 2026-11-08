@@ -125,7 +125,7 @@ export function producer(id: string, sent: number, acked: number, failed: number
 export function fixtureSnapshot(overrides: Partial<EngineSnapshot> = {}): EngineSnapshot {
   return {
     t: 1000,
-    brokers: [{ config: parse({ kind: 'broker', id: 'b1' }) as Broker }],
+    brokers: [{ config: parse({ kind: 'broker', id: 'b1' }) as Broker, status: 'running' }],
     topics: [
       {
         topicId: 1,

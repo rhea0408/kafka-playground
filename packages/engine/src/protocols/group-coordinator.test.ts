@@ -1,3 +1,4 @@
+import { BrokerSchema, TopicSchema } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
 import { createKernel } from '../core/kernel.ts';
 import type { EngineEvent, EngineEventPayload } from '../events/index.ts';
@@ -42,11 +43,13 @@ function harness(delayMs = 3000) {
     config: { networkDelayMs: 1 },
   };
   ctx.state.brokers.set('b1', {
-    config: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: delayMs },
+    config: BrokerSchema.parse({ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: delayMs }),
+    status: 'running',
+    incarnation: 0,
   });
   ctx.state.topics.set('t', {
     topicId: 1,
-    config: { kind: 'topic', id: 't', partitions: 2, replicationFactor: 1, minInsyncReplicas: 1 },
+    config: TopicSchema.parse({ kind: 'topic', id: 't', partitions: 2 }),
     partitions: [createPartition('t', 0, 'b1'), createPartition('t', 1, 'b1')],
   });
   kernel.on((e) => events.push(e));

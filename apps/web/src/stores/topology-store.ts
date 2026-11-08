@@ -1,3 +1,4 @@
+import { BrokerSchema } from '@kp/schema';
 /**
  * topologyStore: what is on the canvas (architecture §5). Component configs and connections are
  * mirrored to the engine as commands by the actions module, which changes this store only after
@@ -24,9 +25,7 @@ export interface TopologyState {
 export const INITIAL_BROKER_ID = 'b1';
 
 export const INITIAL_TOPOLOGY_STATE: TopologyState = {
-  components: [
-    { kind: 'broker', id: INITIAL_BROKER_ID, rack: null, groupInitialRebalanceDelayMs: 3000 },
-  ],
+  components: [BrokerSchema.parse({ kind: 'broker', id: INITIAL_BROKER_ID })],
   connections: [],
   positions: { [INITIAL_BROKER_ID]: { x: 40, y: 40 } },
 };

@@ -16,8 +16,20 @@ import type { FetchRequestTask } from './tasks.ts';
 
 export type { GroupState } from './group.ts';
 
+/**
+ * The broker process: `running`, `stopped` after a controlled shutdown (StopBroker) or `crashed`
+ * (KillBroker). Whether the controller has fenced it is the controller's view (M4-T5).
+ */
+export type BrokerProcessStatus = 'running' | 'stopped' | 'crashed';
+
 export interface BrokerState {
   readonly config: Broker;
+  status: BrokerProcessStatus;
+  /**
+   * Which life of the broker process this is: a new number on every crash, stop and restart, so
+   * requests and tasks of an earlier life are ignored (M4-T5).
+   */
+  incarnation: number;
 }
 
 export interface TopicState {
@@ -248,8 +260,17 @@ export interface EngineState {
    * available or fetch.max.wait.ms passes, by fetch id, oldest first.
    */
   readonly parkedFetches: Map<number, FetchRequestTask>;
-  /** Sources of incarnation numbers (producers and consumers), request ids and topic IDs. */
-  readonly counters: { incarnation: number; fetch: number; topic: number; commit: number };
+  /**
+   * Sources of incarnation numbers (producers and consumers; brokers have their own so broker
+   * lifecycles don't renumber client trace ids), request ids and topic IDs.
+   */
+  readonly counters: {
+    incarnation: number;
+    brokerIncarnation: number;
+    fetch: number;
+    topic: number;
+    commit: number;
+  };
 }
 
 export function createState(): EngineState {
@@ -262,7 +283,7 @@ export function createState(): EngineState {
     offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
-    counters: { incarnation: 0, fetch: 0, topic: 0, commit: 0 },
+    counters: { incarnation: 0, brokerIncarnation: 0, fetch: 0, topic: 0, commit: 0 },
   };
 }
 

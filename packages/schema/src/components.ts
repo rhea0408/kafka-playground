@@ -33,6 +33,9 @@ const positiveInt = (what: string) =>
     .int({ error: `${what} must be a whole number.` })
     .min(1, { error: `${what} must be at least 1.` });
 
+/** Integer.MAX_VALUE, the producer's default `retries`. */
+export const INT_MAX = 2_147_483_647;
+
 const nonNegativeInt = (what: string) =>
   z
     .int({ error: `${what} must be a whole number.` })
@@ -52,6 +55,38 @@ export const BrokerSchema = z.object({
    * A static broker config (read-only in M3).
    */
   groupInitialRebalanceDelayMs: nonNegativeInt('group.initial.rebalance.delay.ms').default(3000),
+  /**
+   * replica.lag.time.max.ms. Kafka's default is 30000: "If a follower hasn't sent any fetch
+   * requests or hasn't consumed up to the leader's log end offset for at least this time, the
+   * leader will remove the follower from isr". The game default is 10000 (game-tuned, M4 Q5).
+   */
+  replicaLagTimeMaxMs: positiveInt('replica.lag.time.max.ms').default(10_000),
+  /**
+   * replica.fetch.wait.max.ms, default 500: "The maximum wait time for each fetcher request issued
+   * by follower replicas. This value should always be less than the replica.lag.time.max.ms at all
+   * times to prevent frequent shrinking of ISR for low throughput topics." Followers long-poll the
+   * leader with it (M4 Q4).
+   */
+  replicaFetchWaitMaxMs: nonNegativeInt('replica.fetch.wait.max.ms').default(500),
+  /**
+   * offsets.topic.replication.factor, default 3: the replication factor of __consumer_offsets.
+   * Real Kafka cannot create the topic while fewer brokers are alive; the engine uses
+   * min(this, live brokers) when it creates the topic (game-tuned, M4 Q9). Read-only.
+   */
+  offsetsTopicReplicationFactor: positiveInt('offsets.topic.replication.factor').default(3),
+  /**
+   * auto.leader.rebalance.enable, default true: the controller moves leadership back to the
+   * preferred replica (the first in the replica list) when it is in sync (M4 Q10).
+   */
+  autoLeaderRebalanceEnable: z.boolean().default(true),
+  /**
+   * leader.imbalance.check.interval.seconds. Kafka's default is 300; the game default is 30
+   * (game-tuned, M4 Q10): how often the controller checks for partitions led by a replica other
+   * than the preferred one.
+   */
+  leaderImbalanceCheckIntervalSeconds: positiveInt(
+    'leader.imbalance.check.interval.seconds',
+  ).default(30),
 });
 
 /**
@@ -72,8 +107,19 @@ export const TopicSchema = z.object({
   partitions: positiveInt('Partitions').default(1),
   /** default.replication.factor, default 1. */
   replicationFactor: positiveInt('Replication factor').default(1),
-  /** min.insync.replicas, default 1. */
+  /**
+   * min.insync.replicas, default 1: "When a producer sets acks to "all" (or "-1"),
+   * min.insync.replicas specifies the minimum number of replicas that must acknowledge a write for
+   * the write to be considered successful." Kafka accepts a value above the replication factor;
+   * every acks=all write then fails with NOT_ENOUGH_REPLICAS (the panel warns, M4 T1).
+   */
   minInsyncReplicas: positiveInt('min.insync.replicas').default(1),
+  /**
+   * unclean.leader.election.enable, default false: "Indicates whether to enable replicas not in
+   * the ISR set to be elected as leader as a last resort, even though doing so may result in data
+   * loss." (M4 Q6)
+   */
+  uncleanLeaderElectionEnable: z.boolean().default(false),
 });
 
 // ── Producer ──────────────────────────────────────────────────────────────────────────────────
@@ -103,29 +149,65 @@ export const KeyStrategySchema = z.discriminatedUnion('type', [
 
 export const AcksSchema = z.enum(['0', '1', 'all'], { error: 'acks must be "0", "1" or "all".' });
 
-export const ProducerSchema = z.object({
-  kind: z.literal('producer'),
-  id: ComponentIdSchema,
-  /** Game setting: records per second of sim time. */
-  ratePerSec: z
-    .number()
-    .positive({ error: 'Rate must be greater than 0.' })
-    .max(1000, { error: 'Rate is limited to 1000 msg/s per producer in per-message mode.' })
-    .default(1),
-  keyStrategy: KeyStrategySchema.default({ type: 'null' }),
-  /** acks, default "all" since Kafka 3.0 (KIP-679). */
-  acks: AcksSchema.default('all'),
-  /** batch.size in bytes, default 16384. Drives when the sticky partitioner switches. */
-  batchSize: positiveInt('batch.size').default(16384),
-  /** Game setting: serialized size of each record in bytes. */
-  messageSizeBytes: positiveInt('Message size').default(1024),
-  /**
-   * metadata.max.age.ms, default 300000 (5 min): how often the client refreshes its cluster
-   * metadata even without errors, which is when it notices partitions added to a topic
-   * (CommonClientConfigs METADATA_MAX_AGE_DOC).
-   */
-  metadataMaxAgeMs: nonNegativeInt('metadata.max.age.ms').default(300_000),
-});
+export const ProducerSchema = z
+  .object({
+    kind: z.literal('producer'),
+    id: ComponentIdSchema,
+    /** Game setting: records per second of sim time. */
+    ratePerSec: z
+      .number()
+      .positive({ error: 'Rate must be greater than 0.' })
+      .max(1000, { error: 'Rate is limited to 1000 msg/s per producer in per-message mode.' })
+      .default(1),
+    keyStrategy: KeyStrategySchema.default({ type: 'null' }),
+    /** acks, default "all" since Kafka 3.0 (KIP-679). */
+    acks: AcksSchema.default('all'),
+    /** batch.size in bytes, default 16384. Drives when the sticky partitioner switches. */
+    batchSize: positiveInt('batch.size').default(16384),
+    /** Game setting: serialized size of each record in bytes. */
+    messageSizeBytes: positiveInt('Message size').default(1024),
+    /**
+     * metadata.max.age.ms, default 300000 (5 min): how often the client refreshes its cluster
+     * metadata even without errors, which is when it notices partitions added to a topic
+     * (CommonClientConfigs METADATA_MAX_AGE_DOC).
+     */
+    metadataMaxAgeMs: nonNegativeInt('metadata.max.age.ms').default(300_000),
+    /**
+     * retries, default Integer.MAX_VALUE (shown as "∞"): how often a send is retried after a
+     * retriable error. In practice delivery.timeout.ms ends the retries first.
+     */
+    retries: nonNegativeInt('retries').max(INT_MAX).default(INT_MAX),
+    /**
+     * delivery.timeout.ms. Kafka's default is 120000: "An upper bound on the time to report success
+     * or failure after a call to send() returns." The game default is 30000 (game-tuned, M4 Q7).
+     */
+    deliveryTimeoutMs: positiveInt('delivery.timeout.ms').default(30_000),
+    /**
+     * request.timeout.ms. Kafka's default is 30000: how long the client waits for the response to
+     * one request before it retries or fails it. The game default is 10000 (game-tuned, M4 Q7).
+     */
+    requestTimeoutMs: positiveInt('request.timeout.ms').default(10_000),
+    /** retry.backoff.ms, default 100: the wait before the first retry of a failed request. */
+    retryBackoffMs: nonNegativeInt('retry.backoff.ms').default(100),
+    /**
+     * retry.backoff.max.ms, default 1000 (KIP-580): retries back off exponentially from
+     * retry.backoff.ms up to this, with ±20 % jitter.
+     */
+    retryBackoffMaxMs: nonNegativeInt('retry.backoff.max.ms').default(1000),
+    /**
+     * enable.idempotence, default true since Kafka 3.0 (KIP-679): the broker drops a retried record
+     * it already has. Fixed to true here; turning it off arrives with the v0.4 patterns (M4 Q7).
+     */
+    enableIdempotence: z
+      .literal(true, { error: 'enable.idempotence is fixed to true here (turning it off: v0.4).' })
+      .default(true),
+  })
+  // KafkaProducer#configureDeliveryTimeout throws a ConfigException when delivery.timeout.ms is
+  // set below linger.ms + request.timeout.ms (linger.ms is not modelled: 0 here).
+  .refine((p) => p.deliveryTimeoutMs >= p.requestTimeoutMs, {
+    error: 'delivery.timeout.ms should be equal to or larger than linger.ms + request.timeout.ms.',
+    path: ['deliveryTimeoutMs'],
+  });
 
 // ── Consumer ──────────────────────────────────────────────────────────────────────────────────
 

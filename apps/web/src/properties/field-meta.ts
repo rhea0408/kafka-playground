@@ -43,7 +43,7 @@ export type ConfigField<K extends ComponentKind> = Exclude<keyof ConfigOf<K>, 'k
 export type FieldKind = 'kafka' | 'game-tuned' | 'game-setting' | 'not-modelled';
 
 /** Units the panel knows how to print ("300000 ms (5 min)", "16384 bytes (16 KiB)"). */
-export type Unit = 'ms' | 'bytes' | 'records' | 'msg/s' | 'replicas';
+export type Unit = 'ms' | 's' | 'bytes' | 'records' | 'msg/s' | 'replicas';
 
 /**
  * Where a not-modelled feature arrives (architecture §11 and the roadmap); `later` for configs
@@ -110,6 +110,11 @@ export type ExtraFieldMeta = Extract<FieldMeta, { kind: 'not-modelled' }> & {
 
 type MetaTable = { readonly [K in ComponentKind]: { readonly [F in ConfigField<K>]: FieldMeta } };
 
+const RETRIES_LATER = 'Producer retries are simulated later in M4 (task T7).';
+
+const STATIC_BROKER_CONFIG =
+  'A static broker config: Kafka reads it only when the broker starts. Set it in the level or scene.';
+
 const METADATA_NOTE =
   'Producers and consumers notice new partitions only at their next metadata refresh (metadata.max.age.ms).';
 
@@ -123,7 +128,7 @@ export const FIELD_META = {
       control: { type: 'text' },
       help: 'Which rack or availability zone the broker is in. Kafka uses it to spread replicas over racks.',
       readOnly:
-        'broker.rack is a static broker config: Kafka reads it only when the broker starts. Broker restarts arrive in M4.',
+        'broker.rack is a static broker config: Kafka reads it only when the broker starts. Rack-aware placement arrives in v0.5.',
     },
     groupInitialRebalanceDelayMs: {
       label: 'Initial rebalance delay',
@@ -132,8 +137,52 @@ export const FIELD_META = {
       kafkaDefault: { value: 3000 },
       control: { type: 'int', unit: 'ms' },
       help: 'When a new (empty) group gets its first member, the group coordinator waits this long for more members before the first rebalance, and waits again while members keep joining.',
-      readOnly:
-        'group.initial.rebalance.delay.ms is a static broker config: Kafka reads it only when the broker starts. Broker restarts arrive in M4.',
+      readOnly: STATIC_BROKER_CONFIG,
+    },
+    replicaLagTimeMaxMs: {
+      label: 'Replica lag time max',
+      kafkaName: 'replica.lag.time.max.ms',
+      kind: 'game-tuned',
+      kafkaDefault: { value: 30_000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'A follower that has not caught up to the leader’s end of log for this long is removed from the in-sync replicas (ISR).',
+      readOnly: STATIC_BROKER_CONFIG,
+    },
+    replicaFetchWaitMaxMs: {
+      label: 'Replica fetch wait max',
+      kafkaName: 'replica.fetch.wait.max.ms',
+      kind: 'kafka',
+      kafkaDefault: { value: 500 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'How long the leader holds a follower’s fetch when there is nothing new to replicate (a long poll, like a consumer’s fetch.max.wait.ms).',
+      readOnly: STATIC_BROKER_CONFIG,
+    },
+    offsetsTopicReplicationFactor: {
+      label: 'Offsets topic replication factor',
+      kafkaName: 'offsets.topic.replication.factor',
+      kind: 'kafka',
+      kafkaDefault: { value: 3 },
+      control: { type: 'int', unit: 'replicas' },
+      help: 'Replication factor of __consumer_offsets, where consumer groups store committed offsets. Real Kafka cannot create that topic while fewer brokers are alive; the playground uses at most the number of live brokers.',
+      readOnly: STATIC_BROKER_CONFIG,
+    },
+    autoLeaderRebalanceEnable: {
+      label: 'Auto leader rebalance',
+      kafkaName: 'auto.leader.rebalance.enable',
+      kind: 'kafka',
+      kafkaDefault: { value: true },
+      control: { type: 'boolean' },
+      help: 'The controller periodically moves leadership back to each partition’s preferred replica (the first in its replica list) once it is in sync.',
+      readOnly: STATIC_BROKER_CONFIG,
+    },
+    leaderImbalanceCheckIntervalSeconds: {
+      label: 'Leader imbalance check interval',
+      kafkaName: 'leader.imbalance.check.interval.seconds',
+      kind: 'game-tuned',
+      kafkaDefault: { value: 300 },
+      control: { type: 'int', unit: 's' },
+      help: 'How often the controller looks for partitions not led by their preferred replica.',
+      readOnly: STATIC_BROKER_CONFIG,
     },
   },
   topic: {
@@ -162,6 +211,15 @@ export const FIELD_META = {
       arrives: 'M4',
       control: { type: 'int', unit: 'replicas' },
       help: 'With acks=all, a write fails (NotEnoughReplicas) unless at least this many replicas are in sync. It only has an effect once replication arrives in M4.',
+    },
+    uncleanLeaderElectionEnable: {
+      label: 'Unclean leader election',
+      kafkaName: 'unclean.leader.election.enable',
+      kind: 'not-modelled',
+      kafkaDefault: { value: false },
+      arrives: 'M4',
+      control: { type: 'boolean' },
+      help: 'Lets a replica that is not in sync become leader when no in-sync replica is left. The partition comes back sooner, but records only the old leader had are lost.',
     },
   },
   producer: {
@@ -212,6 +270,61 @@ export const FIELD_META = {
       kafkaDefault: { value: 300_000 },
       control: { type: 'int', unit: 'ms' },
       help: 'How often the producer refreshes its view of the cluster even without errors. That is when it notices partitions added to a topic.',
+    },
+    retries: {
+      label: 'Retries',
+      kafkaName: 'retries',
+      kind: 'not-modelled',
+      kafkaDefault: { value: 2_147_483_647 },
+      arrives: 'M4',
+      control: { type: 'int' },
+      help: 'How often a failed send is retried. The default is effectively unlimited: delivery.timeout.ms ends the retries first.',
+    },
+    deliveryTimeoutMs: {
+      label: 'Delivery timeout',
+      kafkaName: 'delivery.timeout.ms',
+      kind: 'game-tuned',
+      kafkaDefault: { value: 120_000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'The longest send() may take to report success or failure, retries included.',
+      readOnly: RETRIES_LATER,
+    },
+    requestTimeoutMs: {
+      label: 'Request timeout',
+      kafkaName: 'request.timeout.ms',
+      kind: 'game-tuned',
+      kafkaDefault: { value: 30_000 },
+      control: { type: 'int', unit: 'ms' },
+      help: 'How long the producer waits for the answer to one request before it retries it.',
+      readOnly: RETRIES_LATER,
+    },
+    retryBackoffMs: {
+      label: 'Retry backoff',
+      kafkaName: 'retry.backoff.ms',
+      kind: 'not-modelled',
+      kafkaDefault: { value: 100 },
+      arrives: 'M4',
+      control: { type: 'int', unit: 'ms' },
+      help: 'The wait before the first retry. Later retries wait longer, up to retry.backoff.max.ms.',
+    },
+    retryBackoffMaxMs: {
+      label: 'Retry backoff max',
+      kafkaName: 'retry.backoff.max.ms',
+      kind: 'not-modelled',
+      kafkaDefault: { value: 1000 },
+      arrives: 'M4',
+      control: { type: 'int', unit: 'ms' },
+      help: 'The longest wait between retries (KIP-580: the backoff doubles each time, with some jitter).',
+    },
+    enableIdempotence: {
+      label: 'Idempotence',
+      kafkaName: 'enable.idempotence',
+      kind: 'kafka',
+      // Default true since Kafka 3.0 (KIP-679).
+      kafkaDefault: { value: true },
+      control: { type: 'boolean' },
+      help: 'The broker drops duplicates when the producer retries a send, so each record is written once per partition.',
+      readOnly: 'Fixed to true here; turning it off arrives with the v0.4 patterns.',
     },
   },
   consumer: {
@@ -362,19 +475,7 @@ export const EXTRA_FIELDS: { readonly [K in ComponentKind]: readonly ExtraFieldM
       help: 'delete = drop old segments after retention; compact = keep the latest record per key.',
     },
   ],
-  producer: [
-    {
-      key: 'enableIdempotence',
-      label: 'Idempotence',
-      kafkaName: 'enable.idempotence',
-      kind: 'not-modelled',
-      // Default true since Kafka 3.0 (KIP-679).
-      kafkaDefault: { value: true },
-      arrives: 'v0.4',
-      control: { type: 'boolean' },
-      help: 'The broker drops duplicates when the producer retries a send, so each record is written once per partition.',
-    },
-  ],
+  producer: [],
   consumer: [
     {
       key: 'groupInstanceId',

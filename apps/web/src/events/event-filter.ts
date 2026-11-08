@@ -38,6 +38,8 @@ const GROUPS = [
     ],
   },
   { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },
+  // Broker processes (FR-3.1, M4): crashes, controlled shutdowns and restarts.
+  { label: 'Broker', types: ['BrokerStarted', 'BrokerStopped'] },
   {
     label: 'Topology',
     types: ['ComponentAdded', 'ComponentRemoved', 'Connected', 'Disconnected', 'ConfigUpdated'],

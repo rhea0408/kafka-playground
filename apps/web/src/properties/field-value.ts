@@ -42,6 +42,8 @@ export function withUnit(value: number, unit: Unit | undefined): string {
       return value >= 1024 && value % 1024 === 0
         ? `${String(value)} bytes (${String(value / 1024)} KiB)`
         : `${String(value)} ${value === 1 ? 'byte' : 'bytes'}`;
+    case 's':
+      return `${String(value)} s`;
     case 'msg/s':
       return `${String(value)} msg/s`;
     case 'records':

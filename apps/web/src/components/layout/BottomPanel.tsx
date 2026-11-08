@@ -38,14 +38,14 @@ export function BottomPanel() {
         ))}
       </Tabs.List>
       <Tabs.Content value="timeline" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>The event timeline arrives in M4.</Placeholder>
+        <Placeholder>The event timeline arrives in M4b.</Placeholder>
       </Tabs.Content>
       {/* The list scrolls itself (windowed); its filter panel may overlap the canvas above. */}
       <Tabs.Content value="events" className="min-h-0 flex-1">
         <EventList />
       </Tabs.Content>
       <Tabs.Content value="lag" className="min-h-0 flex-1 overflow-y-auto">
-        <Placeholder>The lag chart arrives in M4.</Placeholder>
+        <Placeholder>The lag chart arrives in M4b.</Placeholder>
       </Tabs.Content>
     </Tabs.Root>
   );

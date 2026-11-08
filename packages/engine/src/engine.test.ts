@@ -1,3 +1,4 @@
+import { BrokerSchema } from '@kp/schema';
 import type { TopologyInput } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
 import type { Command } from './commands/index.ts';
@@ -26,7 +27,7 @@ describe('createEngine', () => {
     const snap = engine.getSnapshot();
     expect(snap.t).toBe(0);
     expect(snap.brokers).toEqual([
-      { config: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 } },
+      { config: BrokerSchema.parse({ kind: 'broker', id: 'b1' }), status: 'running' },
     ]);
     expect(snap.topics[0]?.partitions.map((p) => [p.index, p.leader, p.logEndOffset])).toEqual([
       [0, 'b1', 0],
@@ -57,6 +58,7 @@ describe('createEngine', () => {
       partitions: 1,
       replicationFactor: 1,
       minInsyncReplicas: 1,
+      uncleanLeaderElectionEnable: false,
     };
     expect(events).toEqual([{ t: 1500, seq: 0, type: 'ComponentAdded', component: topic }]);
     expect(engine.commandLog).toEqual([
@@ -126,7 +128,7 @@ describe('createEngine', () => {
     expect(events).toEqual([]);
   });
 
-  it('enforces the single-broker limits with an explanation', () => {
+  it('allows replication but not removing a broker that holds replicas (M4-T1)', () => {
     const engine = createEngine({
       seed: 1,
       topology: {
@@ -143,7 +145,16 @@ describe('createEngine', () => {
         type: 'AddComponent',
         component: { kind: 'topic', id: 'replicated', replicationFactor: 2 },
       }),
-    ).toMatchObject({ ok: false, reason: /replication factor must be 1/ });
+    ).toEqual({ ok: true });
+    expect(
+      engine.dispatch({
+        type: 'AddComponent',
+        component: { kind: 'topic', id: 'too-many', replicationFactor: 3 },
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: /Replication factor 3 is larger than the number of brokers \(2\)/,
+    });
     // M3: groups have several members; the M2 "one consumer per group" rule is gone.
     expect(
       engine.dispatch({
@@ -154,7 +165,7 @@ describe('createEngine', () => {
     const leader = engine.getSnapshot().topics[0]?.partitions[0]?.leader ?? '';
     expect(engine.dispatch({ type: 'RemoveComponent', id: leader })).toMatchObject({
       ok: false,
-      reason: /leads partitions of topic "orders"/,
+      reason: /holds replicas of topic "orders"/,
     });
   });
 
@@ -221,7 +232,70 @@ describe('command log and replay', () => {
     component.id = 'changed';
     expect(engine.commandLog[0]?.command).toEqual({
       type: 'AddComponent',
-      component: { kind: 'broker', id: 'b1', rack: null, groupInitialRebalanceDelayMs: 3000 },
+      component: BrokerSchema.parse({ kind: 'broker', id: 'b1' }),
     });
+  });
+});
+
+describe('broker lifecycle commands (M4-T1)', () => {
+  const twoBrokers = {
+    brokers: [
+      { kind: 'broker' as const, id: 'b1' },
+      { kind: 'broker' as const, id: 'b2' },
+    ],
+  };
+
+  it('kill, stop and restart change the status, emit events and are logged', () => {
+    const engine = createEngine({ seed: 1, topology: twoBrokers });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    expect(engine.dispatch({ type: 'KillBroker', id: 'b1' })).toEqual({ ok: true });
+    expect(engine.dispatch({ type: 'StopBroker', id: 'b2' })).toEqual({ ok: true });
+    expect(engine.getSnapshot().brokers.map((b) => b.status)).toEqual(['crashed', 'stopped']);
+    expect(engine.dispatch({ type: 'RestartBroker', id: 'b1' })).toEqual({ ok: true });
+    expect(engine.getSnapshot().brokers.map((b) => b.status)).toEqual(['running', 'stopped']);
+    expect(events.map((e) => [e.type, 'reason' in e ? e.reason : null])).toEqual([
+      ['BrokerStopped', 'crash'],
+      ['BrokerStopped', 'shutdown'],
+      ['BrokerStarted', null],
+    ]);
+    expect(engine.commandLog.map((entry) => entry.command.type)).toEqual([
+      'KillBroker',
+      'StopBroker',
+      'RestartBroker',
+    ]);
+  });
+
+  it('rejects commands that do not fit the broker state, without side effects', () => {
+    const engine = createEngine({ seed: 1, topology: twoBrokers });
+    expect(engine.dispatch({ type: 'RestartBroker', id: 'b1' })).toEqual({
+      ok: false,
+      reason: 'Broker b1 is already running.',
+    });
+    engine.dispatch({ type: 'KillBroker', id: 'b1' });
+    for (const type of ['KillBroker', 'StopBroker'] as const) {
+      expect(engine.dispatch({ type, id: 'b1' })).toEqual({
+        ok: false,
+        reason: 'Broker b1 is not running (crashed).',
+      });
+    }
+    expect(engine.dispatch({ type: 'KillBroker', id: 'ghost' })).toEqual({
+      ok: false,
+      reason: 'There is no broker with id "ghost".',
+    });
+    expect(engine.commandLog).toHaveLength(1);
+  });
+
+  it('replays broker commands to the same event log', () => {
+    const engine = createEngine({ seed: 3, topology: twoBrokers });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    engine.runUntil(100);
+    engine.dispatch({ type: 'KillBroker', id: 'b2' });
+    engine.runUntil(500);
+    engine.dispatch({ type: 'RestartBroker', id: 'b2' });
+    const replayed: EngineEvent[] = [];
+    replayCommandLog({ seed: 3, topology: twoBrokers }, engine.commandLog, (e) => replayed.push(e));
+    expect(replayed).toEqual(events);
   });
 });
