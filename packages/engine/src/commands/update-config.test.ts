@@ -159,10 +159,20 @@ describe('UpdateConfig: topic partitions', () => {
     ).toEqual({ ok: true });
     const after = engine.getSnapshot().topics[0]?.partitions ?? [];
     expect(after.slice(0, 3)).toEqual(before);
-    expect(after.slice(3)).toEqual([
-      { index: 3, leader: 'b1', logStartOffset: 0, logEndOffset: 0, highWatermark: 0, records: [] },
-      { index: 4, leader: 'b1', logStartOffset: 0, logEndOffset: 0, highWatermark: 0, records: [] },
-    ]);
+    const empty = (index: number) => ({
+      index,
+      leader: 'b1',
+      replicas: [{ broker: 'b1', logEndOffset: 0, highWatermark: 0 }],
+      isr: ['b1'],
+      elr: [],
+      leaderEpoch: 0,
+      partitionEpoch: 0,
+      logStartOffset: 0,
+      logEndOffset: 0,
+      highWatermark: 0,
+      records: [],
+    });
+    expect(after.slice(3)).toEqual([empty(3), empty(4)]);
   });
 
   it('remaps a key only after the producer refreshes its metadata; old records stay put', () => {

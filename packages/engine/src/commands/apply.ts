@@ -8,7 +8,8 @@ import { canConnect, parseComponent, type Component, type ComponentKind } from '
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import { createPartition } from '../model/partition.ts';
-import { placePartitions } from '../model/placement.ts';
+import { placeReplicas } from '../model/placement.ts';
+import { placementBrokers } from '../model/state.ts';
 import { topicsOfProducer } from '../model/state.ts';
 import {
   closeConsumer,
@@ -88,15 +89,18 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
       });
       break;
     case 'topic': {
-      const leaders = placePartitions(
+      const assignments = placeReplicas(
         component.partitions,
-        [...state.brokers.keys()],
+        component.replicationFactor,
+        placementBrokers(state),
         ctx.kernel.rng.fork(`placement:${component.id}`),
       );
       state.topics.set(component.id, {
         topicId: ++state.counters.topic,
         config: component,
-        partitions: leaders.map((leader, index) => createPartition(component.id, index, leader)),
+        partitions: assignments.map((replicas, index) =>
+          createPartition(component.id, index, replicas),
+        ),
       });
       break;
     }
@@ -122,6 +126,10 @@ function checkAdd(ctx: EngineContext, component: Component): string | undefined 
     if (component.replicationFactor > brokers) {
       return `Replication factor ${String(component.replicationFactor)} is larger than the number of brokers (${String(brokers)}). Add a broker first.`;
     }
+    // StripedReplicaPlacer needs an unfenced broker for each partition's leader.
+    if (!placementBrokers(state).some((b) => !b.fenced)) {
+      return 'INVALID_REPLICATION_FACTOR: no broker is running, so the partitions would have no leader. Restart a broker first.';
+    }
   }
   return undefined;
 }
@@ -135,7 +143,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
   switch (kind) {
     case 'broker': {
       for (const topic of state.topics.values()) {
-        if (topic.partitions.some((p) => p.leader === id)) {
+        if (topic.partitions.some((p) => p.replicas.includes(id))) {
           return reject(
             `Broker ${id} holds replicas of topic "${topic.config.id}". Remove the topic first: moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
           );

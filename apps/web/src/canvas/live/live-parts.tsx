@@ -155,10 +155,16 @@ export function PartitionLive({ topicId, index }: { topicId: string; index: numb
         <span
           className="shrink-0 rounded-sm bg-muted px-1 py-0.5 font-mono text-[10px] font-semibold"
           data-slot="leader"
-          title={`Leader: broker ${partition.leader}. Producers write to and consumers read from the leader.`}
-          aria-label={`Leader: broker ${partition.leader}`}
+          title={
+            partition.leader === null
+              ? 'Offline: no leader. Producers and consumers wait until a replica can lead again.'
+              : `Leader: broker ${partition.leader}. Producers write to and consumers read from the leader.`
+          }
+          aria-label={
+            partition.leader === null ? 'Offline: no leader' : `Leader: broker ${partition.leader}`
+          }
         >
-          L {partition.leader}
+          {partition.leader === null ? 'offline' : `L ${partition.leader}`}
         </span>
       )}
     </>

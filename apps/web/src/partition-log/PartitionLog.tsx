@@ -66,6 +66,8 @@ export function PartitionLog() {
         partitionCount={topic.partitions.length}
         partition={partition.index}
         leader={partition.leader}
+        replicas={partition.replicas.map((r) => r.broker)}
+        isr={partition.isr}
         logStartOffset={partition.logStartOffset}
         highWatermark={partition.highWatermark}
         logEndOffset={partition.logEndOffset}
@@ -82,7 +84,10 @@ interface ViewProps {
   readonly topicIds: readonly string[];
   readonly partitionCount: number;
   readonly partition: number;
-  readonly leader: string;
+  /** Null while the partition is offline (no leader). */
+  readonly leader: string | null;
+  readonly replicas: readonly string[];
+  readonly isr: readonly string[];
   readonly logStartOffset: number;
   readonly highWatermark: number;
   readonly logEndOffset: number;
@@ -349,17 +354,16 @@ const dash = (n: number | null): string => (n === null ? '-' : formatCount(n));
 
 /** Leader, offsets and each group's committed offset (05c summary). */
 function Summary(props: ViewProps) {
-  const { leader, logStartOffset, highWatermark, logEndOffset, groups } = props;
+  const { leader, replicas, isr, logStartOffset, highWatermark, logEndOffset, groups } = props;
   return (
     <section aria-labelledby="pl-summary" className="flex flex-col gap-2">
       <h3 id="pl-summary" className="sr-only">
         Summary
       </h3>
       <p className="text-[12px]">
-        Leader <span className="font-mono">{leader}</span> · replicas{' '}
-        <span className="font-mono">{leader}</span> · ISR{' '}
-        <span className="font-mono">{leader}</span>{' '}
-        <span className="text-status/70">(one replica until M4)</span>
+        Leader <span className="font-mono">{leader ?? 'none (offline)'}</span> · replicas{' '}
+        <span className="font-mono">{replicas.join(', ')}</span> · ISR{' '}
+        <span className="font-mono">{isr.length === 0 ? 'empty' : isr.join(', ')}</span>
       </p>
       <div className="grid grid-cols-[repeat(3,104px)] gap-2" role="group" aria-label="Offsets">
         <Offset label="Log end (LEO)" value={logEndOffset} tip={EXPLAIN.leo(logEndOffset)} />
