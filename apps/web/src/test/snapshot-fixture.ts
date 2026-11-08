@@ -56,6 +56,8 @@ export function partition(
     replicas: [{ broker: 'b1', logEndOffset: leo, highWatermark: options.hw ?? leo }],
     isr: ['b1'],
     elr: [],
+    underReplicated: false,
+    underMinIsr: false,
     leaderEpoch: 0,
     partitionEpoch: 0,
     logStartOffset: 0,

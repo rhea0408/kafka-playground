@@ -245,6 +245,28 @@ export type EngineEventPayload =
       readonly fromOffset: number;
       readonly toOffset: number;
     }
+  /**
+   * The controller removed replicas from a partition's ISR (the leader asked: they fell behind
+   * for replica.lag.time.max.ms). `isr` and `elr` are the results (M4-T4).
+   */
+  | {
+      readonly type: 'IsrShrunk';
+      readonly topic: string;
+      readonly partition: number;
+      readonly removed: readonly string[];
+      readonly isr: readonly string[];
+      readonly elr: readonly string[];
+      readonly partitionEpoch: number;
+    }
+  /** The controller added caught-up replicas back to a partition's ISR (M4-T4). */
+  | {
+      readonly type: 'IsrExpanded';
+      readonly topic: string;
+      readonly partition: number;
+      readonly added: readonly string[];
+      readonly isr: readonly string[];
+      readonly partitionEpoch: number;
+    }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */
   | {
       readonly type: 'ConfigUpdated';

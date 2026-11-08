@@ -22,10 +22,13 @@ import {
   handleMemberSessionExpire,
 } from './group-coordinator.ts';
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
+import { handleAlterPartitionRequest } from './controller.ts';
 import {
+  handleAlterPartitionResponse,
   handleDelayedProduceExpire,
   handleReplicaFetchBackoff,
   handleReplicaFetchDisconnected,
+  handleIsrExpirationCheck,
   handleReplicaFetchExpire,
   handleReplicaFetchRequest,
   handleReplicaFetchResponse,
@@ -65,6 +68,15 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'ReplicaFetchBackoff':
       handleReplicaFetchBackoff(ctx, task);
+      return;
+    case 'IsrExpirationCheck':
+      handleIsrExpirationCheck(ctx, task);
+      return;
+    case 'AlterPartitionRequest':
+      handleAlterPartitionRequest(ctx, task);
+      return;
+    case 'AlterPartitionResponse':
+      handleAlterPartitionResponse(ctx, task);
       return;
     case 'DelayedProduceExpire':
       handleDelayedProduceExpire(ctx, task);

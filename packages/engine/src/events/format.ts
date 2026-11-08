@@ -71,6 +71,10 @@ export function describeEvent(e: EngineEvent): string {
       return `${e.after.kind} ${e.id}  ${configChanges(e.before, e.after)}`;
     case 'ReplicaFetched':
       return `${e.broker} ← ${e.leader}  ${partitionName(e.topic, e.partition)}  offsets ${String(e.fromOffset)}–${String(e.toOffset - 1)}`;
+    case 'IsrShrunk':
+      return `${partitionName(e.topic, e.partition)}  removed ${e.removed.join(' ')}  isr=[${e.isr.join(' ')}]${e.elr.length > 0 ? `  elr=[${e.elr.join(' ')}]` : ''}`;
+    case 'IsrExpanded':
+      return `${partitionName(e.topic, e.partition)}  added ${e.added.join(' ')}  isr=[${e.isr.join(' ')}]`;
     case 'BrokerStarted':
       return e.brokerId;
     case 'BrokerStopped':

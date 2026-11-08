@@ -177,6 +177,38 @@ export type EngineTask =
       readonly leader: string;
       readonly partitions: readonly ReplicaFetchResult[];
     }
+  /**
+   * The leader broker's ISR expiration check (ReplicaManager "isr-expiration", every
+   * replica.lag.time.max.ms / 2, K3).
+   */
+  | { readonly type: 'IsrExpirationCheck'; readonly broker: string; readonly incarnation: number }
+  /** A leader's AlterPartition (ISR change) reaches the controller. */
+  | {
+      readonly type: 'AlterPartitionRequest';
+      readonly leader: string;
+      readonly leaderIncarnation: number;
+      readonly topic: string;
+      readonly topicId: number;
+      readonly partition: number;
+      readonly leaderEpoch: number;
+      readonly partitionEpoch: number;
+      readonly newIsr: readonly string[];
+    }
+  /** The controller's answer reaches the leader. */
+  | {
+      readonly type: 'AlterPartitionResponse';
+      readonly leader: string;
+      readonly leaderIncarnation: number;
+      readonly topic: string;
+      readonly topicId: number;
+      readonly partition: number;
+      readonly error:
+        | null
+        | 'FENCED_LEADER_EPOCH'
+        | 'INVALID_UPDATE_VERSION'
+        | 'INELIGIBLE_REPLICA'
+        | 'UNKNOWN_TOPIC_OR_PARTITION';
+    }
   /** A parked acks=all produce reached its request timeout. */
   | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
