@@ -210,6 +210,7 @@ describe('commits and generations', () => {
     const c1 = h.consumer('c1');
     h.kernel.scheduleIn(0, {
       type: 'CoordinatorRequest',
+      broker: 'b1',
       groupId: 'g',
       consumerId: 'c1',
       incarnation: c1.incarnation,

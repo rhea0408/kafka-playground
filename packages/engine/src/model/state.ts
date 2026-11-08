@@ -197,6 +197,15 @@ export interface ClientGroupState {
   pollTimeoutToken: number;
   /** Only the join-prepare timeout task carrying the current token runs. */
   joinPrepareToken: number;
+  /**
+   * The group's coordinator as this client last found it (FindCoordinator, M4-T8); null while
+   * unknown ("coordinator dead": a lookup is needed).
+   */
+  coordinator: string | null;
+  /** A FindCoordinator request is in flight. */
+  findInFlight: boolean;
+  /** OffsetCommit requests in flight to the coordinator, by commit id. */
+  readonly commitsInFlight: Set<number>;
 }
 
 export function createClientGroupState(): ClientGroupState {
@@ -221,6 +230,9 @@ export function createClientGroupState(): ClientGroupState {
     heartbeatToken: 0,
     pollTimeoutToken: 0,
     joinPrepareToken: 0,
+    coordinator: null,
+    findInFlight: false,
+    commitsInFlight: new Set(),
   };
 }
 
@@ -294,11 +306,6 @@ export interface EngineState {
   readonly groups: Map<string, GroupState>;
   /** The KRaft controller's state (M4-T5). */
   readonly controller: ControllerState;
-  /**
-   * Leader broker of each __consumer_offsets partition (offsets.topic.num.partitions = 50), or
-   * null until the first FindCoordinator creates the internal topic (protocols/coordinator.ts).
-   */
-  offsetsTopicLeaders: readonly string[] | null;
   /** In the order they were made. */
   readonly connections: Connection[];
   /**
@@ -348,7 +355,6 @@ export function createState(): EngineState {
       preferredCheckScheduled: false,
       nextSessionToken: 0,
     },
-    offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
     parkedReplicaFetches: new Map(),

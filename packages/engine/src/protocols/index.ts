@@ -9,6 +9,7 @@ import type { EngineTask } from '../model/tasks.ts';
 import {
   handleConsumerCoordinatorResponse,
   handleConsumerPoll,
+  handleFindCoordinatorResponse,
   handleFetchResponse,
   handleHeartbeatTask,
   handleJoinPrepareTimeoutTask,
@@ -17,6 +18,7 @@ import {
 import { handleFetchExpire, handleFetchRequest } from './fetch.ts';
 import {
   handleCoordinatorRequest,
+  handleFindCoordinatorRequest,
   handleGroupJoinTimer,
   handleGroupSyncTimer,
   handleMemberSessionExpire,
@@ -132,6 +134,12 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'CoordinatorRequest':
       handleCoordinatorRequest(ctx, task);
+      return;
+    case 'FindCoordinatorRequest':
+      handleFindCoordinatorRequest(ctx, task);
+      return;
+    case 'FindCoordinatorResponse':
+      handleFindCoordinatorResponse(ctx, task);
       return;
     case 'CoordinatorResponse':
       handleConsumerCoordinatorResponse(ctx, task);

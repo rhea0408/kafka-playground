@@ -48,7 +48,10 @@ import type {
   EngineTask,
   GroupError,
 } from '../model/tasks.ts';
+import { isAlive } from '../model/state.ts';
 import { comparePartitions, type AssignorMember } from './assignors/index.ts';
+import { canServe } from './controller.ts';
+import { coordinatorFor } from './coordinator.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 type Request<A extends CoordinatorRequest['api']> = Extract<CoordinatorRequest, { api: A }>;
@@ -74,6 +77,13 @@ export function handleCoordinatorRequest(
   task: Task<'CoordinatorRequest'>,
 ): void {
   const { request } = task;
+  const broker = ctx.state.brokers.get(task.broker);
+  if (broker === undefined || !isAlive(broker.status)) return; // gone: the client sees a disconnect
+  // Only the leader of the group's __consumer_offsets partition coordinates it (K10).
+  if (!canServe(ctx, task.broker) || coordinatorFor(ctx, task.groupId) !== task.broker) {
+    notCoordinator(ctx, task, request);
+    return;
+  }
   switch (request.api) {
     case 'JoinGroup':
       joinGroup(ctx, task, request);
@@ -95,6 +105,46 @@ export function handleCoordinatorRequest(
       });
       return;
   }
+}
+
+/** NOT_COORDINATOR for every request that expects an answer (LeaveGroup gets none here). */
+function notCoordinator(ctx: EngineContext, to: Sender, request: CoordinatorRequest): void {
+  switch (request.api) {
+    case 'JoinGroup':
+    case 'SyncGroup':
+    case 'Heartbeat':
+      respond(ctx, to, { api: request.api, error: 'NOT_COORDINATOR' });
+      return;
+    case 'OffsetCommit':
+      respond(ctx, to, {
+        api: 'OffsetCommit',
+        commitId: request.commitId,
+        error: 'NOT_COORDINATOR',
+      });
+      return;
+    case 'LeaveGroup':
+      return;
+  }
+}
+
+/** FindCoordinator reaches a broker: it answers with the group's coordinator, if any (K10). */
+export function handleFindCoordinatorRequest(
+  ctx: EngineContext,
+  task: Task<'FindCoordinatorRequest'>,
+): void {
+  const broker = ctx.state.brokers.get(task.broker);
+  // A broker that died meanwhile: the connection fails, which the client treats like "unknown".
+  const coordinator =
+    broker !== undefined && isAlive(broker.status) && canServe(ctx, task.broker)
+      ? coordinatorFor(ctx, task.groupId)
+      : null;
+  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+    type: 'FindCoordinatorResponse',
+    groupId: task.groupId,
+    consumerId: task.consumerId,
+    incarnation: task.incarnation,
+    coordinator,
+  });
 }
 
 function respond(ctx: EngineContext, to: Sender, response: CoordinatorResponse): void {

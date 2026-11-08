@@ -7,12 +7,7 @@ import type { GroupState, MemberMetadata } from '../model/group.ts';
 import { createPartition } from '../model/partition.ts';
 import { createState } from '../model/state.ts';
 import type { CoordinatorRequest, CoordinatorResponse, EngineTask } from '../model/tasks.ts';
-import {
-  coordinatorFor,
-  hostsOffsetsTopic,
-  javaStringHashCode,
-  partitionFor,
-} from './coordinator.ts';
+import { coordinatorFor, javaStringHashCode, OFFSETS_TOPIC, partitionFor } from './coordinator.ts';
 import { runTask } from './index.ts';
 import { createEngine } from '../engine.ts';
 
@@ -49,6 +44,12 @@ function harness(delayMs = 3000) {
     brokerEpoch: 1,
     cleanShutdownEpoch: -1,
   });
+  ctx.state.controller.brokers.set('b1', {
+    brokerEpoch: 1,
+    fenced: false,
+    inControlledShutdown: false,
+    sessionToken: 0,
+  });
   ctx.state.topics.set('t', {
     topicId: 1,
     config: TopicSchema.parse({ kind: 'topic', id: 't', partitions: 2 }),
@@ -59,6 +60,7 @@ function harness(delayMs = 3000) {
   const send = (consumerId: string, request: CoordinatorRequest): void => {
     kernel.scheduleIn(1, {
       type: 'CoordinatorRequest',
+      broker: 'b1',
       groupId: 'g',
       consumerId,
       incarnation: 1,
@@ -142,23 +144,23 @@ describe('coordinator lookup (GroupCoordinatorService#partitionFor)', () => {
     expect(partitionFor('polygenelubricants')).toBe(0);
   });
 
-  it('places __consumer_offsets on first use; no broker means no coordinator', () => {
+  it('creates __consumer_offsets on first use; no broker means no coordinator', () => {
     const h = harness();
     expect(coordinatorFor(h.ctx, 'g')).toBe('b1');
-    expect(h.ctx.state.offsetsTopicLeaders).toHaveLength(50);
+    const topic = h.ctx.state.topics.get(OFFSETS_TOPIC);
+    expect(topic?.partitions).toHaveLength(50);
+    // offsets.topic.replication.factor 3, capped at the one registered broker (game-tuned, Q9).
+    expect(topic?.config.replicationFactor).toBe(1);
     const empty = harness();
     empty.ctx.state.brokers.clear();
+    empty.ctx.state.controller.brokers.clear();
     expect(coordinatorFor(empty.ctx, 'g')).toBeNull();
-    expect(empty.ctx.state.offsetsTopicLeaders).toBeNull();
+    expect(empty.ctx.state.topics.has(OFFSETS_TOPIC)).toBe(false);
   });
 
-  it('a broker hosts __consumer_offsets only once a group has looked up its coordinator', () => {
-    const h = harness();
-    expect(hostsOffsetsTopic(h.ctx, 'b1')).toBe(false);
-    coordinatorFor(h.ctx, 'g');
-    expect(hostsOffsetsTopic(h.ctx, 'b1')).toBe(true);
-    // Before any group exists the broker can still be removed.
+  it('the internal topic holds replicas, so its brokers can no longer be removed', () => {
     const engine = createEngine({ seed: 1, topology: { brokers: [{ kind: 'broker', id: 'b1' }] } });
+    // Before any group exists the broker can still be removed.
     expect(engine.dispatch({ type: 'RemoveComponent', id: 'b1' })).toEqual({ ok: true });
   });
 });

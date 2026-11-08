@@ -288,10 +288,28 @@ export type EngineTask =
   | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
   | { readonly type: 'FetchExpire'; readonly fetchId: number }
+  /** A consumer's FindCoordinator reaches a broker (any live one). */
+  | {
+      readonly type: 'FindCoordinatorRequest';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly broker: string;
+    }
+  /** The FindCoordinator answer: the coordinator, or null (COORDINATOR_NOT_AVAILABLE). */
+  | {
+      readonly type: 'FindCoordinatorResponse';
+      readonly groupId: string;
+      readonly consumerId: string;
+      readonly incarnation: number;
+      readonly coordinator: string | null;
+    }
   /** A consumer's request reaches the coordinator broker of its group. */
   | {
       readonly type: 'CoordinatorRequest';
       readonly groupId: string;
+      /** The broker the client believes coordinates the group. */
+      readonly broker: string;
       readonly consumerId: string;
       readonly incarnation: number;
       readonly request: CoordinatorRequest;
@@ -363,7 +381,9 @@ export type GroupError =
   | 'ILLEGAL_GENERATION'
   | 'REBALANCE_IN_PROGRESS'
   | 'INCONSISTENT_GROUP_PROTOCOL'
-  | 'COORDINATOR_NOT_AVAILABLE';
+  | 'COORDINATOR_NOT_AVAILABLE'
+  /** The broker doesn't coordinate the group (any more): look it up again (M4-T8). */
+  | 'NOT_COORDINATOR';
 
 /** An offset a client asks to commit; `topicId` is the topic life its position belongs to. */
 export interface CommitOffset {

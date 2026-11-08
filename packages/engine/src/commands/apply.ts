@@ -20,7 +20,7 @@ import {
   stopConsumer,
   wakeConsumer,
 } from '../protocols/consume.ts';
-import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
+import { isInternalTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
 import { registerNewBroker } from '../protocols/controller.ts';
@@ -135,6 +135,9 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
 function checkAdd(ctx: EngineContext, component: Component): string | undefined {
   const { state } = ctx;
   if (component.kind === 'topic') {
+    if (isInternalTopic(component.id)) {
+      return `Creation of internal topic ${component.id} is prohibited.`;
+    }
     const brokers = state.brokers.size;
     // CreateTopics fails with INVALID_REPLICATION_FACTOR when RF exceeds the available brokers.
     if (component.replicationFactor > brokers) {
@@ -167,17 +170,13 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
           );
         }
       }
-      if (hostsOffsetsTopic(ctx, id)) {
-        return reject(
-          `Broker ${id} holds replicas of __consumer_offsets, the internal topic where consumer groups keep their committed offsets. Moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
-        );
-      }
       component = (state.brokers.get(id) as { config: Component }).config;
       state.brokers.delete(id);
       state.controller.brokers.delete(id); // unregistered
       break;
     }
     case 'topic':
+      if (isInternalTopic(id)) return reject(`The internal topic ${id} can't be deleted.`);
       component = (state.topics.get(id) as { config: Component }).config;
       state.topics.delete(id);
       onTopicRemoved(ctx, id);

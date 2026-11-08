@@ -15,8 +15,12 @@ function record(engine: Engine): EngineEvent[] {
   return events;
 }
 
+/** Events of one type, without those of the internal topic __consumer_offsets (M4-T8). */
 const ofType = <T extends EngineEvent['type']>(events: EngineEvent[], type: T) =>
-  events.filter((e): e is Extract<EngineEvent, { type: T }> => e.type === type);
+  events.filter(
+    (e): e is Extract<EngineEvent, { type: T }> =>
+      e.type === type && !('topic' in e && e.topic === '__consumer_offsets'),
+  );
 
 /** Three brokers, topic "orders" (1 partition, RF 3), producer p1 sending one record at 1000 ms. */
 function cluster(

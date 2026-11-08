@@ -1,22 +1,34 @@
 /**
- * Finding a group's coordinator (FindCoordinator). Committed offsets and group metadata live in
- * the internal topic __consumer_offsets; the coordinator of a group is the leader of partition
- * `Utils.abs(groupId.hashCode()) % offsets.topic.num.partitions` (GroupCoordinatorService
- * #partitionFor; default 50 partitions). The topic is created on the first FindCoordinator
- * (KafkaApis#getCoordinator); its partitions never move afterwards unless reassigned (M4).
+ * The internal topic __consumer_offsets and finding a group's coordinator (FindCoordinator),
+ * M4-T8 (M4 Q8, Q9; M4-decisions K10).
  *
- * Simplified: the lookup has no round trip, and the internal topic's replication factor is not
- * modelled. Real Kafka uses offsets.topic.replication.factor = 3 and cannot create the topic on a
- * cluster with fewer brokers (FindCoordinator keeps answering COORDINATOR_NOT_AVAILABLE), which
- * is why single-broker setups set it to 1 (simplifications: "Group coordinator lookup").
+ * Committed offsets and group metadata live in __consumer_offsets, a real, replicated topic with
+ * offsets.topic.num.partitions (50) partitions. The coordinator of a group is the **leader** of
+ * partition `Utils.abs(groupId.hashCode()) % 50` (GroupCoordinatorService#partitionFor), so it
+ * moves when that partition's leadership moves. The topic is created on the first FindCoordinator
+ * (KafkaApis#getCoordinator), placed by the same StripedReplicaPlacer as other topics.
+ *
+ * Its replication factor: offsets.topic.replication.factor (3) in Kafka, which can't be created
+ * with fewer registered brokers (FindCoordinator answers COORDINATOR_NOT_AVAILABLE for ever).
+ * The game uses min(offsets.topic.replication.factor, registered brokers) when it creates the
+ * topic (game-tuned, Q9), so single-broker scenes still have coordinators.
  */
 
+import { TopicSchema } from '@kp/schema';
 import type { EngineContext } from '../model/context.ts';
+import { createPartition } from '../model/partition.ts';
 import { placeReplicas } from '../model/placement.ts';
-import { placementBrokers } from '../model/state.ts';
+import { isAlive, placementBrokers, type TopicState } from '../model/state.ts';
+import { startFollowers } from './replication.ts';
 
 /** offsets.topic.num.partitions default. */
 export const OFFSETS_TOPIC_PARTITIONS = 50;
+
+/** The internal topic's name (Topic.GROUP_METADATA_TOPIC_NAME). */
+export const OFFSETS_TOPIC = '__consumer_offsets';
+
+/** Whether a topic is internal (hidden on the canvas, M4 Q8). */
+export const isInternalTopic = (topic: string): boolean => topic === OFFSETS_TOPIC;
 
 /** java.lang.String#hashCode: s[0]*31^(n-1) + … + s[n-1], in 32-bit int arithmetic (UTF-16). */
 export function javaStringHashCode(s: string): number {
@@ -34,28 +46,51 @@ export function partitionFor(groupId: string, partitions = OFFSETS_TOPIC_PARTITI
 }
 
 /**
- * The broker that coordinates `groupId`, creating __consumer_offsets on first use. Null while the
- * cluster has no broker (the client gets COORDINATOR_NOT_AVAILABLE and retries).
+ * The internal topic, created on first use (AutoTopicCreationManager). Null while no broker can
+ * take a replica (none registered, or all shutting down).
  */
-export function coordinatorFor(ctx: EngineContext, groupId: string): string | null {
+export function ensureOffsetsTopic(ctx: EngineContext): TopicState | null {
   const { state } = ctx;
-  if (state.offsetsTopicLeaders === null) {
-    // No broker can take a replica (none registered, or all shutting down): the topic can't be
-    // created yet, so FindCoordinator answers COORDINATOR_NOT_AVAILABLE (K10).
-    if (placementBrokers(state).length === 0) return null;
-    // TODO(M4-T8): a real replicated internal topic; for now only the leaders are kept.
-    state.offsetsTopicLeaders = placeReplicas(
-      OFFSETS_TOPIC_PARTITIONS,
-      1,
-      placementBrokers(state).map((b) => ({ ...b, fenced: false })),
-      ctx.kernel.rng.fork('placement:__consumer_offsets'),
-    ).map((replicas) => replicas[0] as string);
-  }
-  const leader = state.offsetsTopicLeaders[partitionFor(groupId)];
-  return leader !== undefined && state.brokers.has(leader) ? leader : null;
+  const existing = state.topics.get(OFFSETS_TOPIC);
+  if (existing !== undefined) return existing;
+  const brokers = placementBrokers(state);
+  if (brokers.length === 0 || !brokers.some((b) => !b.fenced)) return null;
+  const configured = [...state.brokers.values()].sort((a, b) =>
+    a.config.id < b.config.id ? -1 : a.config.id > b.config.id ? 1 : 0,
+  )[0]?.config.offsetsTopicReplicationFactor;
+  const replicationFactor = Math.min(configured ?? 3, brokers.length);
+  const assignments = placeReplicas(
+    OFFSETS_TOPIC_PARTITIONS,
+    replicationFactor,
+    brokers,
+    ctx.kernel.rng.fork(`placement:${OFFSETS_TOPIC}`),
+  );
+  const topic: TopicState = {
+    topicId: ++state.counters.topic,
+    config: TopicSchema.parse({
+      kind: 'topic',
+      id: OFFSETS_TOPIC,
+      partitions: OFFSETS_TOPIC_PARTITIONS,
+      replicationFactor,
+    }),
+    partitions: assignments.map((replicas, index) =>
+      createPartition(OFFSETS_TOPIC, index, replicas),
+    ),
+  };
+  state.topics.set(OFFSETS_TOPIC, topic);
+  for (const partition of topic.partitions) startFollowers(ctx, partition);
+  return topic;
 }
 
-/** Whether `brokerId` leads a partition of __consumer_offsets (so it coordinates groups). */
-export function hostsOffsetsTopic(ctx: EngineContext, brokerId: string): boolean {
-  return ctx.state.offsetsTopicLeaders?.includes(brokerId) ?? false;
+/**
+ * The broker that coordinates `groupId` (FindCoordinator's answer), creating __consumer_offsets
+ * on first use: the leader of its partition. Null while that partition has no leader or the topic
+ * can't be created (COORDINATOR_NOT_AVAILABLE).
+ */
+export function coordinatorFor(ctx: EngineContext, groupId: string): string | null {
+  const topic = ensureOffsetsTopic(ctx);
+  const leader = topic?.partitions[partitionFor(groupId)]?.leader ?? null;
+  if (leader === null) return null;
+  const broker = ctx.state.brokers.get(leader);
+  return broker !== undefined && isAlive(broker.status) ? leader : null;
 }

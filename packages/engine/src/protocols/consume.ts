@@ -73,6 +73,8 @@ import {
   handleConsumerPollTimeout,
   handleCoordinatorResponse,
   leaveGroup,
+  onCoordinatorDisconnected,
+  onFindCoordinatorResponse,
   ownedPartitionKeys,
   pollCoordinator,
   resetClientGroup,
@@ -361,6 +363,25 @@ export function handleConsumerCoordinatorResponse(
 ): void {
   const consumer = running(ctx, task.consumerId, task.incarnation);
   if (consumer !== undefined) handleCoordinatorResponse(ctx, consumer, task, hooks(ctx));
+}
+
+export function handleFindCoordinatorResponse(
+  ctx: EngineContext,
+  task: Task<'FindCoordinatorResponse'>,
+): void {
+  const consumer = running(ctx, task.consumerId, task.incarnation);
+  if (consumer === undefined || task.groupId !== consumer.config.groupId) return;
+  onFindCoordinatorResponse(consumer, task.coordinator, hooks(ctx));
+}
+
+/** A broker crashed: consumers whose coordinator it was see their connection drop (M4-T8). */
+export function onBrokerGoneForGroups(ctx: EngineContext, brokerId: string): void {
+  for (const consumer of ctx.state.consumers.values()) {
+    if (consumer.status !== 'running') continue;
+    if (consumer.group.coordinator === brokerId) {
+      onCoordinatorDisconnected(ctx, consumer, hooks(ctx));
+    }
+  }
 }
 
 export function handleHeartbeatTask(ctx: EngineContext, task: Task<'ConsumerHeartbeat'>): void {

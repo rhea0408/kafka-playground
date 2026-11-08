@@ -76,7 +76,7 @@ describe('joining a group', () => {
     const completed = ofType(events, 'RebalanceCompleted');
     expect(completed).toHaveLength(1);
     expect(completed[0]).toMatchObject({ generation: 1, protocol: 'range' });
-    expect(completed[0]?.t).toBe(6003);
+    expect(completed[0]?.t).toBe(6005); // FindCoordinator first (+2 ms, M4-T8)
     const owned = ownership(events);
     expect([...owned.values()].map((s) => s.size)).toEqual([1, 1, 1]);
     // Nothing is consumed before the group is Stable; then every member reads only its own.
@@ -341,7 +341,8 @@ describe('a SyncGroup that fails because the group rebalances again (M4-T0, revi
   it('no commit is accepted for a generation that never completed', () => {
     const completesAt = ofType(run(null), 'RebalanceCompleted').find((e) => e.t > 10_000)?.t;
     expect(completesAt).toBeDefined();
-    const events = run((completesAt ?? 0) - 2);
+    // c4's FindCoordinator takes 2 ms before its JoinGroup goes out (M4-T8).
+    const events = run((completesAt ?? 0) - 4);
     const completed = new Set(ofType(events, 'RebalanceCompleted').map((e) => e.generation));
     // The race happened: some generation was started but never completed.
     const started = ofType(events, 'RebalanceStarted').map((e) => e.generation + 1);
@@ -485,7 +486,7 @@ describe('eager rebalance with the cooperative-sticky assignor (M4-T2 fix)', () 
       },
     });
     const events = record(engine);
-    engine.runUntil(0); // both join with [t1]; then c1 subscribes to t0 as well
+    engine.runUntil(2); // both join with [t1] (after FindCoordinator); then c1 subscribes to t0
     engine.dispatch({ type: 'Connect', from: 't0', to: 'c1' });
     engine.runUntil(5000);
     const gen2 = ofType(events, 'RebalanceCompleted').find((e) => e.generation === 2);

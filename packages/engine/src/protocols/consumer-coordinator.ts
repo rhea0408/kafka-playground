@@ -40,7 +40,7 @@ import type { Assignor } from '@kp/schema';
 import type { EngineContext } from '../model/context.ts';
 import type { JoinReason, MemberMetadata } from '../model/group.ts';
 import { partitionName } from '../model/partition.ts';
-import { createClientGroupState, type ConsumerState } from '../model/state.ts';
+import { createClientGroupState, isAlive, type ConsumerState } from '../model/state.ts';
 import type {
   CommitOffset,
   CoordinatorRequest,
@@ -56,7 +56,6 @@ import {
   type AssignorMember,
   type TopicPartition,
 } from './assignors/index.ts';
-import { coordinatorFor } from './coordinator.ts';
 import { knownPartitionCount } from './metadata.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
@@ -82,11 +81,82 @@ export function resetClientGroup(consumer: ConsumerState): void {
 export const isRebalancing = (consumer: ConsumerState): boolean =>
   consumer.group.state === 'preparing' || consumer.group.state === 'completing';
 
+/**
+ * Whether the client knows a reachable coordinator (AbstractCoordinator#ensureCoordinatorReady).
+ * If not, it marks it unknown and sends FindCoordinator to a live broker (M4-T8).
+ */
+export function coordinatorReady(ctx: EngineContext, consumer: ConsumerState): boolean {
+  const { group } = consumer;
+  if (group.coordinator !== null) {
+    const broker = ctx.state.brokers.get(group.coordinator);
+    if (broker !== undefined && isAlive(broker.status)) return true;
+    markCoordinatorUnknown(consumer);
+  }
+  if (group.findInFlight) return false;
+  // leastLoadedNode: any broker the client can connect to (here the first live one).
+  const target = [...ctx.state.brokers.values()].find((b) => isAlive(b.status));
+  if (target === undefined) return false;
+  group.findInFlight = true;
+  ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+    type: 'FindCoordinatorRequest',
+    groupId: consumer.config.groupId,
+    consumerId: consumer.config.id,
+    incarnation: consumer.incarnation,
+    broker: target.config.id,
+  });
+  return false;
+}
+
+/** AbstractCoordinator#markCoordinatorUnknown. */
+export function markCoordinatorUnknown(consumer: ConsumerState): void {
+  consumer.group.coordinator = null;
+}
+
+/** The FindCoordinator answer reaches the client. */
+export function onFindCoordinatorResponse(
+  consumer: ConsumerState,
+  coordinator: string | null,
+  hooks: PollHooks,
+): void {
+  consumer.group.findInFlight = false;
+  consumer.group.coordinator = coordinator;
+  hooks.wake(consumer);
+}
+
+/**
+ * The coordinator's broker went away with requests in flight (a dropped connection): the client
+ * marks it unknown; a pending JoinGroup or SyncGroup is retried, pending commits fail as
+ * retriable (COORDINATOR_NOT_AVAILABLE).
+ */
+export function onCoordinatorDisconnected(
+  ctx: EngineContext,
+  consumer: ConsumerState,
+  hooks: PollHooks,
+): void {
+  const { group } = consumer;
+  markCoordinatorUnknown(consumer);
+  if ((group.state === 'preparing' || group.state === 'completing') && !group.joinRetry) {
+    retryJoin(consumer, 'rejoin-after-error');
+  }
+  for (const commitId of [...group.commitsInFlight]) {
+    onCommitResponse(
+      ctx,
+      consumer,
+      { api: 'OffsetCommit', commitId, error: 'COORDINATOR_NOT_AVAILABLE' },
+      hooks,
+    );
+  }
+  hooks.wake(consumer);
+}
+
 /** Sends a request to the group's coordinator (one network delay). False if there is none. */
 function send(ctx: EngineContext, consumer: ConsumerState, request: CoordinatorRequest): boolean {
-  if (coordinatorFor(ctx, consumer.config.groupId) === null) return false;
+  const broker = consumer.group.coordinator;
+  if (broker === null) return false;
+  if (request.api === 'OffsetCommit') consumer.group.commitsInFlight.add(request.commitId);
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
     type: 'CoordinatorRequest',
+    broker,
     groupId: consumer.config.groupId,
     consumerId: consumer.config.id,
     incarnation: consumer.incarnation,
@@ -160,7 +230,7 @@ export function pollCoordinator(
     }
     return 'wait';
   }
-  if (coordinatorFor(ctx, consumer.config.groupId) === null) return 'retry';
+  if (!coordinatorReady(ctx, consumer)) return 'retry';
 
   if (group.pendingAssignment !== null) onJoinComplete(ctx, consumer, hooks);
   if (
@@ -378,8 +448,13 @@ function onJoinResponse(
       case 'ILLEGAL_GENERATION':
         resetGeneration(consumer, false);
         break;
-      case 'REBALANCE_IN_PROGRESS':
+      case 'NOT_COORDINATOR':
       case 'COORDINATOR_NOT_AVAILABLE':
+        // markCoordinatorUnknown, then FindCoordinator before the retry (M3 carry-over).
+        markCoordinatorUnknown(consumer);
+        retryJoin(consumer, 'rejoin-after-error');
+        break;
+      case 'REBALANCE_IN_PROGRESS':
         retryJoin(consumer, 'rejoin-after-error');
         break;
     }
@@ -428,7 +503,12 @@ function onSyncResponse(
   if (response.error !== null) {
     if (response.error === 'UNKNOWN_MEMBER_ID') resetGeneration(consumer, true);
     else if (response.error === 'ILLEGAL_GENERATION') resetGeneration(consumer, false);
-    else retryJoin(consumer, 'rebalance-in-progress');
+    else {
+      if (response.error === 'NOT_COORDINATOR' || response.error === 'COORDINATOR_NOT_AVAILABLE') {
+        markCoordinatorUnknown(consumer);
+      }
+      retryJoin(consumer, 'rebalance-in-progress');
+    }
     hooks.wake(consumer);
     return;
   }
@@ -462,8 +542,11 @@ function onHeartbeatResponse(
       resetGeneration(consumer, false);
       break;
     case 'INCONSISTENT_GROUP_PROTOCOL':
-    case 'COORDINATOR_NOT_AVAILABLE':
       return;
+    case 'NOT_COORDINATOR':
+    case 'COORDINATOR_NOT_AVAILABLE':
+      markCoordinatorUnknown(consumer);
+      break;
   }
   hooks.wake(consumer);
 }
@@ -489,7 +572,14 @@ export function handleConsumerHeartbeat(
   const { group } = consumer;
   if (task.token !== group.heartbeatToken) return;
   if (group.state !== 'stable' && group.state !== 'completing') return; // thread disabled
-  send(ctx, consumer, { api: 'Heartbeat', memberId: group.memberId, generation: group.generation });
+  // The heartbeat thread looks the coordinator up itself when it is unknown.
+  if (coordinatorReady(ctx, consumer)) {
+    send(ctx, consumer, {
+      api: 'Heartbeat',
+      memberId: group.memberId,
+      generation: group.generation,
+    });
+  }
   ctx.kernel.scheduleIn(consumer.config.heartbeatIntervalMs, { ...task });
 }
 
@@ -657,8 +747,12 @@ function onCommitResponse(
   hooks: PollHooks,
 ): void {
   const { group } = consumer;
+  group.commitsInFlight.delete(response.commitId);
   if (response.error !== null) {
     emitCommitFailed(ctx, consumer, response.error, []);
+    if (response.error === 'NOT_COORDINATOR' || response.error === 'COORDINATOR_NOT_AVAILABLE') {
+      markCoordinatorUnknown(consumer);
+    }
     if (response.error === 'UNKNOWN_MEMBER_ID') resetGeneration(consumer, true);
     else if (response.error === 'ILLEGAL_GENERATION') resetGeneration(consumer, false);
     else if (response.error === 'REBALANCE_IN_PROGRESS')
