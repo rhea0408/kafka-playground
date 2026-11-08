@@ -94,6 +94,7 @@ export type ReplicaFetchResult = ReplicaFetchPartition &
  */
 export interface ParkedProduce {
   readonly produceId: number;
+  readonly attempt: number;
   /** The leader broker process holding it: the purgatory dies with that process. */
   readonly broker: string;
   readonly brokerIncarnation: number;
@@ -138,6 +139,8 @@ export type EngineTask =
       readonly acks: Acks;
       /** The request's timeout (request.timeout.ms): how long an acks=all write may wait. */
       readonly timeoutMs: number;
+      /** Which send attempt of this record (retries count up); the answer names it. */
+      readonly attempt: number;
       readonly record: Omit<LogRecord, 'offset' | 'leaderEpoch'>;
     }
   /** The leader's produce response reaches the producer (acks = 1 / all). */
@@ -148,6 +151,7 @@ export type EngineTask =
       readonly topic: string;
       readonly partition: number;
       readonly traceId: string;
+      readonly attempt: number;
       readonly result:
         | { readonly ok: true; readonly offset: number }
         | { readonly ok: false; readonly error: ProduceError };
@@ -257,6 +261,29 @@ export type EngineTask =
   | { readonly type: 'ControllerSessionExpire'; readonly broker: string; readonly token: number }
   /** The controller's preferred-leader check (leader.imbalance.check.interval.seconds). */
   | { readonly type: 'PreferredLeaderCheck' }
+  /** The producer's request.timeout.ms for one send attempt passed without an answer. */
+  | {
+      readonly type: 'ProduceRequestTimeout';
+      readonly producerId: string;
+      readonly incarnation: number;
+      readonly traceId: string;
+      readonly attempt: number;
+    }
+  /** delivery.timeout.ms since send() for a record that is not acknowledged yet. */
+  | {
+      readonly type: 'ProduceDeliveryTimeout';
+      readonly producerId: string;
+      readonly incarnation: number;
+      readonly traceId: string;
+    }
+  /** The producer's sender wakes up to send a partition's queued records (after a backoff). */
+  | {
+      readonly type: 'ProducerDrain';
+      readonly producerId: string;
+      readonly incarnation: number;
+      readonly key: string;
+      readonly token: number;
+    }
   /** A parked acks=all produce reached its request timeout. */
   | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
@@ -413,8 +440,16 @@ export type ProduceError =
   | 'NOT_ENOUGH_REPLICAS'
   /** The record reached the HW, but the ISR had shrunk below min.insync.replicas (K6). */
   | 'NOT_ENOUGH_REPLICAS_AFTER_APPEND'
-  /** The acks=all write waited longer than the request's timeout (DelayedProduce). */
-  | 'REQUEST_TIMED_OUT';
+  /** The acks=all write waited longer than the request's timeout (DelayedProduce), or the client gave up waiting (request.timeout.ms). */
+  | 'REQUEST_TIMED_OUT'
+  /** The connection to the broker dropped (it crashed) with the request in flight. */
+  | 'NETWORK_EXCEPTION'
+  /** Idempotence: the broker expected another sequence number (a gap, e.g. after truncation, K8). */
+  | 'OUT_OF_ORDER_SEQUENCE_NUMBER'
+  /** Idempotence: a request from an older producer epoch. */
+  | 'INVALID_PRODUCER_EPOCH'
+  /** Client side: delivery.timeout.ms passed before the record was acknowledged (TimeoutException). */
+  | 'DELIVERY_TIMEOUT';
 
 /** Per-partition fetch errors (Kafka protocol error codes). */
 export type FetchError =

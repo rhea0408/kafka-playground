@@ -649,7 +649,7 @@ export function onTopicRemovedReplication(ctx: EngineContext, topic: string): vo
 /** Where a produce response goes: the producer life and the record it answers. */
 export type ProduceTarget = Pick<
   ParkedProduce,
-  'producerId' | 'incarnation' | 'topic' | 'partition' | 'traceId'
+  'producerId' | 'incarnation' | 'topic' | 'partition' | 'traceId' | 'attempt'
 >;
 
 /** Sends a produce response back to the producer (+ network delay). */
@@ -665,6 +665,7 @@ export function sendProduceResponse(
     topic: target.topic,
     partition: target.partition,
     traceId: target.traceId,
+    attempt: target.attempt,
     result,
   });
 }

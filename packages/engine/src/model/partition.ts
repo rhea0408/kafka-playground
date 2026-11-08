@@ -50,6 +50,13 @@ export interface LogRecord {
    * Followers build their leader-epoch cache from it; truncation compares epochs (KIP-101).
    */
   readonly leaderEpoch: number;
+  /**
+   * Idempotent producer fields (record batch header): producer id (PID), producer epoch and
+   * sequence number. pid -1 for a non-idempotent producer.
+   */
+  readonly pid: number;
+  readonly producerEpoch: number;
+  readonly sequence: number;
 }
 
 /** One entry of a replica's leader-epoch cache (LeaderEpochFileCache): epoch → first offset. */
@@ -67,6 +74,35 @@ export interface ReplicaLog {
   highWatermark: number;
   /** Leader-epoch cache, ascending by epoch: where each leader epoch's records start. */
   readonly epochs: EpochEntry[];
+  /**
+   * ProducerStateManager: per idempotent producer (PID), its epoch, last sequence and the offsets
+   * of its last 5 batches (NUM_BATCHES_TO_RETAIN), kept up to date as records are appended and
+   * rebuilt from the log after truncation (K8).
+   */
+  readonly producers: Map<number, ProducerStateEntry>;
+}
+
+/** One idempotent producer's state in a replica (ProducerStateEntry). */
+export interface ProducerStateEntry {
+  epoch: number;
+  lastSeq: number;
+  /** The last few (sequence, offset) pairs, oldest first, for duplicate detection. */
+  readonly recent: { readonly seq: number; readonly offset: number }[];
+}
+
+/** ProducerStateEntry.NUM_BATCHES_TO_RETAIN. */
+export const PRODUCER_BATCHES_TO_RETAIN = 5;
+
+function trackProducer(replica: ReplicaLog, record: LogRecord): void {
+  if (record.pid < 0) return;
+  let entry = replica.producers.get(record.pid);
+  if (entry === undefined || entry.epoch !== record.producerEpoch) {
+    entry = { epoch: record.producerEpoch, lastSeq: -1, recent: [] };
+    replica.producers.set(record.pid, entry);
+  }
+  entry.lastSeq = record.sequence;
+  entry.recent.push({ seq: record.sequence, offset: record.offset });
+  if (entry.recent.length > PRODUCER_BATCHES_TO_RETAIN) entry.recent.shift();
 }
 
 /**
@@ -118,7 +154,15 @@ export interface PartitionState {
 }
 
 function createReplicaLog(broker: string): ReplicaLog {
-  return { broker, log: [], logStartOffset: 0, logEndOffset: 0, highWatermark: 0, epochs: [] };
+  return {
+    broker,
+    log: [],
+    logStartOffset: 0,
+    logEndOffset: 0,
+    highWatermark: 0,
+    epochs: [],
+    producers: new Map(),
+  };
 }
 
 /**
@@ -192,6 +236,7 @@ export function assignEpoch(replica: ReplicaLog, epoch: number, startOffset: num
 }
 
 export function appendToReplica(replica: ReplicaLog, record: LogRecord): void {
+  trackProducer(replica, record);
   replica.log.push(record);
   replica.logEndOffset = record.offset + 1;
   assignEpoch(replica, record.leaderEpoch, record.offset);
@@ -203,7 +248,8 @@ export function appendToReplica(replica: ReplicaLog, record: LogRecord): void {
  */
 export function appendRecord(
   partition: PartitionState,
-  record: Omit<LogRecord, 'offset' | 'leaderEpoch'>,
+  record: Omit<LogRecord, 'offset' | 'leaderEpoch' | 'pid' | 'producerEpoch' | 'sequence'> &
+    Partial<Pick<LogRecord, 'pid' | 'producerEpoch' | 'sequence'>>,
 ): LogRecord {
   const leader = leaderLog(partition);
   if (leader === undefined)
@@ -211,6 +257,9 @@ export function appendRecord(
   // Frozen: a record never changes once it is in the log, so snapshots and other replicas can
   // share it instead of copying it, and nobody can rewrite it through them.
   const appended: LogRecord = Object.freeze({
+    pid: -1,
+    producerEpoch: -1,
+    sequence: -1,
     offset: leader.logEndOffset,
     ...record,
     leaderEpoch: partition.leaderEpoch,
@@ -256,6 +305,9 @@ export function truncateReplica(replica: ReplicaLog, offset: number): LogRecord[
   while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= from) {
     replica.epochs.pop();
   }
+  // UnifiedLog#truncateTo → rebuildProducerState: the producer state comes from what is left.
+  replica.producers.clear();
+  for (const record of replica.log) trackProducer(replica, record);
   return removed;
 }
 

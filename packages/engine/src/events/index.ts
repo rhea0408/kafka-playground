@@ -65,6 +65,20 @@ export type EngineEventPayload =
       readonly traceId: string;
       readonly error: ProduceError;
     }
+  /**
+   * A send attempt failed with a retriable error and the producer will send the record again
+   * (after `backoffMs`), until delivery.timeout.ms (M4-T7).
+   */
+  | {
+      readonly type: 'ProduceRetried';
+      readonly producerId: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly traceId: string;
+      readonly attempt: number;
+      readonly error: ProduceError;
+      readonly backoffMs: number;
+    }
   /** poll() returned this record to the consumer application. */
   | {
       readonly type: 'RecordConsumed';

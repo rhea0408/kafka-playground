@@ -34,6 +34,8 @@ export function describeEvent(e: EngineEvent): string {
       return `${e.producerId}  ${partitionName(e.topic, e.partition)}  ${e.offset === null ? 'offset=-1 (acks=0: not known)' : `offset=${String(e.offset)}`}`;
     case 'ProduceFailed':
       return `${e.producerId}  ${partitionName(e.topic, e.partition)}  ${e.error}`;
+    case 'ProduceRetried':
+      return `${e.producerId}  ${partitionName(e.topic, e.partition)}  ${e.error}  retry ${String(e.attempt)} in ${String(e.backoffMs)} ms`;
     case 'RecordConsumed':
       return `${e.consumerId} ← ${partitionName(e.topic, e.partition)}  offset=${String(e.offset)}  ${keyText(e.key)}`;
     case 'OffsetCommitted':

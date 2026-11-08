@@ -7,7 +7,7 @@ import type { TopologyInput } from '@kp/schema';
 import { describe, expect, it } from 'vitest';
 import { createEngine, createEngineInternal, type Engine } from '../engine.ts';
 import type { EngineEvent } from '../events/index.ts';
-import { completeDelayedProduces, parkProduce } from './replication.ts';
+import { completeDelayedProduces } from './replication.ts';
 
 function record(engine: Engine): EngineEvent[] {
   const events: EngineEvent[] = [];
@@ -107,7 +107,8 @@ describe('follower fetching and the high watermark', () => {
     const follower = p?.replicas.map((r) => r.broker).find((b) => b !== p.leader) ?? '';
     engine.dispatch({ type: 'KillBroker', id: follower });
     engine.runUntil(8999);
-    expect(partition0(engine)?.logEndOffset).toBe(8);
+    // Five appended (max.in.flight per partition); later records wait in the producer's queue.
+    expect(partition0(engine)?.logEndOffset).toBe(5);
     expect(partition0(engine)?.highWatermark).toBe(0);
     expect(ofType(events, 'RecordConsumed')).toEqual([]); // consumers read below the HW only
     engine.runUntil(9100);
@@ -117,11 +118,11 @@ describe('follower fetching and the high watermark', () => {
     ]);
     expect(ofType(events, 'IsrShrunk')).toMatchObject([{ removed: [follower], t: 9000 }]);
     // The parked acks=all writes complete once the HW moves (+1 ms back to the producer).
-    expect(
-      ofType(events, 'ProduceAcked')
-        .slice(0, 8)
-        .map((e) => e.t),
-    ).toEqual(Array(8).fill(9001));
+    // At most 5 requests per partition are in flight: those 5 are acked at once (+1 ms back to
+    // the producer), the 3 queued records right after.
+    const acked = ofType(events, 'ProduceAcked');
+    expect(acked.slice(0, 5).map((e) => e.t)).toEqual(Array(5).fill(9001));
+    expect(acked.slice(0, 8).every((e) => e.t < 9010)).toBe(true);
     expect(ofType(events, 'ProduceFailed')).toEqual([]);
   });
 });
@@ -150,16 +151,13 @@ describe('min.insync.replicas', () => {
   it('acks=all with the ISR below minISR fails with NOT_ENOUGH_REPLICAS, nothing is appended', () => {
     const { engine, events } = underMinIsr('all');
     engine.runUntil(17_100);
-    // New writes are refused; writes parked before the shrink time out meanwhile.
-    const failed = ofType(events, 'ProduceFailed');
-    expect(failed.filter((e) => e.error === 'NOT_ENOUGH_REPLICAS').map((e) => e.t)).toEqual([
-      16_002, 17_002,
-    ]);
-    expect(failed.filter((e) => e.error !== 'NOT_ENOUGH_REPLICAS').map((e) => e.error)).toEqual([
-      'REQUEST_TIMED_OUT',
-      'REQUEST_TIMED_OUT',
-    ]);
+    // Every write is refused before the append; NOT_ENOUGH_REPLICAS is retriable, so the
+    // producer keeps retrying (until delivery.timeout.ms) and nothing is appended or acked.
+    const retried = ofType(events, 'ProduceRetried');
+    expect(retried.length).toBeGreaterThan(0);
+    expect(new Set(retried.map((e) => e.error))).toEqual(new Set(['NOT_ENOUGH_REPLICAS']));
     expect(ofType(events, 'RecordAppended')).toEqual([]);
+    expect(ofType(events, 'ProduceAcked')).toEqual([]);
   });
 
   it('strict min ISR: acks=1 writes are appended and acked, but the HW does not move', () => {
@@ -187,31 +185,22 @@ describe('min.insync.replicas', () => {
       topology: cluster({ minIsr: 2 }),
     });
     const events = record(engine);
+    engine.runUntil(1001); // p1's first record is appended and parked (followers not there yet)
     const topic = context.state.topics.get('orders');
     const p = topic?.partitions[0];
     if (topic === undefined || p === undefined || p.leader === null) throw new Error('setup');
-    const target = {
-      producerId: 'p1',
-      incarnation: 1,
-      topic: 'orders',
-      partition: 0,
-      traceId: 'x',
-    };
-    parkProduce(context, target, { broker: p.leader, topicId: topic.topicId }, 0, 10_000);
+    expect(context.state.parkedProduces.size).toBe(1);
     const leaderLog = p.replicaLogs.get(p.leader);
     if (leaderLog === undefined) throw new Error('setup');
     leaderLog.highWatermark = 1;
     p.isr = [p.leader];
     completeDelayedProduces(context, topic, p);
-    engine.runUntil(10);
+    engine.runUntil(1002);
     expect(context.state.parkedProduces.size).toBe(0);
-    const answers = events.filter((e) => e.type === 'ProduceFailed' || e.type === 'ProduceAcked');
-    expect(answers).toHaveLength(1);
-    expect(answers[0]).toMatchObject({
-      type: 'ProduceFailed',
-      traceId: 'x',
-      error: 'NOT_ENOUGH_REPLICAS_AFTER_APPEND',
-    });
+    // Retriable: the producer sends the record again (M4-T7).
+    expect(ofType(events, 'ProduceRetried')).toMatchObject([
+      { traceId: 'p1@1#1', error: 'NOT_ENOUGH_REPLICAS_AFTER_APPEND' },
+    ]);
   });
 });
 
@@ -269,7 +258,7 @@ describe('replication robustness (review of M4-T3)', () => {
     expect(p?.highWatermark).toBe(5);
   });
 
-  it('deleting a topic answers its parked acks=all writes; a re-created topic never acks them', () => {
+  it('deleting a topic answers its parked writes; the producer retries them on the re-created topic', () => {
     const engine = createEngine({ seed: 1, topology: cluster() });
     const events = record(engine);
     engine.runUntil(500);
@@ -285,18 +274,24 @@ describe('replication robustness (review of M4-T3)', () => {
     engine.dispatch({ type: 'Connect', from: 'p1', to: 'orders' });
     engine.runUntil(7100);
     const old = (e: { traceId: string }) => ['p1@1#1', 'p1@1#2', 'p1@1#3'].includes(e.traceId);
-    expect(ofType(events, 'ProduceAcked').filter(old)).toEqual([]);
+    // The old topic answers UNKNOWN_TOPIC_OR_PARTITION at once (never "acked")…
     expect(
-      ofType(events, 'ProduceFailed')
+      ofType(events, 'ProduceRetried')
         .filter(old)
-        .map((e) => e.error),
+        .map((e) => [e.error, e.t]),
     ).toEqual([
-      'UNKNOWN_TOPIC_OR_PARTITION',
-      'UNKNOWN_TOPIC_OR_PARTITION',
-      'UNKNOWN_TOPIC_OR_PARTITION',
+      ['UNKNOWN_TOPIC_OR_PARTITION', 3501],
+      ['UNKNOWN_TOPIC_OR_PARTITION', 3501],
+      ['UNKNOWN_TOPIC_OR_PARTITION', 3501],
     ]);
-    // Records sent to the new topic are acked with its own offsets.
-    expect(ofType(events, 'ProduceAcked').map((e) => e.offset)).toEqual([0, 1, 2, 3]);
+    // …and the producer, which names topics, sends them again to the new topic of that name.
+    const reAppended = ofType(events, 'RecordAppended').filter((e) => e.t > 3500 && old(e));
+    expect(reAppended.map((e) => e.offset)).toEqual([0, 1, 2]);
+    const acked = ofType(events, 'ProduceAcked');
+    for (const e of acked.filter(old)) {
+      expect(e.offset).toBe(reAppended.find((a) => a.traceId === e.traceId)?.offset);
+    }
+    expect(acked.map((e) => e.offset)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
   it('partitions added to a replicated topic are replicated too', () => {
@@ -394,12 +389,17 @@ describe('ISR management (M4-T4)', () => {
     engine.runUntil(20_000);
     const shrunkAt = ofType(events, 'IsrShrunk')[0]?.t ?? 0;
     const acked = ofType(events, 'ProduceAcked');
-    // Records waiting when the shrink is confirmed (+1 ms) are acked right after (+1 ms).
-    expect(acked[0]?.t).toBe(shrunkAt + 2);
-    // Records appended before the shrink but within request.timeout.ms were waiting: acked now.
-    const failed = ofType(events, 'ProduceFailed');
-    for (const f of failed) expect(f.error).toBe('REQUEST_TIMED_OUT');
-    expect(acked.length + failed.length).toBe(19);
+    // Acks resume once the shrink is confirmed. The waiting requests had already timed out at
+    // the client (request.timeout.ms), so their retries are answered, within one backoff.
+    expect(acked[0]?.t).toBeGreaterThanOrEqual(shrunkAt + 2);
+    expect(acked[0]?.t).toBeLessThan(shrunkAt + 1100);
+    // The oldest timed out at the client (request.timeout.ms) and were retried; with
+    // idempotence the retry of a record the leader already had is answered with its offset.
+    expect(ofType(events, 'ProduceRetried').length).toBeGreaterThan(0);
+    expect(ofType(events, 'ProduceFailed')).toEqual([]);
+    expect(acked).toHaveLength(19);
+    const log = partition0(engine)?.records.map((r) => r.traceId) ?? [];
+    expect(new Set(log).size).toBe(log.length);
     // The consumer sees everything below the HW.
     expect(ofType(events, 'RecordConsumed').length).toBeGreaterThan(0);
   });

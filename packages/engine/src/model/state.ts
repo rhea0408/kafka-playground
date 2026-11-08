@@ -13,6 +13,7 @@ import type { Assignor } from '@kp/schema';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 import type { GroupState, JoinReason } from './group.ts';
 import type { FetchRequestTask, ParkedProduce, ReplicaFetchRequestTask } from './tasks.ts';
+import type { PartitionSender, PendingRecord } from '../protocols/producer-client.ts';
 
 export type { GroupState } from './group.ts';
 
@@ -104,6 +105,12 @@ export interface ProducerState {
   readonly sticky: Map<string, StickyState>;
   /** The producer's cached cluster metadata (partition counts), refreshed every metadata.max.age.ms. */
   readonly metadata: ClientMetadata;
+  /** Per partition: queue, in-flight requests, sequence numbers (producer-client.ts, M4-T7). */
+  readonly senders: Map<string, PartitionSender>;
+  /** Records sent (acks=1/all) and not finished yet, by trace id. */
+  readonly pending: Map<string, PendingRecord>;
+  /** Seeded stream for the retry backoff jitter (KIP-580). */
+  readonly retryRng: Rng;
   stats: ProducerStats;
 }
 

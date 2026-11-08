@@ -139,14 +139,20 @@ describe('event order and acks', () => {
     expect(events.map((e) => e.t)).toEqual([1000, 1020, 1040]);
   });
 
-  it('reports UNKNOWN_TOPIC_OR_PARTITION when the topic is deleted while a request is in flight', () => {
+  it('retries UNKNOWN_TOPIC_OR_PARTITION until delivery.timeout.ms when the topic is deleted (M4-T7)', () => {
     const engine = createEngine({ seed: 1, topology: topology() });
     const events = record(engine);
     engine.runUntil(1000);
     engine.dispatch({ type: 'RemoveComponent', id: 'orders' });
-    engine.runUntil(1100);
+    engine.runUntil(32_000);
+    expect(ofType(events, 'ProduceRetried')[0]).toMatchObject({
+      t: 1002,
+      error: 'UNKNOWN_TOPIC_OR_PARTITION',
+      traceId: 'p1@1#1',
+    });
+    // InvalidMetadataException is retriable; delivery.timeout.ms (30 s, game-tuned) ends it.
     expect(ofType(events, 'ProduceFailed')).toEqual([
-      expect.objectContaining({ t: 1002, error: 'UNKNOWN_TOPIC_OR_PARTITION', traceId: 'p1@1#1' }),
+      expect.objectContaining({ t: 31_000, error: 'DELIVERY_TIMEOUT', traceId: 'p1@1#1' }),
     ]);
     expect(engine.getSnapshot().producers[0]?.stats).toEqual({ sent: 1, acked: 0, failed: 1 });
   });

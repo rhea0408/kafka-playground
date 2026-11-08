@@ -26,7 +26,7 @@
 import type { KeyStrategy } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { EngineContext } from '../model/context.ts';
-import { appendRecord } from '../model/partition.ts';
+import { appendRecord, leaderLog, type ReplicaLog } from '../model/partition.ts';
 import { canServe } from './controller.ts';
 import {
   effectiveMinIsr,
@@ -36,9 +36,21 @@ import {
   sendProduceResponse,
   type ProduceTarget,
 } from './replication.ts';
-import { createClientMetadata, knownPartitionCount, refreshIfStale } from './metadata.ts';
+import {
+  createClientMetadata,
+  knownLeader,
+  knownPartitionCount,
+  refreshIfStale,
+} from './metadata.ts';
+import {
+  enqueueRecord,
+  handleProduceDeliveryTimeout,
+  handleProduceRequestTimeout,
+  handleProducerDrain,
+  onAttemptResult,
+} from './producer-client.ts';
 import { isAlive, topicsOfProducer, type ProducerState, type TopicState } from '../model/state.ts';
-import type { EngineTask } from '../model/tasks.ts';
+import type { EngineTask, ProduceError } from '../model/tasks.ts';
 import {
   createStickyState,
   partitionForKey,
@@ -66,6 +78,9 @@ export function startProducer(ctx: EngineContext, config: ProducerState['config'
     partitionRng: ctx.kernel.rng.fork(`${label}:partitions`),
     sticky: new Map(),
     metadata: createClientMetadata(ctx.kernel.now()),
+    senders: new Map(),
+    pending: new Map(),
+    retryRng: ctx.kernel.rng.fork(`${label}:retries`),
     stats: { sent: 0, acked: 0, failed: 0 },
   };
   ctx.state.producers.set(config.id, producer);
@@ -175,24 +190,36 @@ export function sendRecord(
       offset: null,
     });
   }
+  const record = {
+    key,
+    value,
+    timestamp: now,
+    producerId: config.id,
+    traceId,
+    sizeBytes: config.messageSizeBytes,
+  };
+  if (config.acks !== '0') {
+    enqueueRecord(ctx, producer, topic.config.id, partition, record, config.acks);
+    return;
+  }
+  // acks=0: sent once to the leader the producer knows, if it can connect; never retried.
+  const leader = knownLeader(producer.metadata, topic, partition);
+  const broker = leader === null ? undefined : ctx.state.brokers.get(leader);
+  if (leader === null || broker === undefined || !isAlive(broker.status)) {
+    producer.metadata.updateRequested = true;
+    return;
+  }
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
     type: 'LeaderAppend',
     producerId: config.id,
     incarnation: producer.incarnation,
-    // TODO(M4-T7): the producer's cached metadata names the leader; for now the current one.
-    broker: topic.partitions[partition]?.leader ?? '',
+    broker: leader,
     topic: topic.config.id,
     partition,
-    acks: config.acks,
+    acks: '0',
     timeoutMs: config.requestTimeoutMs,
-    record: {
-      key,
-      value,
-      timestamp: now,
-      producerId: config.id,
-      traceId,
-      sizeBytes: config.messageSizeBytes,
-    },
+    attempt: 1,
+    record: { ...record, pid: -1, producerEpoch: -1, sequence: -1 },
   });
 }
 
@@ -212,6 +239,7 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     topic: task.topic,
     partition: task.partition,
     traceId: task.record.traceId,
+    attempt: task.attempt,
   };
   const respond = (result: Task<'ProduceResponse'>['result']): void => {
     if (task.acks === '0') return; // nobody is waiting for an answer
@@ -229,7 +257,8 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     respond({ ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });
     return;
   }
-  if (partition.leader === null || partition.leader !== task.broker) {
+  const leader = leaderLog(partition);
+  if (leader === undefined || partition.leader !== task.broker) {
     respond({ ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
     return;
   }
@@ -237,65 +266,95 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     respond({ ok: false, error: 'NOT_ENOUGH_REPLICAS' });
     return;
   }
-  const appended = appendRecord(partition, task.record);
-  ctx.emit({
-    type: 'RecordAppended',
-    topic: task.topic,
-    partition: task.partition,
-    offset: appended.offset,
-    key: appended.key,
-    value: appended.value,
-    producerId: appended.producerId,
-    traceId: appended.traceId,
-  });
-  // Followers waiting in a long poll get the record; with no other replica in the ISR the HW
-  // moves at once (and parked consumer fetches may complete).
-  onLeaderAppended(ctx, partition);
-  onLeaderStateChanged(ctx, topic, partition);
-  if (task.acks === 'all' && partition.highWatermark <= appended.offset) {
+  // Idempotence (ProducerAppendInfo#checkSequence, K8): a duplicate gets its original offset.
+  const check = checkSequence(leader, task.record);
+  if (check.kind === 'error') {
+    respond({ ok: false, error: check.error });
+    return;
+  }
+  let offset: number;
+  if (check.kind === 'duplicate') {
+    offset = check.offset;
+  } else {
+    const appended = appendRecord(partition, task.record);
+    offset = appended.offset;
+    ctx.emit({
+      type: 'RecordAppended',
+      topic: task.topic,
+      partition: task.partition,
+      offset,
+      key: appended.key,
+      value: appended.value,
+      producerId: appended.producerId,
+      traceId: appended.traceId,
+    });
+    // Followers waiting in a long poll get the record; with no other replica in the ISR the HW
+    // moves at once (and parked consumer fetches may complete).
+    onLeaderAppended(ctx, partition);
+    onLeaderStateChanged(ctx, topic, partition);
+  }
+  if (task.acks === 'all' && partition.highWatermark <= offset) {
     parkProduce(
       ctx,
       target,
       { broker: task.broker, topicId: topic.topicId },
-      appended.offset,
+      offset,
       task.timeoutMs,
     );
     return;
   }
-  respond({ ok: true, offset: appended.offset });
+  respond({ ok: true, offset });
+}
+
+type SequenceCheck =
+  | { readonly kind: 'append' }
+  | { readonly kind: 'duplicate'; readonly offset: number }
+  | { readonly kind: 'error'; readonly error: ProduceError };
+
+/**
+ * ProducerAppendInfo#checkSequence and the duplicate check against the last 5 batches (K8):
+ * unknown producer → any sequence; a newer epoch must start at 0; the same epoch needs
+ * lastSeq + 1; a sequence already written (and still remembered) is a duplicate.
+ */
+function checkSequence(leader: ReplicaLog, record: Task<'LeaderAppend'>['record']): SequenceCheck {
+  if (record.pid < 0) return { kind: 'append' };
+  const state = leader.producers.get(record.pid);
+  if (state === undefined) return { kind: 'append' };
+  if (record.producerEpoch < state.epoch) return { kind: 'error', error: 'INVALID_PRODUCER_EPOCH' };
+  if (record.producerEpoch > state.epoch) {
+    return record.sequence === 0
+      ? { kind: 'append' }
+      : { kind: 'error', error: 'OUT_OF_ORDER_SEQUENCE_NUMBER' };
+  }
+  if (record.sequence === state.lastSeq + 1) return { kind: 'append' };
+  const duplicate = state.recent.find((r) => r.seq === record.sequence);
+  if (duplicate !== undefined) return { kind: 'duplicate', offset: duplicate.offset };
+  return { kind: 'error', error: 'OUT_OF_ORDER_SEQUENCE_NUMBER' };
 }
 
 export function handleProduceResponse(ctx: EngineContext, task: Task<'ProduceResponse'>): void {
   const producer = current(ctx, task.producerId, task.incarnation);
   if (producer === undefined) return; // the producer is gone; nobody receives the response
-  const { producerId, topic, partition, traceId } = task;
-  if (task.result.ok) {
-    producer.stats.acked += 1;
-    ctx.state.ackedTraceIds.add(traceId);
-    ctx.emit({
-      type: 'ProduceAcked',
-      producerId,
-      topic,
-      partition,
-      traceId,
-      offset: task.result.offset,
-    });
-  } else {
-    producer.stats.failed += 1;
-    // An InvalidMetadataException makes the client refresh its metadata soon
-    // (Metadata#requestUpdate); NOT_ENOUGH_REPLICAS and timeouts on the broker do not (K7).
-    const error = task.result.error;
-    if (error === 'UNKNOWN_TOPIC_OR_PARTITION' || error === 'NOT_LEADER_OR_FOLLOWER') {
-      producer.metadata.updateRequested = true;
-    }
-    ctx.emit({
-      type: 'ProduceFailed',
-      producerId,
-      topic,
-      partition,
-      traceId,
-      error: task.result.error,
-    });
+  onAttemptResult(ctx, producer, task.traceId, task.attempt, task.result);
+}
+
+/** Producer tasks for the current life of a producer (M4-T7). */
+export function handleProducerTask(
+  ctx: EngineContext,
+  task: Task<'ProducerDrain' | 'ProduceRequestTimeout' | 'ProduceDeliveryTimeout'>,
+): void {
+  const producer = current(ctx, task.producerId, task.incarnation);
+  if (producer === undefined) return;
+  switch (task.type) {
+    case 'ProducerDrain':
+      handleProducerDrain(ctx, producer, task);
+      return;
+    case 'ProduceRequestTimeout':
+      handleProduceRequestTimeout(ctx, producer, task);
+      return;
+    case 'ProduceDeliveryTimeout':
+      handleProduceDeliveryTimeout(ctx, producer, task);
+      return;
   }
 }
 

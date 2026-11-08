@@ -110,8 +110,6 @@ export type ExtraFieldMeta = Extract<FieldMeta, { kind: 'not-modelled' }> & {
 
 type MetaTable = { readonly [K in ComponentKind]: { readonly [F in ConfigField<K>]: FieldMeta } };
 
-const RETRIES_LATER = 'Producer retries are simulated later in M4 (task T7).';
-
 const STATIC_BROKER_CONFIG =
   'A static broker config: Kafka reads it only when the broker starts. Set it in the level or scene.';
 
@@ -245,7 +243,7 @@ export const FIELD_META = {
       // Default "all" since Kafka 3.0 (KIP-679).
       kafkaDefault: { value: 'all' },
       control: { type: 'enum', options: AcksSchema.options },
-      help: 'How many replicas must have a record before the send counts as done: 0 = do not wait, 1 = the leader, all = every in-sync replica. With one broker, 1 and all behave the same until M4.',
+      help: 'How many replicas must have a record before the send counts as done: 0 = do not wait, 1 = the leader, all = every in-sync replica (and at least min.insync.replicas of them).',
     },
     batchSize: {
       label: 'Batch size',
@@ -274,9 +272,8 @@ export const FIELD_META = {
     retries: {
       label: 'Retries',
       kafkaName: 'retries',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: 2_147_483_647 },
-      arrives: 'M4',
       control: { type: 'int' },
       help: 'How often a failed send is retried. The default is effectively unlimited: delivery.timeout.ms ends the retries first.',
     },
@@ -287,7 +284,6 @@ export const FIELD_META = {
       kafkaDefault: { value: 120_000 },
       control: { type: 'int', unit: 'ms' },
       help: 'The longest send() may take to report success or failure, retries included.',
-      readOnly: RETRIES_LATER,
     },
     requestTimeoutMs: {
       label: 'Request timeout',
@@ -296,23 +292,20 @@ export const FIELD_META = {
       kafkaDefault: { value: 30_000 },
       control: { type: 'int', unit: 'ms' },
       help: 'How long the producer waits for the answer to one request before it retries it.',
-      readOnly: RETRIES_LATER,
     },
     retryBackoffMs: {
       label: 'Retry backoff',
       kafkaName: 'retry.backoff.ms',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: 100 },
-      arrives: 'M4',
       control: { type: 'int', unit: 'ms' },
       help: 'The wait before the first retry. Later retries wait longer, up to retry.backoff.max.ms.',
     },
     retryBackoffMaxMs: {
       label: 'Retry backoff max',
       kafkaName: 'retry.backoff.max.ms',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: 1000 },
-      arrives: 'M4',
       control: { type: 'int', unit: 'ms' },
       help: 'The longest wait between retries (KIP-580: the backoff doubles each time, with some jitter).',
     },
@@ -323,7 +316,7 @@ export const FIELD_META = {
       // Default true since Kafka 3.0 (KIP-679).
       kafkaDefault: { value: true },
       control: { type: 'boolean' },
-      help: 'The broker drops duplicates when the producer retries a send, so each record is written once per partition.',
+      help: 'The broker drops duplicates when the producer retries a send, so each record is written once per partition. As in Kafka 4.x, it applies only with acks=all: with acks=0 or 1 the producer runs without it, and a retry can write a record twice.',
       readOnly: 'Fixed to true here; turning it off arrives with the v0.4 patterns.',
     },
   },
