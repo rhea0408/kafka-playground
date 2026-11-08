@@ -40,7 +40,9 @@ export function partitionFor(groupId: string, partitions = OFFSETS_TOPIC_PARTITI
 export function coordinatorFor(ctx: EngineContext, groupId: string): string | null {
   const { state } = ctx;
   if (state.offsetsTopicLeaders === null) {
-    if (state.brokers.size === 0) return null;
+    // No broker can take a replica (none registered, or all shutting down): the topic can't be
+    // created yet, so FindCoordinator answers COORDINATOR_NOT_AVAILABLE (K10).
+    if (placementBrokers(state).length === 0) return null;
     // TODO(M4-T8): a real replicated internal topic; for now only the leaders are kept.
     state.offsetsTopicLeaders = placeReplicas(
       OFFSETS_TOPIC_PARTITIONS,

@@ -46,6 +46,7 @@ function harness(delayMs = 3000) {
     config: BrokerSchema.parse({ kind: 'broker', id: 'b1', groupInitialRebalanceDelayMs: delayMs }),
     status: 'running',
     incarnation: 0,
+    brokerEpoch: 1,
   });
   ctx.state.topics.set('t', {
     topicId: 1,

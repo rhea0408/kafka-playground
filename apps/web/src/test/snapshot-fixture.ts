@@ -137,6 +137,7 @@ export function fixtureSnapshot(overrides: Partial<EngineSnapshot> = {}): Engine
       {
         config: parse({ kind: 'broker', id: 'b1' }) as Broker,
         status: 'running',
+        fenced: false,
         partitionsLed: 2,
         partitionsFollowed: 0,
       },

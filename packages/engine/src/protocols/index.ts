@@ -22,7 +22,18 @@ import {
   handleMemberSessionExpire,
 } from './group-coordinator.ts';
 import { handleLeaderAppend, handleProduceResponse, handleProducerTick } from './produce.ts';
-import { handleAlterPartitionRequest } from './controller.ts';
+import {
+  handleAlterPartitionRequest,
+  handleBrokerHeartbeatRequest,
+  handleBrokerHeartbeatTimer,
+  handleBrokerRegistrationRequest,
+  handleControllerSessionExpire,
+  handlePreferredLeaderCheck,
+} from './controller.ts';
+import {
+  handleBrokerRegistrationResponse,
+  handleBrokerShutdownAllowed,
+} from '../commands/broker-lifecycle.ts';
 import {
   handleAlterPartitionResponse,
   handleDelayedProduceExpire,
@@ -77,6 +88,27 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
       return;
     case 'AlterPartitionResponse':
       handleAlterPartitionResponse(ctx, task);
+      return;
+    case 'BrokerHeartbeatTimer':
+      handleBrokerHeartbeatTimer(ctx, task);
+      return;
+    case 'BrokerHeartbeatRequest':
+      handleBrokerHeartbeatRequest(ctx, task);
+      return;
+    case 'BrokerShutdownAllowed':
+      handleBrokerShutdownAllowed(ctx, task);
+      return;
+    case 'BrokerRegistrationRequest':
+      handleBrokerRegistrationRequest(ctx, task);
+      return;
+    case 'BrokerRegistrationResponse':
+      handleBrokerRegistrationResponse(ctx, task);
+      return;
+    case 'ControllerSessionExpire':
+      handleControllerSessionExpire(ctx, task);
+      return;
+    case 'PreferredLeaderCheck':
+      handlePreferredLeaderCheck(ctx);
       return;
     case 'DelayedProduceExpire':
       handleDelayedProduceExpire(ctx, task);

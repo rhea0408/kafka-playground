@@ -92,10 +92,12 @@ describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS 
             partitions.set(`${t.config.id}-${String(p.index)}`, p);
           }
         }
+        // Not against the current HW: after a leader change the new leader's HW may lag behind
+        // the old one's until its followers fetch (K5, M4-T5), so a commit made under the old
+        // leader can be above it for a while. It never exceeds what was ever appended.
         for (const g of snap.groups) {
           for (const c of g.committed) {
-            const p = partitions.get(tp(c));
-            if (p !== undefined) expect(c.offset).toBeLessThanOrEqual(p.highWatermark);
+            if (partitions.has(tp(c))) expect(c.offset).toBeLessThanOrEqual(hw.get(tp(c)) ?? 0);
           }
         }
       }),

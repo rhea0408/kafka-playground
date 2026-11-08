@@ -16,6 +16,7 @@
  */
 
 import type { EngineContext } from '../model/context.ts';
+import { isAlive } from '../model/state.ts';
 import { bytesAvailable, readRecords, type PartitionState } from '../model/partition.ts';
 import type {
   EngineTask,
@@ -28,6 +29,8 @@ type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
 /** A FetchRequest reaches the leader: answer now, or park it for up to maxWaitMs. */
 export function handleFetchRequest(ctx: EngineContext, task: FetchRequestTask): void {
+  const broker = ctx.state.brokers.get(task.broker);
+  if (broker === undefined || !isAlive(broker.status)) return; // no process; see consume.ts
   if (task.maxWaitMs === 0 || canComplete(ctx, task)) {
     respond(ctx, task);
     return;
@@ -85,7 +88,7 @@ function readPartitions(
   task: FetchRequestTask,
   withRecords: boolean,
 ): PartitionRead[] {
-  return task.partitions.map((p) => readFetchPartition(ctx, p, withRecords));
+  return task.partitions.map((p) => readFetchPartition(ctx, p, withRecords, task.broker));
 }
 
 /** The leader's answer for one partition of a consumer fetch, read now. */
@@ -93,6 +96,7 @@ export function readFetchPartition(
   ctx: EngineContext,
   p: FetchPartition,
   withRecords = true,
+  broker?: string,
 ): PartitionRead {
   const topic = ctx.state.topics.get(p.topic);
   const partition = topic?.partitions[p.partition];
@@ -103,6 +107,10 @@ export function readFetchPartition(
   // FetchRequest v13+ carries topic IDs; the broker answers UNKNOWN_TOPIC_ID on a mismatch).
   if (topic.topicId !== p.topicId) {
     return { ...p, error: 'UNKNOWN_TOPIC_ID', records: [], bytes: 0 };
+  }
+  // Only the leader serves consumer fetches (no follower fetching, KIP-392, here).
+  if (broker !== undefined && partition.leader !== broker) {
+    return { ...p, error: 'NOT_LEADER_OR_FOLLOWER', records: [], bytes: 0 };
   }
   // Valid fetch offsets run from the log start offset to the log end offset (LocalLog#read,
   // K5). An offset between the HW and the LEO is valid but returns nothing yet: those records
@@ -128,4 +136,26 @@ function respond(ctx: EngineContext, task: FetchRequestTask): void {
     broker: task.broker,
     partitions,
   });
+}
+
+/**
+ * A partition's leader moved: consumer fetches parked at the old leader for it complete now (they
+ * get NOT_LEADER_OR_FOLLOWER for that partition), and fetches parked anywhere else are left alone.
+ */
+export function onLeaderMovedForConsumers(ctx: EngineContext, partition: PartitionState): void {
+  for (const [fetchId, parked] of ctx.state.parkedFetches) {
+    const touches = parked.partitions.some(
+      (p) => p.topic === partition.topic && p.partition === partition.index,
+    );
+    if (!touches || parked.broker === partition.leader) continue;
+    ctx.state.parkedFetches.delete(fetchId);
+    respond(ctx, parked);
+  }
+}
+
+/** A broker process stopped: consumer fetches parked there vanish with it. */
+export function onBrokerStoppedForConsumers(ctx: EngineContext, brokerId: string): void {
+  for (const [fetchId, parked] of ctx.state.parkedFetches) {
+    if (parked.broker === brokerId) ctx.state.parkedFetches.delete(fetchId);
+  }
 }

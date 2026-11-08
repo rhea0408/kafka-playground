@@ -23,13 +23,13 @@ import {
 import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
+import { registerNewBroker } from '../protocols/controller.ts';
 import {
-  ensureReplicaFetcher,
-  onBrokerStopped,
   onTopicRemovedReplication,
   scheduleIsrExpiration,
   startFollowers,
 } from '../protocols/replication.ts';
+import { brokerLifecycle } from './broker-lifecycle.ts';
 import { updateConfig } from './update-config.ts';
 import type { Command, LoggedCommand } from './index.ts';
 
@@ -93,7 +93,9 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
         config: component,
         status: 'running',
         incarnation: ++state.counters.brokerIncarnation,
+        brokerEpoch: -1,
       });
+      registerNewBroker(ctx, component.id);
       scheduleIsrExpiration(ctx, component.id);
       break;
     case 'topic': {
@@ -137,8 +139,12 @@ function checkAdd(ctx: EngineContext, component: Component): string | undefined 
     if (component.replicationFactor > brokers) {
       return `Replication factor ${String(component.replicationFactor)} is larger than the number of brokers (${String(brokers)}). Add a broker first.`;
     }
+    const usable = placementBrokers(state);
+    if (component.replicationFactor > usable.length) {
+      return placementTooSmall(component.replicationFactor, usable.length);
+    }
     // StripedReplicaPlacer needs an unfenced broker for each partition's leader.
-    if (!placementBrokers(state).some((b) => !b.fenced)) {
+    if (!usable.some((b) => !b.fenced)) {
       return 'INVALID_REPLICATION_FACTOR: no broker is running, so the partitions would have no leader. Restart a broker first.';
     }
   }
@@ -285,49 +291,9 @@ function consumerLifecycle(
 }
 
 /**
- * KillBroker (crash), StopBroker (controlled shutdown) and RestartBroker (the process comes back
- * with its log on disk), M4 Q3. What the controller, the replicas and the clients do about it
- * follows in M4-T5–T7.
+ * StripedReplicaPlacer's InvalidReplicationFactorException: brokers in controlled shutdown don't
+ * count as usable for placement (K13).
  */
-function brokerLifecycle(
-  ctx: EngineContext,
-  command: Extract<Command, { type: 'KillBroker' | 'StopBroker' | 'RestartBroker' }>,
-): ApplyResult {
-  const { id } = command;
-  const broker = ctx.state.brokers.get(id);
-  if (broker === undefined) return reject(`There is no broker with id "${id}".`);
-  switch (command.type) {
-    case 'RestartBroker':
-      if (broker.status === 'running') return reject(`Broker ${id} is already running.`);
-      broker.status = 'running';
-      broker.incarnation = ++ctx.state.counters.brokerIncarnation;
-      scheduleIsrExpiration(ctx, id);
-      ctx.emit({ type: 'BrokerStarted', brokerId: id });
-      // Its replica fetchers start again for every partition it follows (re-registration with
-      // the controller and truncation come in M4-T5/T6).
-      for (const topic of ctx.state.topics.values()) {
-        for (const partition of topic.partitions) {
-          const { leader } = partition;
-          if (leader !== null && leader !== id && partition.replicas.includes(id)) {
-            ensureReplicaFetcher(ctx, id, leader);
-          }
-        }
-      }
-      break;
-    case 'KillBroker':
-    case 'StopBroker':
-      if (broker.status !== 'running') {
-        return reject(`Broker ${id} is not running (${broker.status}).`);
-      }
-      broker.status = command.type === 'KillBroker' ? 'crashed' : 'stopped';
-      broker.incarnation = ++ctx.state.counters.brokerIncarnation;
-      onBrokerStopped(ctx, id);
-      ctx.emit({
-        type: 'BrokerStopped',
-        brokerId: id,
-        reason: command.type === 'KillBroker' ? 'crash' : 'shutdown',
-      });
-      break;
-  }
-  return { ok: true, logged: command };
+export function placementTooSmall(replicationFactor: number, usable: number): string {
+  return `INVALID_REPLICATION_FACTOR: The target replication factor of ${String(replicationFactor)} cannot be reached because only ${String(usable)} broker(s) are registered and not shutting down.`;
 }

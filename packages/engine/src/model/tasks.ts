@@ -76,6 +76,11 @@ export type ReplicaFetchResult = ReplicaFetchPartition &
         /** The leader's records from the fetch offset to its LEO. */
         readonly records: readonly LogRecord[];
         readonly highWatermark: number;
+        /**
+         * KIP-320: the follower's log diverges from the leader's at its last epoch. `endOffset`
+         * is where that epoch ends on the leader; the follower truncates and fetches again.
+         */
+        readonly divergingEpoch: { readonly epoch: number; readonly endOffset: number } | null;
       }
     | {
         readonly error:
@@ -209,6 +214,42 @@ export type EngineTask =
         | 'INELIGIBLE_REPLICA'
         | 'UNKNOWN_TOPIC_OR_PARTITION';
     }
+  /** A broker's heartbeat timer (broker.heartbeat.interval.ms): it sends BrokerHeartbeat. */
+  | { readonly type: 'BrokerHeartbeatTimer'; readonly broker: string; readonly incarnation: number }
+  /** A broker's heartbeat reaches the controller (BrokerHeartbeatRequest). */
+  | {
+      readonly type: 'BrokerHeartbeatRequest';
+      readonly broker: string;
+      readonly incarnation: number;
+      readonly brokerEpoch: number;
+      /** Controlled shutdown: the broker asks to shut down (K11). */
+      readonly wantShutDown: boolean;
+    }
+  /** The controller tells a broker in controlled shutdown that it may stop now (K11). */
+  | {
+      readonly type: 'BrokerShutdownAllowed';
+      readonly broker: string;
+      readonly incarnation: number;
+    }
+  /** A (re)started broker registers with the controller (BrokerRegistrationRequest). */
+  | {
+      readonly type: 'BrokerRegistrationRequest';
+      readonly broker: string;
+      readonly incarnation: number;
+      /** The epoch of its previous life; matches the stored one only after a clean shutdown. */
+      readonly previousBrokerEpoch: number;
+    }
+  /** The controller's registration answer reaches the broker, with its new broker epoch. */
+  | {
+      readonly type: 'BrokerRegistrationResponse';
+      readonly broker: string;
+      readonly incarnation: number;
+      readonly brokerEpoch: number;
+    }
+  /** broker.session.timeout.ms passed since the broker's last heartbeat (if the token is current). */
+  | { readonly type: 'ControllerSessionExpire'; readonly broker: string; readonly token: number }
+  /** The controller's preferred-leader check (leader.imbalance.check.interval.seconds). */
+  | { readonly type: 'PreferredLeaderCheck' }
   /** A parked acks=all produce reached its request timeout. */
   | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */
@@ -369,4 +410,9 @@ export type ProduceError =
   | 'REQUEST_TIMED_OUT';
 
 /** Per-partition fetch errors (Kafka protocol error codes). */
-export type FetchError = 'UNKNOWN_TOPIC_OR_PARTITION' | 'UNKNOWN_TOPIC_ID' | 'OFFSET_OUT_OF_RANGE';
+export type FetchError =
+  | 'UNKNOWN_TOPIC_OR_PARTITION'
+  | 'UNKNOWN_TOPIC_ID'
+  | 'OFFSET_OUT_OF_RANGE'
+  /** The broker no longer leads the partition (M4-T5). */
+  | 'NOT_LEADER_OR_FOLLOWER';

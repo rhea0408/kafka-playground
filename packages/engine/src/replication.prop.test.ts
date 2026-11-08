@@ -102,5 +102,38 @@ describe(
         { numRuns: NUM_RUNS },
       );
     });
+
+    it('leader ∈ ISR (or none), ISR ⊆ replicas, ELR disjoint from the ISR; epochs only increase', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context, events } = run(seed, topology, steps);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              for (const b of p.isr) expect(p.replicas).toContain(b);
+              for (const b of p.elr) {
+                expect(p.replicas).toContain(b);
+                expect(p.isr).not.toContain(b);
+              }
+              if (p.leader !== null) expect(p.isr).toContain(p.leader);
+            }
+          }
+          const epochs = new Map<string, number>();
+          for (const e of events) {
+            if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') {
+              for (const k of [...epochs.keys()])
+                if (k.startsWith(`${e.component.id}#`)) epochs.delete(k);
+            }
+            if (e.type === 'LeaderElected' || e.type === 'IsrShrunk' || e.type === 'IsrExpanded') {
+              const key = `${e.topic}#${String(e.partition)}`;
+              const epoch = e.type === 'LeaderElected' ? e.leaderEpoch : e.partitionEpoch;
+              const k2 = `${key}:${e.type === 'LeaderElected' ? 'leader' : 'partition'}`;
+              expect(epoch).toBeGreaterThan(epochs.get(k2) ?? -1);
+              epochs.set(k2, epoch);
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
   },
 );

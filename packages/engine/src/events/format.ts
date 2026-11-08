@@ -75,6 +75,16 @@ export function describeEvent(e: EngineEvent): string {
       return `${partitionName(e.topic, e.partition)}  removed ${e.removed.join(' ')}  isr=[${e.isr.join(' ')}]${e.elr.length > 0 ? `  elr=[${e.elr.join(' ')}]` : ''}`;
     case 'IsrExpanded':
       return `${partitionName(e.topic, e.partition)}  added ${e.added.join(' ')}  isr=[${e.isr.join(' ')}]`;
+    case 'BrokerFenced':
+      return `${e.brokerId}  ${e.reason}`;
+    case 'BrokerUnfenced':
+      return e.brokerId;
+    case 'LeaderElected':
+      return `${partitionName(e.topic, e.partition)}  leader ${e.previousLeader ?? 'none'} → ${e.leader}  epoch=${String(e.leaderEpoch)}  ${e.reason}`;
+    case 'PartitionOffline':
+      return `${partitionName(e.topic, e.partition)}  no leader (was ${e.previousLeader})  isr=[${e.isr.join(' ')}]  elr=[${e.elr.join(' ')}]`;
+    case 'RecordsTruncated':
+      return `${e.broker}  ${partitionName(e.topic, e.partition)}  offsets ${String(e.from)}–${String(e.to - 1)} deleted${e.acked > 0 ? `  ${String(e.acked)} acknowledged record(s) lost` : ''}`;
     case 'BrokerStarted':
       return e.brokerId;
     case 'BrokerStopped':
