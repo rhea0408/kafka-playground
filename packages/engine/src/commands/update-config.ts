@@ -165,24 +165,17 @@ function addPartitions(topic: TopicState, count: number, brokerIds: readonly str
   }
 }
 
-/** The Kafka config name of a broker field, for messages. */
+/** The Kafka config names of the broker fields, for messages. */
+const KAFKA_BROKER_NAMES: Readonly<Record<string, string>> = {
+  rack: 'broker.rack',
+  groupInitialRebalanceDelayMs: 'group.initial.rebalance.delay.ms',
+  replicaLagTimeMaxMs: 'replica.lag.time.max.ms',
+  replicaFetchWaitMaxMs: 'replica.fetch.wait.max.ms',
+  offsetsTopicReplicationFactor: 'offsets.topic.replication.factor',
+  autoLeaderRebalanceEnable: 'auto.leader.rebalance.enable',
+  leaderImbalanceCheckIntervalSeconds: 'leader.imbalance.check.interval.seconds',
+};
+
 function kafkaBrokerName(field: string | undefined): string {
-  switch (field) {
-    case 'rack':
-      return 'broker.rack';
-    case 'groupInitialRebalanceDelayMs':
-      return 'group.initial.rebalance.delay.ms';
-    case 'replicaLagTimeMaxMs':
-      return 'replica.lag.time.max.ms';
-    case 'replicaFetchWaitMaxMs':
-      return 'replica.fetch.wait.max.ms';
-    case 'offsetsTopicReplicationFactor':
-      return 'offsets.topic.replication.factor';
-    case 'autoLeaderRebalanceEnable':
-      return 'auto.leader.rebalance.enable';
-    case 'leaderImbalanceCheckIntervalSeconds':
-      return 'leader.imbalance.check.interval.seconds';
-    default:
-      return 'This setting';
-  }
+  return (field === undefined ? undefined : KAFKA_BROKER_NAMES[field]) ?? 'This setting';
 }
