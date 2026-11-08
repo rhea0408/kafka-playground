@@ -59,6 +59,7 @@ import { createGroup } from '../model/group.ts';
 import { partitionName, type LogRecord, type PartitionState } from '../model/partition.ts';
 import {
   createClientGroupState,
+  isAlive,
   topicsOfConsumer,
   type ConsumerState,
   type GroupState,
@@ -434,7 +435,7 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
   }
 
   const returned = drainBuffer(ctx, consumer);
-  sendFetches(ctx, consumer, assigned);
+  const unreachable = sendFetches(ctx, consumer, assigned);
   if (returned.length > 0) {
     consumer.inPoll = false;
     consumer.batch = { records: returned, startedAt: now };
@@ -453,7 +454,14 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
   } else {
     // Blocked in poll(): a fetch response wakes it, and so does the auto-commit deadline.
     consumer.inPoll = true;
-    if (config.enableAutoCommit && stable) {
+    if (unreachable) {
+      // A partition's leader can't be reached: look again after retry.backoff.ms.
+      const autoCommitAt =
+        config.enableAutoCommit && stable
+          ? consumer.lastAutoCommitAt + config.autoCommitIntervalMs
+          : Number.POSITIVE_INFINITY;
+      schedulePoll(ctx, consumer, Math.min(now + RETRY_BACKOFF_MS, autoCommitAt));
+    } else if (config.enableAutoCommit && stable) {
       schedulePoll(ctx, consumer, consumer.lastAutoCommitAt + config.autoCommitIntervalMs);
     } else {
       consumer.pollToken += 1; // nothing else is due; a stale wake-up must not run
@@ -554,9 +562,10 @@ function detectDuplicateOrSkip(
  * no fetch in flight to their leader. The partition order rotates by one each time, so with
  * max.poll.records smaller than a fetch, no partition is always drained last.
  */
-function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assigned[]): void {
+function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assigned[]): boolean {
+  let unreachable = false;
   const count = assigned.length;
-  if (count === 0) return;
+  if (count === 0) return false;
   const first = consumer.nextPartitionIndex % count;
   const byLeader = new Map<string, FetchPartition[]>();
   for (let i = 0; i < count; i++) {
@@ -570,9 +579,15 @@ function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assi
       continue;
     }
     const position = consumer.positions.get(a.key);
-    // TODO(M4-T7): the client's metadata decides where to fetch; an offline partition is skipped.
+    // TODO(M4-T7): the client's metadata decides where to fetch. No leader, or a leader whose
+    // process is down (the connection is refused): nothing is sent, and poll() retries after
+    // retry.backoff.ms (NetworkClient: the node is not ready).
     const { leader } = partition;
-    if (leader === null) continue;
+    const leaderBroker = leader === null ? undefined : ctx.state.brokers.get(leader);
+    if (leader === null || leaderBroker === undefined || !isAlive(leaderBroker.status)) {
+      unreachable = true;
+      continue;
+    }
     if (position === undefined || consumer.fetchesInFlight.has(leader)) continue;
     if (consumer.buffer.some((chunk) => chunk.key === a.key)) continue;
     const list = byLeader.get(leader) ?? [];
@@ -598,6 +613,7 @@ function sendFetches(ctx: EngineContext, consumer: ConsumerState, assigned: Assi
     });
   }
   if (byLeader.size > 0) consumer.nextPartitionIndex = (first + 1) % count;
+  return unreachable;
 }
 
 /** A fetch response reaches the consumer: buffer its records; wake poll() if it is waiting. */
@@ -613,6 +629,8 @@ export function handleFetchResponse(ctx: EngineContext, task: Task<'FetchRespons
     const { topicId } = result;
     switch (result.error) {
       case 'UNKNOWN_TOPIC_OR_PARTITION':
+      case 'NOT_LEADER_OR_FOLLOWER':
+        // InvalidMetadataException: refresh, and fetch again from the new leader (K7).
         consumer.metadata.updateRequested = true;
         continue;
       case 'UNKNOWN_TOPIC_ID':

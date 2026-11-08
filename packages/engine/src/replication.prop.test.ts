@@ -102,5 +102,70 @@ describe(
         { numRuns: NUM_RUNS },
       );
     });
+
+    it('leader ∈ ISR (or none), ISR ⊆ replicas, ELR disjoint from the ISR; epochs only increase', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context, events } = run(seed, topology, steps);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              for (const b of p.isr) expect(p.replicas).toContain(b);
+              for (const b of p.elr) {
+                expect(p.replicas).toContain(b);
+                expect(p.isr).not.toContain(b);
+              }
+              if (p.leader !== null) expect(p.isr).toContain(p.leader);
+            }
+          }
+          const epochs = new Map<string, number>();
+          for (const e of events) {
+            if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') {
+              for (const k of [...epochs.keys()])
+                if (k.startsWith(`${e.component.id}#`)) epochs.delete(k);
+            }
+            if (e.type === 'LeaderElected' || e.type === 'IsrShrunk' || e.type === 'IsrExpanded') {
+              const key = `${e.topic}#${String(e.partition)}`;
+              const epoch = e.type === 'LeaderElected' ? e.leaderEpoch : e.partitionEpoch;
+              const k2 = `${key}:${e.type === 'LeaderElected' ? 'leader' : 'partition'}`;
+              expect(epoch).toBeGreaterThan(epochs.get(k2) ?? -1);
+              epochs.set(k2, epoch);
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
+    it('acks=all with effective minISR ≥ 2 and no unclean election never loses an acknowledged record', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context, events } = run(seed, topology, steps);
+          const acksAll = new Set<string>();
+          const acked = new Set<string>();
+          for (const e of events) {
+            if (e.type === 'RecordProduced' && e.acks === 'all') acksAll.add(e.traceId);
+            if (e.type === 'ProduceAcked') acked.add(e.traceId);
+            if (e.type !== 'RecordsTruncated') continue;
+            const topic = context.state.topics.get(e.topic);
+            const p = topic?.partitions[e.partition];
+            if (
+              topic === undefined ||
+              p === undefined ||
+              topic.config.uncleanLeaderElectionEnable
+            ) {
+              continue;
+            }
+            if (Math.min(topic.config.minInsyncReplicas, p.replicas.length) < 2) continue;
+            for (const t of e.traceIds) {
+              expect({ lost: t, acked: acked.has(t) && acksAll.has(t) }).toEqual({
+                lost: t,
+                acked: false,
+              });
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
   },
 );

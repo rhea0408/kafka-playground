@@ -178,13 +178,23 @@ export function leaderLog(partition: PartitionState): ReplicaLog | undefined {
 }
 
 /** Appends a record to a replica's log, keeping its leader-epoch cache in step. */
+/**
+ * LeaderEpochFileCache#assign with maybeTruncateNonMonotonicEntries: a new epoch starting at
+ * `startOffset` replaces later entries that start at or after it.
+ */
+export function assignEpoch(replica: ReplicaLog, epoch: number, startOffset: number): void {
+  const last = replica.epochs[replica.epochs.length - 1];
+  if (last !== undefined && last.epoch >= epoch) return;
+  while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= startOffset) {
+    replica.epochs.pop();
+  }
+  replica.epochs.push({ epoch, startOffset });
+}
+
 export function appendToReplica(replica: ReplicaLog, record: LogRecord): void {
   replica.log.push(record);
   replica.logEndOffset = record.offset + 1;
-  const last = replica.epochs[replica.epochs.length - 1];
-  if (last === undefined || last.epoch < record.leaderEpoch) {
-    replica.epochs.push({ epoch: record.leaderEpoch, startOffset: record.offset });
-  }
+  assignEpoch(replica, record.leaderEpoch, record.offset);
 }
 
 /**
@@ -208,6 +218,45 @@ export function appendRecord(
   appendToReplica(leader, appended);
   // The HW moves only once the in-sync followers have the record (protocols/replication.ts).
   return appended;
+}
+
+/**
+ * LeaderEpochFileCache#endOffsetFor: the largest epoch ≤ `epoch` this replica knows, and where it
+ * ends (the start of the next epoch, or the LEO for the latest one). (-1, logStartOffset) when it
+ * knows no epoch that old.
+ */
+export function endOffsetForEpoch(
+  replica: ReplicaLog,
+  epoch: number,
+): { readonly epoch: number; readonly endOffset: number } {
+  let found = -1;
+  for (let i = 0; i < replica.epochs.length; i++) {
+    if ((replica.epochs[i]?.epoch ?? Infinity) <= epoch) found = i;
+  }
+  if (found === -1) return { epoch: -1, endOffset: replica.logStartOffset };
+  const next = replica.epochs[found + 1];
+  return {
+    epoch: replica.epochs[found]?.epoch ?? -1,
+    endOffset: next === undefined ? replica.logEndOffset : next.startOffset,
+  };
+}
+
+/** Removes every record at `offset` and above (truncation), with their epoch cache entries. */
+export function truncateReplica(replica: ReplicaLog, offset: number): LogRecord[] {
+  // UnifiedLog#truncateTo trims the epoch cache even when no record goes (an epoch whose leader
+  // appended nothing would otherwise make the follower diverge for ever).
+  while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= offset) {
+    replica.epochs.pop();
+  }
+  if (offset >= replica.logEndOffset) return [];
+  const from = Math.max(offset, replica.logStartOffset);
+  const removed = replica.log.splice(from - replica.logStartOffset);
+  replica.logEndOffset = from;
+  replica.highWatermark = Math.min(replica.highWatermark, from);
+  while ((replica.epochs[replica.epochs.length - 1]?.startOffset ?? -1) >= from) {
+    replica.epochs.pop();
+  }
+  return removed;
 }
 
 /**

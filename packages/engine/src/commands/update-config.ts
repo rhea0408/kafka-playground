@@ -38,9 +38,10 @@ import { createPartition } from '../model/partition.ts';
 import { placementBrokers, type TopicState } from '../model/state.ts';
 import { placeReplicas } from '../model/placement.ts';
 import { closeConsumer, runConsumer } from '../protocols/consume.ts';
+import { electLeaderless } from '../protocols/controller.ts';
 import { restartSchedule } from '../protocols/produce.ts';
 import { startFollowers } from '../protocols/replication.ts';
-import { kindOf, reject, type ApplyResult } from './apply.ts';
+import { kindOf, placementTooSmall, reject, type ApplyResult } from './apply.ts';
 import type { Command } from './index.ts';
 
 type UpdateConfigCommand = Extract<Command, { type: 'UpdateConfig' }>;
@@ -118,11 +119,21 @@ function apply(ctx: EngineContext, before: Component, after: Component): string 
       if (after.replicationFactor !== before.replicationFactor) {
         return 'The replication factor of an existing topic is changed by reassigning partitions, not through its config. Partition reassignment arrives in v0.2.';
       }
-      if (after.partitions > current && !placementBrokers(state).some((b) => !b.fenced)) {
+      const usable = placementBrokers(state);
+      if (after.partitions > current && after.replicationFactor > usable.length) {
+        return placementTooSmall(after.replicationFactor, usable.length);
+      }
+      if (after.partitions > current && !usable.some((b) => !b.fenced)) {
         return 'INVALID_REPLICATION_FACTOR: no broker is running, so the new partitions would have no leader.';
       }
       addPartitions(ctx, topic, after.partitions);
       topic.config = after;
+      // unclean.leader.election.enable turned on: offline partitions may elect at once (K14:
+      // Kafka's periodic check runs every unclean.leader.election.interval.ms, 5 min; see
+      // simplifications).
+      if (after.uncleanLeaderElectionEnable && !before.uncleanLeaderElectionEnable) {
+        electLeaderless(ctx, after.id);
+      }
       return undefined;
     }
     case 'producer': {

@@ -27,6 +27,7 @@ import type { KeyStrategy } from '@kp/schema';
 import type { Rng } from '../core/rng.ts';
 import type { EngineContext } from '../model/context.ts';
 import { appendRecord } from '../model/partition.ts';
+import { canServe } from './controller.ts';
 import {
   effectiveMinIsr,
   onLeaderAppended,
@@ -36,7 +37,7 @@ import {
   type ProduceTarget,
 } from './replication.ts';
 import { createClientMetadata, knownPartitionCount, refreshIfStale } from './metadata.ts';
-import { topicsOfProducer, type ProducerState, type TopicState } from '../model/state.ts';
+import { isAlive, topicsOfProducer, type ProducerState, type TopicState } from '../model/state.ts';
 import type { EngineTask } from '../model/tasks.ts';
 import {
   createStickyState,
@@ -164,6 +165,7 @@ export function sendRecord(
   });
   if (config.acks === '0') {
     producer.stats.acked += 1;
+    ctx.state.ackedTraceIds.add(traceId);
     ctx.emit({
       type: 'ProduceAcked',
       producerId: config.id,
@@ -216,7 +218,12 @@ export function handleLeaderAppend(ctx: EngineContext, task: Task<'LeaderAppend'
     sendProduceResponse(ctx, target, result);
   };
   const broker = ctx.state.brokers.get(task.broker);
-  if (broker?.status !== 'running') return; // no process to answer; the producer times out (T7)
+  if (broker === undefined || !isAlive(broker.status)) return; // no process to answer (T7)
+  if (!canServe(ctx, task.broker)) {
+    // A restarted broker that is not registered and unfenced yet serves nothing.
+    respond({ ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
+    return;
+  }
   if (topic === undefined || partition === undefined) {
     // The topic was deleted while the request was in flight.
     respond({ ok: false, error: 'UNKNOWN_TOPIC_OR_PARTITION' });
@@ -264,6 +271,7 @@ export function handleProduceResponse(ctx: EngineContext, task: Task<'ProduceRes
   const { producerId, topic, partition, traceId } = task;
   if (task.result.ok) {
     producer.stats.acked += 1;
+    ctx.state.ackedTraceIds.add(traceId);
     ctx.emit({
       type: 'ProduceAcked',
       producerId,

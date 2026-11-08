@@ -267,6 +267,57 @@ export type EngineEventPayload =
       readonly isr: readonly string[];
       readonly partitionEpoch: number;
     }
+  /**
+   * The controller fenced a broker: it heard no heartbeat for broker.session.timeout.ms
+   * (`session-timeout`, after a crash), or the broker finished a controlled shutdown
+   * (`controlled-shutdown`). A fenced broker can't lead or be in an ISR (M4-T5).
+   */
+  | {
+      readonly type: 'BrokerFenced';
+      readonly brokerId: string;
+      readonly reason: 'session-timeout' | 'controlled-shutdown';
+    }
+  /** A registered broker heartbeated and the controller unfenced it (M4-T5). */
+  | { readonly type: 'BrokerUnfenced'; readonly brokerId: string }
+  /**
+   * The controller elected a new leader for a partition (M4-T5). `initial`: a new partition;
+   * `failover`: the old leader was fenced; `controlled-shutdown`: it was shutting down;
+   * `preferred`: back to the preferred replica; `unclean`: an out-of-sync replica (data may be
+   * lost) or KIP-966's last known leader after an unclean shutdown.
+   */
+  | {
+      readonly type: 'LeaderElected';
+      readonly topic: string;
+      readonly partition: number;
+      readonly leader: string;
+      readonly previousLeader: string | null;
+      readonly leaderEpoch: number;
+      readonly reason: 'initial' | 'failover' | 'controlled-shutdown' | 'preferred' | 'unclean';
+    }
+  /** A partition lost its leader and no replica may lead: it is offline (M4-T5). */
+  | {
+      readonly type: 'PartitionOffline';
+      readonly topic: string;
+      readonly partition: number;
+      readonly previousLeader: string;
+      readonly isr: readonly string[];
+      readonly elr: readonly string[];
+    }
+  /**
+   * A follower deleted records the leader doesn't have (its log diverged after a leader change):
+   * offsets `from` up to (not including) `to`. `acked` counts the deleted records whose producer
+   * had been told they were delivered: data loss (M4-T6). Leaders never truncate.
+   */
+  | {
+      readonly type: 'RecordsTruncated';
+      readonly broker: string;
+      readonly topic: string;
+      readonly partition: number;
+      readonly from: number;
+      readonly to: number;
+      readonly acked: number;
+      readonly traceIds: readonly string[];
+    }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */
   | {
       readonly type: 'ConfigUpdated';

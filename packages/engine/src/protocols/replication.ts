@@ -29,11 +29,15 @@ import type { Topic } from '@kp/schema';
 import type { EngineContext } from '../model/context.ts';
 import {
   appendToReplica,
+  assignEpoch,
+  endOffsetForEpoch,
   leaderLog,
+  truncateReplica,
+  type ReplicaLog,
   type FollowerState,
   type PartitionState,
 } from '../model/partition.ts';
-import type { TopicState } from '../model/state.ts';
+import { isAlive, type TopicState } from '../model/state.ts';
 import type {
   EngineTask,
   ParkedProduce,
@@ -41,8 +45,8 @@ import type {
   ReplicaFetchRequestTask,
   ReplicaFetchResult,
 } from '../model/tasks.ts';
-import { isrEligible, sendAlterPartition } from './controller.ts';
-import { onHighWatermarkAdvanced } from './fetch.ts';
+import { canServe, isrEligible, sendAlterPartition } from './controller.ts';
+import { onHighWatermarkAdvanced, onLeaderMovedForConsumers } from './fetch.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
@@ -54,7 +58,7 @@ const fetcherKey = (follower: string, leader: string): string => `${follower}>${
 /** The broker if its process is running in this incarnation, else undefined. */
 function runningBroker(ctx: EngineContext, id: string, incarnation?: number) {
   const broker = ctx.state.brokers.get(id);
-  if (broker?.status !== 'running') return undefined;
+  if (broker === undefined || !isAlive(broker.status)) return undefined;
   if (incarnation !== undefined && broker.incarnation !== incarnation) return undefined;
   return broker;
 }
@@ -271,7 +275,7 @@ export function handleAlterPartitionResponse(
   const topic = ctx.state.topics.get(task.topic);
   const partition = topic?.partitions[task.partition];
   if (topic === undefined || partition === undefined || topic.topicId !== task.topicId) return;
-  if (partition.leader !== task.leader) return; // it lost leadership meanwhile
+  if (partition.leader !== task.leader || partition.leaderEpoch !== task.leaderEpoch) return;
   partition.pendingIsr = null;
   // With the confirmed (possibly smaller) ISR the HW may move, unblocking acks=all produces.
   onLeaderStateChanged(ctx, topic, partition);
@@ -356,6 +360,10 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
     disconnect(ctx, task); // the leader process is gone: the connection fails
     return;
   }
+  if (!canServe(ctx, task.leader)) {
+    respondToReplicaFetch(ctx, task, true); // not registered/unfenced yet: NOT_LEADER for all
+    return;
+  }
   // A request from an earlier life of the follower doesn't count (Kafka fences it by broker
   // epoch in updateFetchStateOrThrow); its answer is dropped on arrival.
   if (runningBroker(ctx, task.follower, task.followerIncarnation) !== undefined) {
@@ -367,6 +375,10 @@ export function handleReplicaFetchRequest(ctx: EngineContext, task: ReplicaFetch
       if (partition.leader !== task.leader || partition.leaderEpoch !== p.currentLeaderEpoch) {
         continue;
       }
+      const leaderReplica = leaderLog(partition);
+      // A diverged follower's offset says nothing about what it holds: it truncates first
+      // (Partition#fetchRecords: no fetch-state update when divergingEpoch is set).
+      if (leaderReplica === undefined || divergence(leaderReplica, p) !== null) continue;
       updateFollowerFetchState(partition, task.follower, p.fetchOffset, now);
       onLeaderStateChanged(ctx, topic, partition);
       maybeExpandIsr(ctx, topic, partition, task.follower);
@@ -402,6 +414,20 @@ export function onLeaderAppended(ctx: EngineContext, partition: PartitionState):
   }
 }
 
+/**
+ * Partition#readRecords (KIP-320, K9): the follower's last epoch ends earlier on the leader, or
+ * the leader knows no such epoch: the logs diverge. Answers where that epoch ends on the leader.
+ */
+function divergence(
+  leader: ReplicaLog,
+  p: ReplicaFetchPartition,
+): { readonly epoch: number; readonly endOffset: number } | null {
+  if (p.lastFetchedEpoch < 0) return null;
+  const end = endOffsetForEpoch(leader, p.lastFetchedEpoch);
+  if (end.epoch < p.lastFetchedEpoch || end.endOffset < p.fetchOffset) return end;
+  return null;
+}
+
 /** Whether any partition in the request has records past its fetch offset, or an error. */
 function hasDataFor(ctx: EngineContext, task: ReplicaFetchRequestTask): boolean {
   let records = 0;
@@ -410,14 +436,20 @@ function hasDataFor(ctx: EngineContext, task: ReplicaFetchRequestTask): boolean 
     const leader = partition === undefined ? undefined : leaderLog(partition);
     if (partition === undefined || leader === undefined || partition.leader !== task.leader)
       return true;
+    if (divergence(leader, p) !== null) return true;
     records += Math.max(0, leader.logEndOffset - p.fetchOffset);
   }
   return records >= REPLICA_FETCH_MIN_RECORDS;
 }
 
 /** Builds the response from the leader's log now and sends it back (+ network delay). */
-function respondToReplicaFetch(ctx: EngineContext, task: ReplicaFetchRequestTask): void {
+function respondToReplicaFetch(
+  ctx: EngineContext,
+  task: ReplicaFetchRequestTask,
+  notServing = false,
+): void {
   const partitions = task.partitions.map((p): ReplicaFetchResult => {
+    if (notServing) return { ...p, error: 'NOT_LEADER_OR_FOLLOWER' };
     const topic = ctx.state.topics.get(p.topic);
     const partition = topic?.partitions[p.partition];
     if (topic === undefined || partition === undefined || topic.topicId !== p.topicId) {
@@ -432,12 +464,23 @@ function respondToReplicaFetch(ctx: EngineContext, task: ReplicaFetchRequestTask
     }
     // A parked fetch completing reads the log again but does not update the follower's state
     // (ReplicaManager#readFromLog: updateFetchState = !readFromPurgatory).
+    const divergingEpoch = divergence(leader, p);
+    if (divergingEpoch !== null) {
+      return {
+        ...p,
+        error: null,
+        records: [],
+        highWatermark: leader.highWatermark,
+        divergingEpoch,
+      };
+    }
     const base = leader.logStartOffset;
     return {
       ...p,
       error: null,
       records: leader.log.slice(Math.max(0, p.fetchOffset - base)),
       highWatermark: leader.highWatermark,
+      divergingEpoch: null,
     };
   });
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
@@ -471,6 +514,10 @@ export function handleReplicaFetchResponse(
     if (partition.leader === task.follower) continue; // it became the leader meanwhile
     const own = partition.replicaLogs.get(task.follower);
     if (own === undefined || own.logEndOffset !== result.fetchOffset) continue; // stale
+    if (result.divergingEpoch !== null) {
+      truncateFollower(ctx, topic, partition, own, result.divergingEpoch);
+      continue;
+    }
     const from = own.logEndOffset;
     for (const record of result.records) {
       if (record.offset === own.logEndOffset) appendToReplica(own, record);
@@ -493,6 +540,38 @@ export function handleReplicaFetchResponse(
     }
   }
   ensureReplicaFetcher(ctx, task.follower, task.leader);
+}
+
+/**
+ * AbstractFetcherThread#getOffsetTruncationState (K9): the follower finds its own end of the
+ * leader's diverging epoch. If it knows that epoch, it truncates to the smaller end; otherwise it
+ * truncates to where its own older epoch ends and asks again with the next fetch.
+ */
+function truncateFollower(
+  ctx: EngineContext,
+  topic: TopicState,
+  partition: PartitionState,
+  own: ReplicaLog,
+  diverging: { readonly epoch: number; readonly endOffset: number },
+): void {
+  const mine = endOffsetForEpoch(own, diverging.epoch);
+  const offset =
+    mine.epoch === diverging.epoch
+      ? Math.min(mine.endOffset, diverging.endOffset, own.logEndOffset)
+      : Math.min(mine.endOffset, own.logEndOffset);
+  const to = own.logEndOffset;
+  const removed = truncateReplica(own, offset);
+  if (removed.length === 0) return;
+  ctx.emit({
+    type: 'RecordsTruncated',
+    broker: own.broker,
+    topic: topic.config.id,
+    partition: partition.index,
+    from: offset,
+    to,
+    acked: removed.filter((r) => ctx.state.ackedTraceIds.has(r.traceId)).length,
+    traceIds: removed.map((r) => r.traceId),
+  });
 }
 
 /** The follower learns its fetch failed (connection to a dead leader) one network delay later. */
@@ -646,4 +725,47 @@ export function handleDelayedProduceExpire(
   if (parked === undefined) return;
   ctx.state.parkedProduces.delete(task.produceId);
   sendProduceResponse(ctx, parked, { ok: false, error: 'REQUEST_TIMED_OUT' });
+}
+
+// ── Leader changes (M4-T5) ────────────────────────────────────────────────────────────────────
+
+/**
+ * The controller changed the partition's leader (or took it away). Partition#makeLeader on the
+ * new leader: its epoch starts at its LEO, it knows no follower's LEO, its HW stays what it had as
+ * a follower (K5). The old leader stops answering for the partition: parked follower fetches,
+ * consumer fetches and acks=all writes waiting there complete with NOT_LEADER_OR_FOLLOWER. The
+ * followers start fetching from the new leader.
+ */
+export function onLeaderChanged(
+  ctx: EngineContext,
+  topic: TopicState,
+  partition: PartitionState,
+  previousLeader: string | null,
+): void {
+  const { state } = ctx;
+  partition.pendingIsr = null;
+  const leader = leaderLog(partition);
+  if (leader !== undefined) {
+    partition.view = leader.broker;
+    partition.leaderEpochStartOffset = leader.logEndOffset;
+    // makeLeader: the new epoch starts at the leader's LEO (leaderEpochCache.assign).
+    assignEpoch(leader, partition.leaderEpoch, leader.logEndOffset);
+    resetFollowers(ctx, partition);
+  }
+  const touches = (p: { topic: string; partition: number }) =>
+    p.topic === partition.topic && p.partition === partition.index;
+  for (const [fetchId, parked] of state.parkedReplicaFetches) {
+    if (parked.leader !== previousLeader || !parked.partitions.some(touches)) continue;
+    state.parkedReplicaFetches.delete(fetchId);
+    respondToReplicaFetch(ctx, parked);
+  }
+  for (const [id, parked] of state.parkedProduces) {
+    if (!touches(parked) || parked.topicId !== topic.topicId) continue;
+    state.parkedProduces.delete(id);
+    sendProduceResponse(ctx, parked, { ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
+  }
+  onLeaderMovedForConsumers(ctx, partition);
+  startFollowers(ctx, partition);
+  // With the ISR down to the new leader alone, the HW can move to its LEO at once.
+  onLeaderStateChanged(ctx, topic, partition);
 }

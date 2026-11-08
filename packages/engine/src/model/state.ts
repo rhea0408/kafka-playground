@@ -20,7 +20,37 @@ export type { GroupState } from './group.ts';
  * The broker process: `running`, `stopped` after a controlled shutdown (StopBroker) or `crashed`
  * (KillBroker). Whether the controller has fenced it is the controller's view (M4-T5).
  */
-export type BrokerProcessStatus = 'running' | 'stopped' | 'crashed';
+export type BrokerProcessStatus = 'running' | 'shutting-down' | 'stopped' | 'crashed';
+
+/** Whether the broker process is up (running, or still up during a controlled shutdown). */
+export const isAlive = (status: BrokerProcessStatus): boolean =>
+  status === 'running' || status === 'shutting-down';
+
+/**
+ * The KRaft controller's view of one registered broker (BrokerRegistration and the heartbeat
+ * manager's state, M4-T5).
+ */
+export interface ControllerBrokerState {
+  /** Assigned at each registration; a restart after a crash re-registers with a stale one. */
+  brokerEpoch: number;
+  /** Fenced brokers can't lead or be in an ISR. New registrations start fenced. */
+  fenced: boolean;
+  /** Asked to shut down (heartbeat wantShutDown): leaders are moved off it. */
+  inControlledShutdown: boolean;
+  /** Only the ControllerSessionExpire task with this token is current. */
+  sessionToken: number;
+}
+
+/** The abstract KRaft controller quorum (ADR 0005): always up. */
+export interface ControllerState {
+  readonly brokers: Map<string, ControllerBrokerState>;
+  /** Source of broker epochs. */
+  nextBrokerEpoch: number;
+  /** Whether the periodic preferred-leader check is scheduled. */
+  preferredCheckScheduled: boolean;
+  /** Source of session timer tokens (unique across brokers and re-adds). */
+  nextSessionToken: number;
+}
 
 export interface BrokerState {
   readonly config: Broker;
@@ -30,6 +60,13 @@ export interface BrokerState {
    * requests and tasks of an earlier life are ignored (M4-T5).
    */
   incarnation: number;
+  /**
+   * The broker epoch the controller gave this process at registration; -1 from a restart until
+   * the registration is accepted (the broker serves nothing meanwhile).
+   */
+  brokerEpoch: number;
+  /** The broker epoch of the last life if it ended with a finished controlled shutdown. */
+  cleanShutdownEpoch: number;
 }
 
 export interface TopicState {
@@ -248,6 +285,8 @@ export interface EngineState {
    * survive their consumers: a restarted or re-added consumer resumes from here.
    */
   readonly groups: Map<string, GroupState>;
+  /** The KRaft controller's state (M4-T5). */
+  readonly controller: ControllerState;
   /**
    * Leader broker of each __consumer_offsets partition (offsets.topic.num.partitions = 50), or
    * null until the first FindCoordinator creates the internal topic (protocols/coordinator.ts).
@@ -267,6 +306,11 @@ export interface EngineState {
    * follower incarnation that sent it.
    */
   readonly replicaFetchers: Map<string, number>;
+  /**
+   * Trace ids of records whose producer was told they were delivered (ProduceAcked). Used to
+   * count acknowledged records lost to truncation (RecordsTruncated.acked, M4-T6).
+   */
+  readonly ackedTraceIds: Set<string>;
   /** acks=all produces waiting for the HW (DelayedProduce purgatory), by produce id. */
   readonly parkedProduces: Map<number, ParkedProduce>;
   /**
@@ -291,12 +335,19 @@ export function createState(): EngineState {
     producers: new Map(),
     consumers: new Map(),
     groups: new Map(),
+    controller: {
+      brokers: new Map(),
+      nextBrokerEpoch: 1,
+      preferredCheckScheduled: false,
+      nextSessionToken: 0,
+    },
     offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
     parkedReplicaFetches: new Map(),
     replicaFetchers: new Map(),
     parkedProduces: new Map(),
+    ackedTraceIds: new Set(),
     counters: {
       incarnation: 0,
       brokerIncarnation: 0,
@@ -326,14 +377,16 @@ export function topicsOfConsumer(state: EngineState, consumerId: string): TopicS
 }
 
 /**
- * Registered brokers for replica placement, with whether each is fenced. Until the controller
- * models fencing (M4-T5), a broker that is not running counts as fenced.
+ * Registered brokers for replica placement, with whether the controller has fenced each.
  */
 export function placementBrokers(state: EngineState): { id: string; fenced: boolean }[] {
-  return [...state.brokers.values()].map((b) => ({
-    id: b.config.id,
-    fenced: b.status !== 'running',
-  }));
+  // Registered brokers, minus those in controlled shutdown (StripedReplicaPlacer, K13).
+  return [...state.brokers.values()]
+    .filter((b) => state.controller.brokers.get(b.config.id)?.inControlledShutdown !== true)
+    .map((b) => ({
+      id: b.config.id,
+      fenced: state.controller.brokers.get(b.config.id)?.fenced ?? true,
+    }));
 }
 
 /**

@@ -30,6 +30,7 @@ describe('createEngine', () => {
       {
         config: BrokerSchema.parse({ kind: 'broker', id: 'b1' }),
         status: 'running',
+        fenced: false,
         partitionsLed: 3,
         partitionsFollowed: 0,
       },
@@ -256,13 +257,19 @@ describe('broker lifecycle commands (M4-T1)', () => {
     engine.on((e) => events.push(e));
     expect(engine.dispatch({ type: 'KillBroker', id: 'b1' })).toEqual({ ok: true });
     expect(engine.dispatch({ type: 'StopBroker', id: 'b2' })).toEqual({ ok: true });
+    // A controlled shutdown waits for the controller (one heartbeat round trip, M4-T5).
+    expect(engine.getSnapshot().brokers.map((b) => b.status)).toEqual(['crashed', 'shutting-down']);
+    engine.runUntil(10);
     expect(engine.getSnapshot().brokers.map((b) => b.status)).toEqual(['crashed', 'stopped']);
     expect(engine.dispatch({ type: 'RestartBroker', id: 'b1' })).toEqual({ ok: true });
     expect(engine.getSnapshot().brokers.map((b) => b.status)).toEqual(['running', 'stopped']);
-    expect(events.map((e) => [e.type, 'reason' in e ? e.reason : null])).toEqual([
-      ['BrokerStopped', 'crash'],
-      ['BrokerStopped', 'shutdown'],
-      ['BrokerStarted', null],
+    const lifecycle = events.filter(
+      (e) => e.type === 'BrokerStopped' || e.type === 'BrokerStarted',
+    );
+    expect(lifecycle.map((e) => [e.type, 'reason' in e ? e.reason : null, e.t])).toEqual([
+      ['BrokerStopped', 'crash', 0],
+      ['BrokerStopped', 'shutdown', 2],
+      ['BrokerStarted', null, 10],
     ]);
     expect(engine.commandLog.map((entry) => entry.command.type)).toEqual([
       'KillBroker',

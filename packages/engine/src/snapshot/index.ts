@@ -193,8 +193,10 @@ export interface GroupSnapshot {
 
 export interface BrokerSnapshot {
   readonly config: Broker;
-  /** The broker process: running, stopped (controlled shutdown) or crashed. */
+  /** The broker process: running, shutting-down (controlled shutdown), stopped or crashed. */
   readonly status: BrokerProcessStatus;
+  /** The KRaft controller has fenced it: it can't lead or be in an ISR (M4-T5). */
+  readonly fenced: boolean;
   /** Its replica manager's view: partitions it leads, and partitions it holds as a follower. */
   readonly partitionsLed: number;
   readonly partitionsFollowed: number;
@@ -241,6 +243,7 @@ export function buildSnapshot(
       return {
         config: copyPlain(b.config),
         status: b.status,
+        fenced: state.controller.brokers.get(b.config.id)?.fenced ?? true,
         partitionsLed: view.led,
         partitionsFollowed: view.followed,
       };
