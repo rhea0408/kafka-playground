@@ -45,7 +45,10 @@ describe('defaultSceneState', () => {
       if (position === undefined) throw new Error(`no position for ${c.id}`);
       expect(position.x % GRID_SIZE).toBe(0);
       expect(position.y % GRID_SIZE).toBe(0);
-      const size = nodeSize(c.kind, c.kind === 'topic' ? c.partitions : 1);
+      const size =
+        c.kind === 'topic'
+          ? nodeSize(c.kind, c.partitions, 1, c.replicationFactor)
+          : nodeSize(c.kind);
       return { ...position, ...size };
     });
     for (const [i, a] of rects.entries()) {

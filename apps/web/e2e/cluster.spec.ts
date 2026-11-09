@@ -146,6 +146,28 @@ test('not enough replicas: two followers down → NOT_ENOUGH_REPLICAS, shown on 
   );
 });
 
+test('under min ISR: two followers down → "HW frozen" chip on P0; one restart → back to under-replicated (G-3)', async ({
+  page,
+}) => {
+  await open(page, 'not-enough-replicas');
+  await play10(page);
+  await runPast(page, 5000);
+  const leader = await leaderOfP0(page);
+  const followers = ['b1', 'b2', 'b3'].filter((b) => b !== leader);
+  const chip = node(page, 'orders').locator('[data-partition-row="0"] [data-slot="isr-state"]');
+  await expect(chip).toHaveCount(0);
+  for (const b of followers) await brokerAction(page, b, 'Kill');
+  // After broker.session.timeout.ms the controller fences them and shrinks the ISR to the leader.
+  await expect(chip).toHaveText('⚠ under min ISR · HW frozen', { timeout: 30_000 });
+  await expect(chip).toHaveAttribute('title', /min\.insync\.replicas \(2\)/);
+  await expect(chip).toHaveAttribute('data-state', 'under-min-isr');
+  // One follower back in the ISR: 2 of 3 in sync, which is enough for the HW again.
+  const [back] = followers;
+  await brokerAction(page, back ?? '', 'Restart');
+  await expect(chip).toHaveAttribute('data-state', 'under-replicated', { timeout: 30_000 });
+  await expect(chip).toHaveText('under-replicated');
+});
+
 test('coordinator failover: the group stays Stable with its committed offsets', async ({
   page,
 }) => {
@@ -195,4 +217,52 @@ test('worker determinism with broker kills: the same hash as Node', async ({ pag
   ).runUntil(t);
   expect(ofType(replayed, 'LeaderElected').length).toBeGreaterThan(0);
   expect(workerHash).toBe(hashEvents(replayed));
+});
+
+test('internal topics: a 1-broker restart shows no __consumer_offsets rows until the toggle is on (G-1)', async ({
+  page,
+}) => {
+  await page.goto('/?debug&scene=default');
+  await expect(node(page, 'b1')).toBeVisible();
+  await play10(page);
+  await runPast(page, 3000);
+  await brokerAction(page, 'b1', 'Kill');
+  // About broker.session.timeout.ms later the controller fences b1: every partition goes offline.
+  await expect
+    .poll(async () => ofType(await events(page), 'PartitionOffline').length, { timeout: 20_000 })
+    .toBeGreaterThan(3);
+  // Read before the click: at 10× the election can land before a read after it.
+  const restartedAt = await simTime(page);
+  await brokerAction(page, 'b1', 'Restart');
+  await expect
+    .poll(
+      async () =>
+        ofType(await events(page), 'LeaderElected').filter(
+          (e) => e.topic === 'orders' && e.t > restartedAt,
+        ).length,
+      { timeout: 20_000 },
+    )
+    .toBe(3);
+  await page.getByRole('button', { name: 'Pause' }).click();
+
+  // Only the leader changes, so every row fits in the windowed list.
+  const list = page.getByTestId('event-list');
+  await list.getByRole('button', { name: /^Filter: / }).click();
+  const panel = page.getByRole('group', { name: 'Event types to show' });
+  await panel.getByRole('button', { name: 'Hide all' }).click();
+  await panel.getByRole('checkbox', { name: 'LeaderElected' }).check();
+  await panel.getByRole('checkbox', { name: 'PartitionOffline' }).check();
+  const rows = page.getByRole('region', { name: 'Event list' });
+  await expect(rows).toContainText('orders-0');
+  await expect(rows).not.toContainText('__consumer_offsets');
+  // G-2: b1 held the only copy, so the election reads as a last-known-leader one, not data loss.
+  await expect(rows).toContainText('unclean (last known leader: it held the only copy');
+  await expect(rows).not.toContainText('records may be lost');
+  await expect(node(page, 'orders').locator('[data-slot="lost"]')).toHaveCount(0);
+  await expect(list.getByRole('button', { name: /^Filter: / })).toContainText(
+    'internal topics hidden',
+  );
+
+  await panel.getByRole('checkbox', { name: /Show internal topics/ }).check();
+  await expect(rows).toContainText('__consumer_offsets');
 });

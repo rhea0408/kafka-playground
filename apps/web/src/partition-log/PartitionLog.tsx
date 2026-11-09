@@ -13,7 +13,14 @@ import { useFollow } from '../events/use-follow.ts';
 import { INPUT } from '../properties/controls.tsx';
 import { Tip } from '../properties/FieldFrame.tsx';
 import { useSimStore } from '../stores/sim-store.ts';
-import { setLogGroup, setLogTarget, useUiStore } from '../stores/ui-store.ts';
+import {
+  setLogGroup,
+  setLogTarget,
+  setShowInternalTopics,
+  useUiStore,
+} from '../stores/ui-store.ts';
+import { InternalTopicsToggle } from '../events/EventFilter.tsx';
+import { isrState, underMinIsrText, type IsrState } from '../canvas/live/isr-state.ts';
 import { buildLogRows, type LogRow } from './log-rows.ts';
 import {
   groupOffsets,
@@ -53,7 +60,8 @@ export function PartitionLog() {
   const snapshot = useSimStore((s) => s.snapshot);
   const target = useUiStore((s) => s.logTarget);
   const logGroup = useUiStore((s) => s.logGroup);
-  const resolved = resolveTarget(snapshot, target);
+  const showInternal = useUiStore((s) => s.showInternalTopics);
+  const resolved = resolveTarget(snapshot, target, showInternal);
 
   if (snapshot === null || resolved === null) {
     return (
@@ -73,7 +81,10 @@ export function PartitionLog() {
       <PartitionLogView
         key={`${String(topic.topicId)}:${String(partition.index)}`}
         topicId={topic.config.id}
-        topicIds={snapshot.topics.map((t) => t.config.id).filter((id) => !isInternalTopicName(id))}
+        topicIds={snapshot.topics
+          .map((t) => t.config.id)
+          .filter((id) => showInternal || !isInternalTopicName(id))}
+        showInternal={showInternal}
         partitionCount={topic.partitions.length}
         partition={partition.index}
         leader={partition.leader}
@@ -81,6 +92,8 @@ export function PartitionLog() {
         isr={partition.isr}
         replicaInfo={partition.replicas}
         elr={partition.elr}
+        isrState={isrState(partition)}
+        minIsr={Math.min(topic.config.minInsyncReplicas, partition.replicas.length)}
         leaderEpoch={partition.leaderEpoch}
         truncated={partition.truncated}
         logStartOffset={partition.logStartOffset}
@@ -97,6 +110,8 @@ export function PartitionLog() {
 interface ViewProps {
   readonly topicId: string;
   readonly topicIds: readonly string[];
+  /** The "Show internal topics" setting (shared with the event filter, M4 follow-up G-1). */
+  readonly showInternal: boolean;
   readonly partitionCount: number;
   readonly partition: number;
   /** Null while the partition is offline (no leader). */
@@ -106,6 +121,10 @@ interface ViewProps {
   /** Each replica's own LEO and HW (M4-T11). */
   readonly replicaInfo: readonly ReplicaSnapshot[];
   readonly elr: readonly string[];
+  /** Replication health, as the partition row's chip shows it (M4 follow-up G-3). */
+  readonly isrState: IsrState;
+  /** min(min.insync.replicas, RF): the in-sync replicas the HW needs to move. */
+  readonly minIsr: number;
   readonly leaderEpoch: number;
   /** Records followers deleted by truncation, newest last (M4-T11). */
   readonly truncated: readonly TruncatedRecord[];
@@ -159,7 +178,10 @@ function PartitionLogView(props: ViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="partition-log">
       <div className="flex shrink-0 flex-col gap-3 px-4 pt-4 pb-2">
-        <Picker {...props} />
+        <div className="flex flex-col gap-1">
+          <Picker {...props} />
+          <InternalTopicsToggle checked={props.showInternal} onChange={setShowInternalTopics} />
+        </div>
         <Summary {...props} />
         <div className="flex h-8 w-[328px] items-center gap-2">
           <label htmlFor="pl-key" className="shrink-0 text-[12px]">
@@ -583,7 +605,10 @@ const LogRowView = memo(
 function ReplicaTable(props: ViewProps) {
   return (
     <div className="flex flex-col gap-0.5">
-      <h4 className={SECTION_TITLE}>REPLICAS · leader epoch {props.leaderEpoch}</h4>
+      <h4 className={SECTION_TITLE}>
+        REPLICAS · leader epoch {props.leaderEpoch}
+        <IsrSummary {...props} />
+      </h4>
       <table className="w-full text-[12px]" data-testid="pl-replicas">
         <thead>
           <tr className="text-left text-[11px] text-status/70">
@@ -612,6 +637,31 @@ function ReplicaTable(props: ViewProps) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * The replica table's summary (M4 follow-up G-3): under min ISR the HW is frozen (strict min
+ * ISR), under-replicated only means fewer copies. Nothing for an offline partition or RF 1.
+ */
+function IsrSummary({ isrState: state, isr, replicas, minIsr }: ViewProps) {
+  if (state === 'in-sync') return null;
+  const inSync = String(isr.length);
+  return state === 'under-min-isr' ? (
+    <span
+      className="font-normal text-danger-text"
+      data-testid="pl-isr-state"
+      data-state={state}
+      title={underMinIsrText(isr.length, minIsr)}
+    >
+      {' '}
+      · ⚠ under min ISR ({inSync} of {String(minIsr)} needed) · HW frozen
+    </span>
+  ) : (
+    <span className="font-normal" data-testid="pl-isr-state" data-state={state}>
+      {' '}
+      · under-replicated: {inSync} of {String(replicas.length)} in sync
+    </span>
   );
 }
 

@@ -35,6 +35,13 @@ describe('node sizes (ui-spec "Canvas node sizes")', () => {
     expect(partitionRowCenterY(2)).toBe(36 + 2 * 48 + 8 + 20);
   });
 
+  it('RF > 1 rows get a 14 px status line: 62 px slots, centres on the 40 px main part (G-3)', () => {
+    expect(nodeSize('topic', 3, 1, 3)).toEqual({ width: 230, height: 36 + 3 * 62 });
+    expect(topicHeight(3, 1)).toBe(36 + 3 * 48);
+    expect(partitionRowCenterY(0, 3)).toBe(36 + 8 + 20);
+    expect(partitionRowCenterY(2, 3)).toBe(36 + 2 * 62 + 8 + 20);
+  });
+
   it('anchor and row handle ids are distinct per partition and consumer', () => {
     expect(partitionInAnchorId(0)).toBe('p0:in');
     expect(partitionOutAnchorId(3)).toBe('p3:out');

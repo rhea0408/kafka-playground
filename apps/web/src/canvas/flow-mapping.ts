@@ -78,8 +78,8 @@ const KIND_LABEL = {
 } as const;
 
 function baseNode(component: Component, position: { x: number; y: number }) {
-  const partitions = component.kind === 'topic' ? component.partitions : 1;
-  const size = nodeSize(component.kind, partitions);
+  const topic = component.kind === 'topic' ? component : undefined;
+  const size = nodeSize(component.kind, topic?.partitions, 1, topic?.replicationFactor);
   return {
     id: component.id,
     position,

@@ -10,7 +10,7 @@ import { applySimFrame, resetSimStore } from '../../stores/sim-store.ts';
 import { resetUiStore } from '../../stores/ui-store.ts';
 import { fixtureSnapshot, partition } from '../../test/snapshot-fixture.ts';
 import { BrokerLive, ControllerChip, isDown } from './broker-parts.tsx';
-import { PartitionLive } from './live-parts.tsx';
+import { PartitionLive, PartitionStatus } from './live-parts.tsx';
 
 let frame = 0;
 function show(snapshot: EngineSnapshot): void {
@@ -123,6 +123,7 @@ describe('replica chips on a partition row (M4-T11)', () => {
       topics: [
         {
           ...topic,
+          config: { ...topic.config, replicationFactor: 3, minInsyncReplicas: 2 },
           partitions: [
             {
               ...p,
@@ -149,10 +150,50 @@ describe('replica chips on a partition row (M4-T11)', () => {
   });
 
   it('shows an offline partition and acknowledged records lost to truncation (A8)', () => {
-    show(replicated({ leader: null, lostAcked: 3 }));
-    render(<PartitionLive topicId="t1" index={0} />, { wrapper: Providers });
+    show(
+      replicated({ leader: null, lostAcked: 3, isr: [], underReplicated: true, underMinIsr: true }),
+    );
+    render(
+      <>
+        <PartitionLive topicId="t1" index={0} />
+        <PartitionStatus topicId="t1" index={0} />
+      </>,
+      { wrapper: Providers },
+    );
     expect(document.querySelector('[data-slot="leader"]')?.textContent).toBe('⚠ offline');
     expect(document.querySelector('[data-slot="lost"]')?.textContent).toBe('⚠ 3 lost');
+    // "⚠ offline" already says it all: no ISR chip on top (G-3).
+    expect(document.querySelector('[data-slot="isr-state"]')).toBeNull();
+  });
+
+  // M4 follow-up G-3: the status line under a replicated row.
+  const status = () => document.querySelector<HTMLElement>('[data-slot="isr-state"]');
+
+  it('shows nothing on the status line while every replica is in sync', () => {
+    show(replicated({}));
+    render(<PartitionStatus topicId="t1" index={0} />, { wrapper: Providers });
+    expect(status()).toBeNull();
+  });
+
+  it('marks an under-replicated partition with a muted chip: "n of m replicas are in sync"', () => {
+    show(replicated({ isr: ['b1', 'b2'], underReplicated: true }));
+    render(<PartitionStatus topicId="t1" index={0} />, { wrapper: Providers });
+    expect(status()?.textContent).toBe('under-replicated');
+    expect(status()?.dataset['state']).toBe('under-replicated');
+    expect(status()?.title).toBe('2 of 3 replicas are in sync.');
+    expect(status()?.className).toContain('bg-muted');
+  });
+
+  it('marks a partition under min ISR as "⚠ under min ISR · HW frozen", with icon and words', () => {
+    show(replicated({ isr: ['b1'], underReplicated: true, underMinIsr: true }));
+    render(<PartitionStatus topicId="t1" index={0} />, { wrapper: Providers });
+    expect(status()?.textContent).toBe('⚠ under min ISR · HW frozen');
+    expect(status()?.dataset['state']).toBe('under-min-isr');
+    expect(status()?.title).toContain(
+      'The in-sync replicas (1) are fewer than min.insync.replicas (2).',
+    );
+    expect(status()?.title).toContain('even ones written with acks=1');
+    expect(status()?.title).toContain('NOT_ENOUGH_REPLICAS');
   });
 
   it('keeps the M3 look with one replica (no chips)', () => {
@@ -160,5 +201,15 @@ describe('replica chips on a partition row (M4-T11)', () => {
     render(<PartitionLive topicId="t1" index={0} />, { wrapper: Providers });
     expect(document.querySelector('[data-slot="replicas"]')).toBeNull();
     expect(document.querySelector('[data-slot="leader"]')?.textContent).toBe('L b1');
+    // RF 1 can't be under-replicated: even a stale flag shows no chip (G-3).
+    const [topic] = base.topics;
+    const [p0] = topic?.partitions ?? [];
+    if (topic === undefined || p0 === undefined) throw new Error('fixture');
+    show({
+      ...base,
+      topics: [{ ...topic, partitions: [{ ...p0, underReplicated: true, underMinIsr: true }] }],
+    });
+    render(<PartitionStatus topicId="t1" index={0} />, { wrapper: Providers });
+    expect(status()).toBeNull();
   });
 });

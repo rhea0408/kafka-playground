@@ -13,6 +13,7 @@ export { describeEvent, formatEvent, formatSimTime } from './events/format.ts';
 export { createEventHasher, hashEvents, type EventHasher } from './events/hash.ts';
 export { partitionName, type LogRecord, type TruncatedRecord } from './model/partition.ts';
 export * from './snapshot/index.ts';
+export { isInternalTopic, OFFSETS_TOPIC } from './protocols/coordinator.ts';
 export { murmur2, partitionForKey, toPositive, utf8Bytes } from './protocols/partitioner.ts';
 export type { CommitOffset, GroupError, ProduceError } from './model/tasks.ts';
 export type { GroupStateName, MemberRemovedReason, RebalanceReason } from './model/group.ts';

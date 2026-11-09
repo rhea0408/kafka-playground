@@ -52,6 +52,12 @@ describe('anchorOf', () => {
     });
   });
 
+  it("uses a replicated topic's taller rows in the fallback (G-3)", () => {
+    const replicated = { ...topic, data: { component: { kind: 'topic', replicationFactor: 3 } } };
+    expect(anchorOf(replicated, 'p2:in')?.y).toBe(160 + partitionRowCenterY(2, 3));
+    expect(partitionRowCenterY(2, 3)).toBeGreaterThan(partitionRowCenterY(2));
+  });
+
   it('is undefined for a missing node or an unknown handle', () => {
     expect(anchorOf(undefined, 'out')).toBeUndefined();
     expect(anchorOf(producer, 'row:c1')).toBeUndefined();

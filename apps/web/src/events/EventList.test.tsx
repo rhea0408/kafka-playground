@@ -157,7 +157,9 @@ describe('<EventList>', () => {
   it('filters by event type with labelled checkboxes', () => {
     setEvents(makeEvents(0, 6));
     render(<EventList />);
-    const button = screen.getByRole('button', { name: 'Filter: All types' });
+    const button = screen.getByRole('button', {
+      name: 'Filter: All types · internal topics hidden',
+    });
     expect(button.getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(button);
     expect(button.getAttribute('aria-expanded')).toBe('true');
@@ -170,12 +172,12 @@ describe('<EventList>', () => {
     expect(screen.getByTestId('event-count').textContent).toBe('6 events · 3 shown');
     expect(
       screen.getByRole('button', {
-        name: `Filter: ${String(ALL_EVENT_TYPES.length - 1)} of ${String(ALL_EVENT_TYPES.length)} types`,
+        name: `Filter: ${String(ALL_EVENT_TYPES.length - 1)} of ${String(ALL_EVENT_TYPES.length)} types · internal topics hidden`,
       }),
     ).toBeTruthy();
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Hide all' }));
-    expect(scroller().textContent).toContain('No events of the selected types.');
+    expect(scroller().textContent).toContain('No events of the selected types. Internal topics');
     fireEvent.click(within(panel).getByRole('button', { name: 'Show all' }));
     expect(rows()).toHaveLength(6);
 
@@ -185,6 +187,49 @@ describe('<EventList>', () => {
     });
     expect(screen.queryByRole('group', { name: 'Event types to show' })).toBeNull();
     expect(document.activeElement).toBe(button);
+  });
+
+  it('hides __consumer_offsets events until "Show internal topics" is on (G-1)', () => {
+    const offline = (seq: number, topic: string): EngineEvent => ({
+      t: seq,
+      seq,
+      type: 'PartitionOffline',
+      topic,
+      partition: 0,
+      previousLeader: 'b1',
+      isr: ['b1'],
+      elr: [],
+    });
+    setEvents([
+      { t: 0, seq: 0, type: 'BrokerStopped', brokerId: 'b1', reason: 'crash' },
+      offline(1, 'orders'),
+      offline(2, '__consumer_offsets'),
+      offline(3, '__consumer_offsets'),
+      {
+        t: 4,
+        seq: 4,
+        type: 'CoordinatorMoved',
+        groupId: 'g1',
+        from: null,
+        to: 'b1',
+        state: 'Stable',
+        generation: 1,
+      },
+    ]);
+    render(<EventList />);
+    expect(rows().map((r) => r.getAttribute('data-seq'))).toEqual(['0', '1', '4']);
+    expect(scroller().textContent).not.toContain('__consumer_offsets');
+    expect(screen.getByTestId('event-count').textContent).toBe('5 events · 3 shown');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Filter: / }));
+    const toggle = screen.getByRole('checkbox', { name: /Show internal topics/ });
+    expect(toggle).toHaveProperty('checked', false);
+    fireEvent.click(toggle);
+    expect(rows()).toHaveLength(5);
+    expect(screen.getByTestId('event-count').textContent).toBe('5 events');
+    expect(screen.getByRole('button', { name: 'Filter: All types' })).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(rows()).toHaveLength(3);
   });
 
   it('a full frame (reset) replaces the list', () => {

@@ -21,12 +21,22 @@ export const PRODUCER_SIZE: Size = { width: 150, height: 72 };
 /** Sandbox broker (ui-spec: 226 × 92 inside a level's cluster frame, 84 in the Sandbox). */
 export const BROKER_SIZE: Size = { width: 226, height: 84 };
 
-/** Topic: 230 wide; a 36 px header, then one 48 px slot per partition (8 px gap + 40 px row). */
+/**
+ * Topic: 230 wide; a 36 px header, then one 48 px slot per partition (8 px gap + 40 px row). With
+ * RF > 1 each row has a 14 px status line under it (the under-min-ISR / under-replicated and lost
+ * chips, M4 follow-up G-3), so its slot is 62 px.
+ */
 export const TOPIC_WIDTH = 230;
 export const TOPIC_HEADER_HEIGHT = 36;
 export const TOPIC_ROW_SLOT = 48;
 export const TOPIC_ROW_GAP = 8;
 export const TOPIC_ROW_HEIGHT = TOPIC_ROW_SLOT - TOPIC_ROW_GAP;
+export const TOPIC_STATUS_LINE_HEIGHT = 14;
+
+/** Height of one partition slot: 48, or 62 with the status line of a replicated topic. */
+export function topicRowSlot(replicationFactor = 1): number {
+  return TOPIC_ROW_SLOT + (replicationFactor > 1 ? TOPIC_STATUS_LINE_HEIGHT : 0);
+}
 
 /** Consumer group: 240 wide (12 px padding each side of a 216 px row; ui-spec allows 220–240), header 36, rows 40 + 8 gap. */
 export const GROUP_WIDTH = 240;
@@ -37,17 +47,25 @@ export const GROUP_ROW_SLOT = 48;
 /** Space under the last row (wireframe 05: 2 rows → 140 px tall). */
 export const GROUP_BOTTOM_PADDING = 8;
 
-export function topicHeight(partitions: number): number {
-  return TOPIC_HEADER_HEIGHT + TOPIC_ROW_SLOT * partitions;
+export function topicHeight(partitions: number, replicationFactor = 1): number {
+  return TOPIC_HEADER_HEIGHT + topicRowSlot(replicationFactor) * partitions;
 }
 
 export function groupHeight(rows: number): number {
   return GROUP_HEADER_HEIGHT + GROUP_ROW_SLOT * rows + GROUP_BOTTOM_PADDING;
 }
 
-/** Vertical centre of partition row `index`, relative to the topic node's top edge. */
-export function partitionRowCenterY(index: number): number {
-  return TOPIC_HEADER_HEIGHT + TOPIC_ROW_SLOT * index + TOPIC_ROW_GAP + TOPIC_ROW_HEIGHT / 2;
+/**
+ * Vertical centre of partition row `index` (its 40 px main part, not the status line), relative
+ * to the topic node's top edge.
+ */
+export function partitionRowCenterY(index: number, replicationFactor = 1): number {
+  return (
+    TOPIC_HEADER_HEIGHT +
+    topicRowSlot(replicationFactor) * index +
+    TOPIC_ROW_GAP +
+    TOPIC_ROW_HEIGHT / 2
+  );
 }
 
 /** Vertical centre of the group header: where the group's input handle sits. */
@@ -59,17 +77,22 @@ export function groupRowCenterY(index: number): number {
 }
 
 /**
- * Size of a node on the canvas. `partitions` is used for topics and `rows` for consumer groups
- * (one row per member).
+ * Size of a node on the canvas. `partitions` and `replicationFactor` are used for topics and
+ * `rows` for consumer groups (one row per member).
  */
-export function nodeSize(kind: ComponentKind, partitions = 1, rows = 1): Size {
+export function nodeSize(
+  kind: ComponentKind,
+  partitions = 1,
+  rows = 1,
+  replicationFactor = 1,
+): Size {
   switch (kind) {
     case 'producer':
       return PRODUCER_SIZE;
     case 'broker':
       return BROKER_SIZE;
     case 'topic':
-      return { width: TOPIC_WIDTH, height: topicHeight(partitions) };
+      return { width: TOPIC_WIDTH, height: topicHeight(partitions, replicationFactor) };
     case 'consumer':
       return { width: GROUP_WIDTH, height: groupHeight(rows) };
   }
