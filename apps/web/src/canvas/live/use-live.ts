@@ -49,6 +49,13 @@ export function usePartition(topicId: string, index: number): PartitionSnapshot 
   return useSimStore(useShallow(selectPartition(topicId, index)));
 }
 
+/** The topic's min.insync.replicas (1 before the first snapshot). */
+export function useMinInsyncReplicas(topicId: string): number {
+  return useSimStore(
+    (s) => s.snapshot?.topics.find((t) => t.config.id === topicId)?.config.minInsyncReplicas ?? 1,
+  );
+}
+
 export function useConsumer(id: string): ConsumerSnapshot | undefined {
   return useSimStore(useShallow(selectConsumer(id)));
 }

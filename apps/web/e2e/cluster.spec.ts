@@ -146,6 +146,28 @@ test('not enough replicas: two followers down → NOT_ENOUGH_REPLICAS, shown on 
   );
 });
 
+test('under min ISR: two followers down → "HW frozen" chip on P0; one restart → back to under-replicated (G-3)', async ({
+  page,
+}) => {
+  await open(page, 'not-enough-replicas');
+  await play10(page);
+  await runPast(page, 5000);
+  const leader = await leaderOfP0(page);
+  const followers = ['b1', 'b2', 'b3'].filter((b) => b !== leader);
+  const chip = node(page, 'orders').locator('[data-partition-row="0"] [data-slot="isr-state"]');
+  await expect(chip).toHaveCount(0);
+  for (const b of followers) await brokerAction(page, b, 'Kill');
+  // After broker.session.timeout.ms the controller fences them and shrinks the ISR to the leader.
+  await expect(chip).toHaveText('⚠ under min ISR · HW frozen', { timeout: 30_000 });
+  await expect(chip).toHaveAttribute('title', /min\.insync\.replicas \(2\)/);
+  await expect(chip).toHaveAttribute('data-state', 'under-min-isr');
+  // One follower back in the ISR: 2 of 3 in sync, which is enough for the HW again.
+  const [back] = followers;
+  await brokerAction(page, back ?? '', 'Restart');
+  await expect(chip).toHaveAttribute('data-state', 'under-replicated', { timeout: 30_000 });
+  await expect(chip).toHaveText('under-replicated');
+});
+
 test('coordinator failover: the group stays Stable with its committed offsets', async ({
   page,
 }) => {

@@ -36,11 +36,13 @@ import {
   useCountUp,
   useGroup,
   useHeldByCoordinator,
+  useMinInsyncReplicas,
   usePartition,
   useProducerStats,
   useSimTime,
   type HeldByCoordinator,
 } from './use-live.ts';
+import { isrState, underMinIsrText, underReplicatedText } from './isr-state.ts';
 
 const useReducedMotion = (): boolean => useUiStore((s) => s.reducedMotion);
 
@@ -180,18 +182,16 @@ export function PartitionLive({ topicId, index }: { topicId: string; index: numb
 /**
  * The right column of a partition row (M4-T11): the leader badge (A7 flip on change) and, with
  * RF > 1, one chip per replica: solid while in sync, dashed and marked "out" when not (A9), never
- * color alone. Under-replicated, offline and lost-records chips sit with them (A8).
+ * color alone. The offline badge sits here; under-replicated, under-min-ISR and lost chips go on the
+ * status line under the row (PartitionStatus, M4 follow-up G-3).
  */
 function ReplicaColumn({ partition }: { partition: PartitionSnapshot }) {
   const reduced = useReducedMotion();
   const leaderRef = useRef<string | null | undefined>(undefined);
-  const lostRef = useRef<number | undefined>(undefined);
   const flip = leaderRef.current !== undefined && leaderRef.current !== partition.leader;
-  const lostNow = lostRef.current !== undefined && partition.lostAcked > lostRef.current;
   useEffect(() => {
     leaderRef.current = partition.leader;
-    lostRef.current = partition.lostAcked;
-  }, [partition.leader, partition.lostAcked]);
+  }, [partition.leader]);
   const offline = partition.leader === null;
   const replicated = partition.replicas.length > 1;
   return (
@@ -235,18 +235,84 @@ function ReplicaColumn({ partition }: { partition: PartitionSnapshot }) {
           })}
         </span>
       )}
-      {partition.lostAcked > 0 && (
+    </div>
+  );
+}
+
+/**
+ * The status line under a replicated partition's row (M4 follow-up G-3): the under-min-ISR or
+ * under-replicated chip and the "⚠ n lost" chip (A8, shakes when it grows). Empty while the
+ * partition is healthy. Rendered only for RF > 1, whose rows are 14 px taller (geometry.ts).
+ */
+export function PartitionStatus({ topicId, index }: { topicId: string; index: number }) {
+  const partition = usePartition(topicId, index);
+  const minIsr = useMinInsyncReplicas(topicId);
+  const reduced = useReducedMotion();
+  const lostAcked = partition?.lostAcked ?? 0;
+  const lostRef = useRef<number | undefined>(undefined);
+  const lostNow = lostRef.current !== undefined && lostAcked > lostRef.current;
+  useEffect(() => {
+    lostRef.current = lostAcked;
+  }, [lostAcked]);
+  if (partition === undefined) return null;
+  return (
+    <>
+      <IsrStateChip partition={partition} minIsr={minIsr} />
+      {lostAcked > 0 && (
         <span
-          className={`rounded-sm border border-dashed border-danger bg-danger-bg px-1 text-[9px] text-danger-text ${
+          className={`rounded-sm border border-dashed border-danger bg-danger-bg px-1 text-[9px] leading-[12px] whitespace-nowrap text-danger-text ${
             lostNow && !reduced ? 'kp-lost' : ''
           }`}
           data-slot="lost"
           title="Acknowledged records deleted by truncation when an old leader came back (see the partition log)."
         >
-          ⚠ {formatCount(partition.lostAcked)} lost
+          ⚠ {formatCount(lostAcked)} lost
         </span>
       )}
-    </div>
+    </>
+  );
+}
+
+/**
+ * Why a replicated partition is degraded (M4 follow-up G-3): under min ISR, the HW is frozen
+ * (strict min ISR, M4-decisions K1b), so even acks=1 writes are acknowledged but never reach
+ * consumers; under-replicated alone only means fewer copies. Text and icon, never color alone.
+ * Nothing for RF 1 (it can't be under-replicated) or offline partitions ("⚠ offline" says it).
+ */
+export function IsrStateChip({
+  partition,
+  minIsr,
+}: {
+  partition: PartitionSnapshot;
+  minIsr: number;
+}) {
+  const state = isrState(partition);
+  if (state === 'in-sync') return null;
+  const inSync = partition.isr.length;
+  const replicas = partition.replicas.length;
+  if (state === 'under-min-isr') {
+    // Kafka applies min(min.insync.replicas, RF) when minISR is above the RF (M4-decisions T3-4).
+    const required = Math.min(minIsr, replicas);
+    return (
+      <span
+        className="rounded-sm bg-danger-bg px-1 text-[9px] leading-[12px] font-semibold whitespace-nowrap text-danger-text"
+        data-slot="isr-state"
+        data-state={state}
+        title={underMinIsrText(inSync, required)}
+      >
+        ⚠ under min ISR · HW frozen
+      </span>
+    );
+  }
+  return (
+    <span
+      className="rounded-sm bg-muted px-1 text-[9px] leading-[12px] whitespace-nowrap"
+      data-slot="isr-state"
+      data-state={state}
+      title={underReplicatedText(inSync, replicas)}
+    >
+      under-replicated
+    </span>
   );
 }
 

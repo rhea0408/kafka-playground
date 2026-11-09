@@ -42,6 +42,8 @@ export interface HandleBoundLike {
 export interface InternalNodeLike {
   readonly measured?: { readonly width?: number; readonly height?: number };
   readonly width?: number;
+  /** The node's data: a topic node's `component` gives its RF (row height, M4 follow-up G-3). */
+  readonly data?: unknown;
   readonly internals: {
     readonly positionAbsolute: { readonly x: number; readonly y: number };
     readonly handleBounds?: {
@@ -84,6 +86,17 @@ function findHandle(node: InternalNodeLike, id: string): HandleBoundLike | undef
 
 const PARTITION_ANCHOR = /^p(\d+):(in|out)$/;
 
+/** A topic node's replication factor, from its data; 1 for anything else. */
+function replicationFactorOf(node: InternalNodeLike): number {
+  const data = node.data;
+  if (typeof data !== 'object' || data === null || !('component' in data)) return 1;
+  const component: unknown = data.component;
+  if (typeof component !== 'object' || component === null) return 1;
+  return 'replicationFactor' in component && typeof component.replicationFactor === 'number'
+    ? component.replicationFactor
+    : 1;
+}
+
 /** Partition anchor position from the layout constants, for a node React Flow hasn't measured. */
 function partitionFallback(node: InternalNodeLike, handleId: string): Anchor | undefined {
   const match = PARTITION_ANCHOR.exec(handleId);
@@ -93,7 +106,7 @@ function partitionFallback(node: InternalNodeLike, handleId: string): Anchor | u
   const out = match[2] === 'out';
   return {
     x: out ? x + width : x,
-    y: y + partitionRowCenterY(Number(match[1])),
+    y: y + partitionRowCenterY(Number(match[1]), replicationFactorOf(node)),
     side: out ? 'right' : 'left',
   };
 }

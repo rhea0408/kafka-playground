@@ -20,6 +20,7 @@ import {
   useUiStore,
 } from '../stores/ui-store.ts';
 import { InternalTopicsToggle } from '../events/EventFilter.tsx';
+import { isrState, underMinIsrText, type IsrState } from '../canvas/live/isr-state.ts';
 import { buildLogRows, type LogRow } from './log-rows.ts';
 import {
   groupOffsets,
@@ -91,6 +92,8 @@ export function PartitionLog() {
         isr={partition.isr}
         replicaInfo={partition.replicas}
         elr={partition.elr}
+        isrState={isrState(partition)}
+        minIsr={Math.min(topic.config.minInsyncReplicas, partition.replicas.length)}
         leaderEpoch={partition.leaderEpoch}
         truncated={partition.truncated}
         logStartOffset={partition.logStartOffset}
@@ -118,6 +121,10 @@ interface ViewProps {
   /** Each replica's own LEO and HW (M4-T11). */
   readonly replicaInfo: readonly ReplicaSnapshot[];
   readonly elr: readonly string[];
+  /** Replication health, as the partition row's chip shows it (M4 follow-up G-3). */
+  readonly isrState: IsrState;
+  /** min(min.insync.replicas, RF): the in-sync replicas the HW needs to move. */
+  readonly minIsr: number;
   readonly leaderEpoch: number;
   /** Records followers deleted by truncation, newest last (M4-T11). */
   readonly truncated: readonly TruncatedRecord[];
@@ -598,7 +605,10 @@ const LogRowView = memo(
 function ReplicaTable(props: ViewProps) {
   return (
     <div className="flex flex-col gap-0.5">
-      <h4 className={SECTION_TITLE}>REPLICAS · leader epoch {props.leaderEpoch}</h4>
+      <h4 className={SECTION_TITLE}>
+        REPLICAS · leader epoch {props.leaderEpoch}
+        <IsrSummary {...props} />
+      </h4>
       <table className="w-full text-[12px]" data-testid="pl-replicas">
         <thead>
           <tr className="text-left text-[11px] text-status/70">
@@ -627,6 +637,31 @@ function ReplicaTable(props: ViewProps) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * The replica table's summary (M4 follow-up G-3): under min ISR the HW is frozen (strict min
+ * ISR), under-replicated only means fewer copies. Nothing for an offline partition or RF 1.
+ */
+function IsrSummary({ isrState: state, isr, replicas, minIsr }: ViewProps) {
+  if (state === 'in-sync') return null;
+  const inSync = String(isr.length);
+  return state === 'under-min-isr' ? (
+    <span
+      className="font-normal text-danger-text"
+      data-testid="pl-isr-state"
+      data-state={state}
+      title={underMinIsrText(isr.length, minIsr)}
+    >
+      {' '}
+      · ⚠ under min ISR ({inSync} of {String(minIsr)} needed) · HW frozen
+    </span>
+  ) : (
+    <span className="font-normal" data-testid="pl-isr-state" data-state={state}>
+      {' '}
+      · under-replicated: {inSync} of {String(replicas.length)} in sync
+    </span>
   );
 }
 

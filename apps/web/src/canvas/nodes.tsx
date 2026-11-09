@@ -15,6 +15,7 @@ import {
   GroupHeaderLive,
   GroupHeaderStats,
   PartitionLive,
+  PartitionStatus,
   ProducerCounters,
   ProducerRetrying,
   useHoverToolbar,
@@ -45,6 +46,7 @@ import {
   TOPIC_HEADER_HEIGHT,
   TOPIC_ROW_GAP,
   TOPIC_ROW_HEIGHT,
+  TOPIC_STATUS_LINE_HEIGHT,
   TOPIC_WIDTH,
   topicHeight,
 } from './geometry.ts';
@@ -118,7 +120,7 @@ export function TopicNode({ data, selected }: NodeProps<TopicFlowNode>) {
   return (
     <div
       className={`${frameClass(selected)} px-3`}
-      style={{ width: TOPIC_WIDTH, height: topicHeight(t.partitions) }}
+      style={{ width: TOPIC_WIDTH, height: topicHeight(t.partitions, t.replicationFactor) }}
       data-kind="topic"
     >
       <div
@@ -132,14 +134,23 @@ export function TopicNode({ data, selected }: NodeProps<TopicFlowNode>) {
         </span>
       </div>
       {rows.map((i) => (
-        <div
-          key={i}
-          data-partition-row={i}
-          className="flex items-center gap-1.5 text-[11px]"
-          style={{ height: TOPIC_ROW_HEIGHT, marginTop: TOPIC_ROW_GAP }}
-        >
-          <span className="w-[22px] shrink-0 font-medium">P{i}</span>
-          <PartitionLive topicId={t.id} index={i} />
+        <div key={i} data-partition-row={i} style={{ marginTop: TOPIC_ROW_GAP }}>
+          <div
+            className="flex items-center gap-1.5 text-[11px]"
+            style={{ height: TOPIC_ROW_HEIGHT }}
+          >
+            <span className="w-[22px] shrink-0 font-medium">P{i}</span>
+            <PartitionLive topicId={t.id} index={i} />
+          </div>
+          {t.replicationFactor > 1 && (
+            <div
+              className="flex items-center justify-end gap-1 pl-7"
+              style={{ height: TOPIC_STATUS_LINE_HEIGHT }}
+              data-slot="partition-status"
+            >
+              <PartitionStatus topicId={t.id} index={i} />
+            </div>
+          )}
         </div>
       ))}
       <Handle
@@ -157,15 +168,21 @@ export function TopicNode({ data, selected }: NodeProps<TopicFlowNode>) {
         aria-label={`Output of topic ${t.id}: drag to a consumer`}
       />
       {rows.map((i) => (
-        <PartitionAnchors key={i} index={i} />
+        <PartitionAnchors key={i} index={i} replicationFactor={t.replicationFactor} />
       ))}
     </div>
   );
 }
 
 /** Per-partition anchors at the row's left and right edges, for the message overlay (T9). */
-function PartitionAnchors({ index }: { index: number }) {
-  const top = partitionRowCenterY(index);
+function PartitionAnchors({
+  index,
+  replicationFactor,
+}: {
+  index: number;
+  replicationFactor: number;
+}) {
+  const top = partitionRowCenterY(index, replicationFactor);
   return (
     <>
       <Handle
