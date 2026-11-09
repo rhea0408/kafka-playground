@@ -107,4 +107,4 @@ When the last task of a milestone is done, write `docs/milestones/M<n>-summary.m
 Also update "Current milestone" below.
 
 ## Current milestone
-M4: Multi-broker: replication, ISR, controller election, acks, failures, rewind (architecture §11). M4 planning pending: see `docs/milestones/M3-summary.md` (M3 handover notes; M3 decisions in `docs/milestones/M3-decisions.md`). Update this line when a milestone is done.
+M4 done (replication, ISR, controller elections, acks, broker failures, coordinator failover): see `docs/milestones/M4-summary.md` and `docs/milestones/M4-decisions.md`. Next: **M4b** (rewind, event timeline, scrubber, lag chart) or **M5** (fidelity harness), planning pending (summary question 1). Update this line when a milestone is done.
