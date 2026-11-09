@@ -19,6 +19,11 @@ export interface TopologyState {
   readonly connections: readonly Connection[];
   /** Canvas positions by component id. UI only. */
   readonly positions: Readonly<Record<string, XYPosition>>;
+  /**
+   * Scene setting (M4-T12): one-way network delay between machines in sim ms; absent = the
+   * engine's 1 ms. A cross-zone cluster (20 ms) lets acks=1 lose records on a leader crash.
+   */
+  readonly networkDelayMs?: number;
 }
 
 /** The one broker every Sandbox starts with: M2 runs a single-broker cluster. */
@@ -59,6 +64,7 @@ export function withComponentAdded(
 export function withComponentRemoved(state: TopologyState, id: string): TopologyState {
   const { [id]: _removed, ...positions } = state.positions;
   return {
+    ...state,
     components: state.components.filter((c) => c.id !== id),
     connections: state.connections.filter((c) => c.from !== id && c.to !== id),
     positions,

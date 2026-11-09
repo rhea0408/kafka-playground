@@ -16,6 +16,7 @@ import {
   GroupHeaderStats,
   PartitionLive,
   ProducerCounters,
+  ProducerRetrying,
   useHoverToolbar,
 } from './live/live-parts.tsx';
 import { BrokerLive, BrokerToolbar, useBrokerFrameClass } from './live/broker-parts.tsx';
@@ -99,6 +100,7 @@ export function ProducerNode({ data, selected }: NodeProps<ProducerFlowNode>) {
         {String(p.ratePerSec)} msg/s · {keySummary(p.keyStrategy)}
       </Muted>
       <ProducerCounters producerId={p.id} />
+      <ProducerRetrying producerId={p.id} />
       <Handle
         type="source"
         position={Position.Right}

@@ -40,6 +40,8 @@ export type HostResult = DispatchResult;
 export interface InitOptions {
   readonly seed: number;
   readonly topology: TopologyInput;
+  /** One-way network delay between machines, sim ms (engine default 1). Set by some scenes (M4-T12). */
+  readonly networkDelayMs?: number;
 }
 
 interface FrameBase {

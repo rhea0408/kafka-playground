@@ -107,7 +107,69 @@ function groupScene(
   };
 }
 
-export type SceneId = 'default' | 'idle' | 'crash' | 'slow' | 'empty';
+export type SceneId =
+  | 'default'
+  | 'idle'
+  | 'crash'
+  | 'slow'
+  | 'failover'
+  | 'acks1-loss'
+  | 'not-enough-replicas'
+  | 'coordinator-failover'
+  | 'empty';
+
+// ── M4 scene presets (M4-T12) ───────────────────────────────────────────────────────────────
+// Three brokers, orders with 3 partitions and RF 3, keys D/E/F as before.
+
+const BROKERS = ['b1', 'b2', 'b3'] as const;
+
+function clusterScene(options: {
+  readonly topic?: Record<string, unknown>;
+  readonly producer?: Record<string, unknown>;
+  readonly members?: number;
+  readonly networkDelayMs?: number;
+}): TopologyState {
+  const members = Array.from({ length: options.members ?? 1 }, (_, i) => `c${String(i + 1)}`);
+  return {
+    components: parsed([
+      ...BROKERS.map((id) => ({ kind: 'broker', id })),
+      {
+        kind: 'topic',
+        id: DEFAULT_TOPIC,
+        partitions: DEFAULT_PARTITIONS,
+        replicationFactor: 3,
+        minInsyncReplicas: 2,
+        ...options.topic,
+      },
+      {
+        kind: 'producer',
+        id: DEFAULT_PRODUCER,
+        ratePerSec: 5,
+        keyStrategy: { type: 'random', keys: [...DEFAULT_KEYS] },
+        ...options.producer,
+      },
+      ...members.map((id) => ({
+        kind: 'consumer',
+        id,
+        groupId: DEFAULT_GROUP,
+        autoOffsetReset: 'earliest',
+      })),
+    ]),
+    connections: [
+      { from: DEFAULT_PRODUCER, to: DEFAULT_TOPIC },
+      ...members.map((id) => ({ from: DEFAULT_TOPIC, to: id })),
+    ],
+    positions: {
+      [DEFAULT_PRODUCER]: { x: 16, y: 112 },
+      [DEFAULT_TOPIC]: { x: 240, y: 64 },
+      [`group:${DEFAULT_GROUP}`]: { x: 512, y: 112 },
+      b1: { x: 16, y: 320 },
+      b2: { x: 256, y: 320 },
+      b3: { x: 496, y: 320 },
+    },
+    ...(options.networkDelayMs === undefined ? {} : { networkDelayMs: options.networkDelayMs }),
+  };
+}
 
 export interface Scene {
   readonly id: SceneId;
@@ -162,6 +224,35 @@ export const SCENES: readonly Scene[] = [
       ),
   },
   {
+    id: 'failover',
+    label: 'Leader failover',
+    hint: 'RF 3, min.insync.replicas 2, acks=all. Kill the broker that leads P0 (hover it): about 9 s later the controller fences it and an in-sync follower takes over. No acknowledged record is lost; restart the old leader and it rejoins the ISR.',
+    state: () => clusterScene({}),
+  },
+  {
+    id: 'acks1-loss',
+    label: 'acks=1 data loss',
+    hint: 'acks=1, every record keyed D (so all go to P0), 50 msg/s, on a cross-zone network (20 ms between machines): the leader acknowledges before its followers have copied. Kill the leader of P0 while records flow, then restart it once it is fenced: it truncates records that were acknowledged (see "⚠ lost" and the partition log).',
+    state: () =>
+      clusterScene({
+        topic: { minInsyncReplicas: 1 },
+        producer: { acks: '1', ratePerSec: 50, keyStrategy: { type: 'fixed', key: 'D' } },
+        networkDelayMs: 20,
+      }),
+  },
+  {
+    id: 'not-enough-replicas',
+    label: 'Not enough replicas',
+    hint: 'RF 3, min.insync.replicas 2, acks=all. Kill two brokers that follow P0: once they leave the ISR, writes are refused with NOT_ENOUGH_REPLICAS and the producer retries (shown under it). Restart one and writes go through again.',
+    state: () => clusterScene({}),
+  },
+  {
+    id: 'coordinator-failover',
+    label: 'Coordinator failover',
+    hint: 'Two members in orders-app. Kill the broker marked "Coordinator: orders-app": its __consumer_offsets partition moves, the new leader loads the group, and the group stays Stable with its committed offsets (no rebalance).',
+    state: () => clusterScene({ members: 2 }),
+  },
+  {
     id: 'empty',
     label: 'Empty (broker only)',
     hint: 'Build your own flow from the palette.',
@@ -173,7 +264,7 @@ export function sceneById(id: string | null): Scene | undefined {
   return SCENES.find((scene) => scene.id === id);
 }
 
-/** The canvas the Sandbox opens with: `?scene=<id>` (idle, crash, slow, empty) or the default. */
+/** The canvas the Sandbox opens with: `?scene=<id>` (see SCENES) or the default. */
 export function initialSceneFor(search: string): TopologyState {
   return (
     (sceneById(new URLSearchParams(search).get('scene')) ?? SCENES[0])?.state() ??

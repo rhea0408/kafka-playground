@@ -138,3 +138,97 @@ describe('M3 scene presets (M3-T12)', () => {
     ).toBe(true);
   });
 });
+
+describe('M4 scene presets (M4-T12)', () => {
+  function start(id: string) {
+    const scene = sceneById(id);
+    if (scene === undefined) throw new Error(`no scene ${id}`);
+    const state = scene.state();
+    const engine = createEngine({
+      seed: DEFAULT_SEED,
+      topology: toTopologyInput(state),
+      ...(state.networkDelayMs === undefined ? {} : { networkDelayMs: state.networkDelayMs }),
+    });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    const p0Leader = () =>
+      engine.getSnapshot().topics.find((t) => t.config.id === 'orders')?.partitions[0]?.leader ??
+      '';
+    return { engine, events, p0Leader };
+  }
+  const ofType = <T extends EngineEvent['type']>(events: EngineEvent[], type: T) =>
+    events.filter((e): e is Extract<EngineEvent, { type: T }> => e.type === type);
+
+  it('every scene has three brokers and an RF 3 topic', () => {
+    for (const id of ['failover', 'acks1-loss', 'not-enough-replicas', 'coordinator-failover']) {
+      const state = sceneById(id)?.state();
+      expect(state?.components.filter((c) => c.kind === 'broker')).toHaveLength(3);
+      expect(state?.components.find((c) => c.kind === 'topic')).toMatchObject({
+        replicationFactor: 3,
+      });
+    }
+  });
+
+  it('leader failover: a new leader about 9 s after the kill, nothing failed, nothing acked lost', () => {
+    const { engine, events, p0Leader } = start('failover');
+    engine.runUntil(5000);
+    const leader = p0Leader();
+    engine.dispatch({ type: 'KillBroker', id: leader });
+    engine.runUntil(16_000);
+    const elected = ofType(events, 'LeaderElected').find(
+      (e) => e.topic === 'orders' && e.partition === 0,
+    );
+    expect(elected?.previousLeader).toBe(leader);
+    expect(elected?.t).toBeGreaterThan(5000 + 7000);
+    expect(elected?.t).toBeLessThanOrEqual(5000 + 9001);
+    engine.dispatch({ type: 'RestartBroker', id: leader });
+    engine.runUntil(25_000);
+    expect(ofType(events, 'ProduceFailed')).toEqual([]);
+    expect(ofType(events, 'RecordsTruncated').reduce((n, e) => n + e.acked, 0)).toBe(0);
+    expect(engine.getSnapshot().topics[0]?.partitions[0]?.isr).toContain(leader);
+  });
+
+  it('acks=1 data loss: the restarted old leader truncates acknowledged records', () => {
+    const { engine, events, p0Leader } = start('acks1-loss');
+    engine.runUntil(5000);
+    const leader = p0Leader();
+    engine.dispatch({ type: 'KillBroker', id: leader });
+    engine.runUntil(17_000);
+    engine.dispatch({ type: 'RestartBroker', id: leader });
+    engine.runUntil(22_000);
+    const truncated = ofType(events, 'RecordsTruncated').filter((e) => e.topic === 'orders');
+    expect(truncated.reduce((n, e) => n + e.acked, 0)).toBeGreaterThan(0);
+    expect(engine.getSnapshot().topics[0]?.partitions[0]?.lostAcked).toBeGreaterThan(0);
+  });
+
+  it('not enough replicas: with two followers gone, acks=all is refused and retried', () => {
+    const { engine, events, p0Leader } = start('not-enough-replicas');
+    engine.runUntil(5000);
+    const p0 = engine.getSnapshot().topics[0]?.partitions[0];
+    for (const r of p0?.replicas ?? []) {
+      if (r.broker !== p0Leader()) engine.dispatch({ type: 'KillBroker', id: r.broker });
+    }
+    engine.runUntil(20_000);
+    expect(ofType(events, 'ProduceRetried').some((e) => e.error === 'NOT_ENOUGH_REPLICAS')).toBe(
+      true,
+    );
+    expect(engine.getSnapshot().producers[0]?.retrying).toBe('NOT_ENOUGH_REPLICAS');
+  });
+
+  it('coordinator failover: the group moves and stays Stable with its offsets', () => {
+    const { engine, events } = start('coordinator-failover');
+    engine.runUntil(10_000);
+    const coordinator = engine
+      .getSnapshot()
+      .brokers.find((b) => b.coordinatorFor.includes('orders-app'));
+    const generation = engine.getSnapshot().groups[0]?.generation;
+    engine.dispatch({ type: 'KillBroker', id: coordinator?.config.id ?? '' });
+    engine.runUntil(30_000);
+    expect(ofType(events, 'CoordinatorMoved')).toMatchObject([
+      { groupId: 'orders-app', state: 'Stable', generation },
+    ]);
+    const group = engine.getSnapshot().groups.find((g) => g.groupId === 'orders-app');
+    expect(group?.state).toBe('Stable');
+    expect(group?.generation).toBe(generation);
+  });
+});

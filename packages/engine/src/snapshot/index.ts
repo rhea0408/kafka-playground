@@ -25,6 +25,7 @@ import {
 } from '../protocols/controller.ts';
 import { OFFSETS_TOPIC, partitionFor } from '../protocols/coordinator.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
+import type { ProduceError } from '../model/tasks.ts';
 
 /** One replica of a partition: its broker and its own log end and high watermark (M4). */
 export interface ReplicaSnapshot {
@@ -77,6 +78,10 @@ export interface TopicSnapshot {
 export interface ProducerSnapshot {
   readonly config: Producer;
   readonly stats: ProducerStats;
+  /** Records sent and not yet acknowledged or failed (queued, in flight or waiting to retry). */
+  readonly pending: number;
+  /** While records are pending: the error of the last retry (M4-T12), else null. */
+  readonly retrying: ProduceError | null;
 }
 
 /** One partition this consumer owns, from its own point of view. */
@@ -314,6 +319,8 @@ export function buildSnapshot(
     producers: [...state.producers.values()].map((p) => ({
       config: copyPlain(p.config),
       stats: { ...p.stats },
+      pending: p.pending.size,
+      retrying: p.pending.size > 0 ? p.lastRetryError : null,
     })),
     consumers: [...state.consumers.values()].map((c) => consumerSnapshot(state, c)),
     groups: [...state.groups.values()].map((g) => groupSnapshot(state, g)),

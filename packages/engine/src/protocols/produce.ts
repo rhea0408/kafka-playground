@@ -81,6 +81,7 @@ export function startProducer(ctx: EngineContext, config: ProducerState['config'
     senders: new Map(),
     pending: new Map(),
     retryRng: ctx.kernel.rng.fork(`${label}:retries`),
+    lastRetryError: null,
     stats: { sent: 0, acked: 0, failed: 0 },
   };
   ctx.state.producers.set(config.id, producer);
