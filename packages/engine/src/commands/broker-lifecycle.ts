@@ -15,13 +15,14 @@
 import type { EngineContext } from '../model/context.ts';
 import { isAlive, type BrokerState } from '../model/state.ts';
 import type { EngineTask } from '../model/tasks.ts';
-import { wakeConsumer } from '../protocols/consume.ts';
+import { onBrokerGoneForGroups, wakeConsumer } from '../protocols/consume.ts';
 import {
   BROKER_HEARTBEAT_INTERVAL_MS,
   scheduleBrokerHeartbeat,
   sendBrokerHeartbeat,
 } from '../protocols/controller.ts';
 import { onBrokerStoppedForConsumers } from '../protocols/fetch.ts';
+import { onBrokerStoppedForCommits } from '../protocols/offsets-store.ts';
 import { onBrokerDisconnected } from '../protocols/producer-client.ts';
 import {
   ensureReplicaFetcher,
@@ -86,6 +87,9 @@ function stopProcess(ctx: EngineContext, broker: BrokerState, status: 'crashed' 
   onBrokerStoppedForConsumers(ctx, id);
   // Producers with requests in flight to it see the connection drop: NETWORK_EXCEPTION, retry.
   onBrokerDisconnected(ctx, id);
+  // So do consumers whose group coordinator it was; its pending commits vanish.
+  onBrokerStoppedForCommits(ctx, id);
+  onBrokerGoneForGroups(ctx, id);
   // Consumers with a fetch in flight to it see the connection drop: they ask for fresh
   // metadata and fetch again (NetworkClient#handleDisconnections).
   for (const consumer of ctx.state.consumers.values()) {

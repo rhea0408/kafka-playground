@@ -73,6 +73,8 @@ import {
   handleConsumerPollTimeout,
   handleCoordinatorResponse,
   leaveGroup,
+  onCoordinatorDisconnected,
+  onFindCoordinatorResponse,
   ownedPartitionKeys,
   pollCoordinator,
   resetClientGroup,
@@ -363,6 +365,26 @@ export function handleConsumerCoordinatorResponse(
   if (consumer !== undefined) handleCoordinatorResponse(ctx, consumer, task, hooks(ctx));
 }
 
+export function handleFindCoordinatorResponse(
+  ctx: EngineContext,
+  task: Task<'FindCoordinatorResponse'>,
+): void {
+  const consumer = running(ctx, task.consumerId, task.incarnation);
+  if (consumer === undefined || task.groupId !== consumer.config.groupId) return;
+  onFindCoordinatorResponse(consumer, task.coordinator, hooks(ctx));
+}
+
+/** A broker crashed: consumers whose coordinator it was see their connection drop (M4-T8). */
+export function onBrokerGoneForGroups(ctx: EngineContext, brokerId: string): void {
+  for (const consumer of ctx.state.consumers.values()) {
+    if (consumer.status !== 'running') continue;
+    const commitHere = [...consumer.group.commitsInFlight.values()].includes(brokerId);
+    if (consumer.group.coordinator === brokerId || commitHere) {
+      onCoordinatorDisconnected(ctx, consumer, hooks(ctx), brokerId);
+    }
+  }
+}
+
 export function handleHeartbeatTask(ctx: EngineContext, task: Task<'ConsumerHeartbeat'>): void {
   const consumer = running(ctx, task.consumerId, task.incarnation);
   if (consumer !== undefined) handleConsumerHeartbeat(ctx, consumer, task);
@@ -399,16 +421,18 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
   const subscription = topicsOfConsumer(ctx.state, config.id).map((t) => t.config.id);
 
   const next = pollCoordinator(ctx, consumer, subscription, hooks(ctx));
-  if (next !== 'fetch') {
+  if (next === 'wait') {
     consumer.inPoll = true;
-    if (next === 'retry') schedulePoll(ctx, consumer, now + RETRY_BACKOFF_MS);
-    else consumer.pollToken += 1; // woken by a connection or a coordinator answer
+    consumer.pollToken += 1; // woken by a connection or a coordinator answer
     return;
   }
+  // No coordinator known (`retry`): poll() still fetches the partitions it owns
+  // (ClassicKafkaConsumer#poll goes on to pollForFetches) and looks again after retry.backoff.ms.
+  const noCoordinator = next === 'retry';
 
   // Auto-commit what earlier polls returned, once the interval has passed. Only a member in a
   // stable generation can commit (a rejoining member's commit would fail locally).
-  const stable = consumer.group.state === 'stable';
+  const stable = consumer.group.state === 'stable' && !noCoordinator;
   if (
     config.enableAutoCommit &&
     stable &&
@@ -435,7 +459,7 @@ function poll(ctx: EngineContext, consumer: ConsumerState): void {
   }
 
   const returned = drainBuffer(ctx, consumer);
-  const unreachable = sendFetches(ctx, consumer, assigned);
+  const unreachable = sendFetches(ctx, consumer, assigned) || noCoordinator;
   if (returned.length > 0) {
     consumer.inPoll = false;
     consumer.batch = { records: returned, startedAt: now };

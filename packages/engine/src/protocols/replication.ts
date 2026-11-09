@@ -46,7 +46,9 @@ import type {
   ReplicaFetchResult,
 } from '../model/tasks.ts';
 import { canServe, isrEligible, sendAlterPartition } from './controller.ts';
+import { isInternalTopic } from './coordinator.ts';
 import { onHighWatermarkAdvanced, onLeaderMovedForConsumers } from './fetch.ts';
+import { onOffsetsHighWatermark, onOffsetsLeaderChanged } from './offsets-store.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
@@ -197,6 +199,7 @@ export function onLeaderStateChanged(
   if (!maybeIncrementHighWatermark(ctx, topic, partition)) return;
   onHighWatermarkAdvanced(ctx, partition);
   completeDelayedProduces(ctx, topic, partition);
+  if (isInternalTopic(topic.config.id)) onOffsetsHighWatermark(ctx, partition);
 }
 
 // ── ISR management (M4-T4) ───────────────────────────────────────────────────────────────────
@@ -766,6 +769,8 @@ export function onLeaderChanged(
     sendProduceResponse(ctx, parked, { ok: false, error: 'NOT_LEADER_OR_FOLLOWER' });
   }
   onLeaderMovedForConsumers(ctx, partition);
+  if (isInternalTopic(topic.config.id))
+    onOffsetsLeaderChanged(ctx, topic, partition, previousLeader);
   startFollowers(ctx, partition);
   // With the ISR down to the new leader alone, the HW can move to its LEO at once.
   onLeaderStateChanged(ctx, topic, partition);

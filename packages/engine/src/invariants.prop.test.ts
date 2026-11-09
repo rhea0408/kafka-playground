@@ -26,9 +26,22 @@ describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS 
       fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
         const { engine, events } = runScenario(seed, topology, steps);
         const next = new Map<string, number>();
+        // After a leader change the new leader appends at its own LEO, which may be below the
+        // old leader's: offsets the old leader used (and later truncates) are given out again.
+        const newLeader = new Set<string>();
         for (const e of events) {
+          if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') {
+            for (const k of [...next.keys()]) {
+              if (k.slice(0, k.lastIndexOf('-')) === e.component.id) next.delete(k);
+            }
+          }
+          if (e.type === 'LeaderElected') newLeader.add(tp(e));
           if (e.type !== 'RecordAppended') continue;
-          expect(e.offset).toBe(next.get(tp(e)) ?? 0);
+          if (newLeader.delete(tp(e))) {
+            expect(e.offset).toBeLessThanOrEqual(next.get(tp(e)) ?? 0);
+          } else {
+            expect(e.offset).toBe(next.get(tp(e)) ?? 0);
+          }
           next.set(tp(e), e.offset + 1);
         }
         for (const topic of engine.getSnapshot().topics) {
@@ -52,9 +65,18 @@ describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS 
         const { events } = runScenario(seed, topology, steps);
         const producedSeq = new Map<string, number>();
         const last = new Map<string, number>();
+        // A retried record may land after later ones (M4-T7: without idempotence Kafka can
+        // reorder on retries; idempotent order is checked in replication.prop.test.ts), and a
+        // partition's log restarts after a leader change. Those records are left out.
+        const retried = new Set(
+          events.flatMap((e) => (e.type === 'ProduceRetried' ? [e.traceId] : [])),
+        );
         for (const e of events) {
           if (e.type === 'RecordProduced') producedSeq.set(e.traceId, e.seq);
-          if (e.type !== 'RecordAppended' || e.key === null) continue;
+          if (e.type === 'LeaderElected') {
+            for (const k of [...last.keys()]) if (k.startsWith(`${tp(e)}|`)) last.delete(k);
+          }
+          if (e.type !== 'RecordAppended' || e.key === null || retried.has(e.traceId)) continue;
           const sentAt = producedSeq.get(e.traceId);
           expect(sentAt).toBeDefined();
           const k = `${tp(e)}|${e.producerId}|${e.key}`;
@@ -199,8 +221,11 @@ describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS 
           if (e.type === 'ConsumerStopped') stop(e.consumerId, e.t);
           if (e.type === 'RecordConsumed') expect(alive.has(e.consumerId)).toBe(true);
           if (e.type === 'OffsetCommitted' && !alive.has(e.consumerId)) {
-            // A commit already on the wire lands one network delay later.
-            expect(e.t).toBeLessThanOrEqual((stoppedAt.get(e.consumerId) ?? -Infinity) + 1);
+            // A commit already on the wire is accepted one network delay later (and stored once
+            // replicated, M4-T8).
+            expect(e.acceptedAt).toBeLessThanOrEqual(
+              (stoppedAt.get(e.consumerId) ?? -Infinity) + 1,
+            );
           }
         }
       }),

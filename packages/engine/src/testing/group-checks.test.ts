@@ -40,6 +40,7 @@ const commit = (t: number, consumerId: string, generation: number, partition: nu
     topic: 't',
     partition,
     offset: 1,
+    acceptedAt: t,
   });
 
 // Generation 1: c1 owns P0 and P1. Generation 2 takes P1 from c1 (pending revocation).

@@ -39,6 +39,7 @@ import { placementBrokers, type TopicState } from '../model/state.ts';
 import { placeReplicas } from '../model/placement.ts';
 import { closeConsumer, runConsumer } from '../protocols/consume.ts';
 import { electLeaderless } from '../protocols/controller.ts';
+import { isInternalTopic } from '../protocols/coordinator.ts';
 import { restartSchedule } from '../protocols/produce.ts';
 import { startFollowers } from '../protocols/replication.ts';
 import { kindOf, placementTooSmall, reject, type ApplyResult } from './apply.ts';
@@ -54,6 +55,8 @@ export function updateConfig(ctx: EngineContext, command: UpdateConfigCommand): 
   }
   const before = currentConfig(ctx, id);
   if (before === undefined) return reject(`There is no component with id "${id}".`);
+  if (isInternalTopic(id))
+    return reject(`${id} is an internal topic; its config can't be changed here.`);
   if ('id' in patch && patch.id !== id) {
     return reject(`Ids cannot be changed (${id}). Remove the component and add a new one instead.`);
   }

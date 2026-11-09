@@ -63,6 +63,8 @@ export function describeEvent(e: EngineEvent): string {
       return `${e.consumerId}  ${e.groupId}  ${e.error}  ${partitionsText(e.partitions)}`;
     case 'ConsumerStopped':
       return `${e.consumerId}  ${e.reason}`;
+    case 'CoordinatorMoved':
+      return `${e.groupId}  coordinator ${e.from ?? 'none'} → ${e.to === '' ? 'none' : e.to}  ${e.state} gen=${String(e.generation)}`;
     case 'ConsumerStarted':
       return e.consumerId;
     case 'DuplicateProcessed':

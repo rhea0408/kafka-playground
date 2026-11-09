@@ -20,7 +20,7 @@ import {
   stopConsumer,
   wakeConsumer,
 } from '../protocols/consume.ts';
-import { hostsOffsetsTopic } from '../protocols/coordinator.ts';
+import { isInternalTopic } from '../protocols/coordinator.ts';
 import { onTopicRemoved } from '../protocols/fetch.ts';
 import { sendRecord, startProducer } from '../protocols/produce.ts';
 import { registerNewBroker } from '../protocols/controller.ts';
@@ -135,6 +135,9 @@ function addComponent(ctx: EngineContext, input: unknown): ApplyResult {
 function checkAdd(ctx: EngineContext, component: Component): string | undefined {
   const { state } = ctx;
   if (component.kind === 'topic') {
+    if (isInternalTopic(component.id)) {
+      return `Creation of internal topic ${component.id} is prohibited.`;
+    }
     const brokers = state.brokers.size;
     // CreateTopics fails with INVALID_REPLICATION_FACTOR when RF exceeds the available brokers.
     if (component.replicationFactor > brokers) {
@@ -161,16 +164,19 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
   switch (kind) {
     case 'broker': {
       for (const topic of state.topics.values()) {
+        if (
+          isInternalTopic(topic.config.id) &&
+          topic.partitions.some((p) => p.replicas.includes(id))
+        ) {
+          return reject(
+            `Broker ${id} holds replicas of __consumer_offsets, the internal topic where consumer groups keep their committed offsets. Moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
+          );
+        }
         if (topic.partitions.some((p) => p.replicas.includes(id))) {
           return reject(
             `Broker ${id} holds replicas of topic "${topic.config.id}". Remove the topic first: moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
           );
         }
-      }
-      if (hostsOffsetsTopic(ctx, id)) {
-        return reject(
-          `Broker ${id} holds replicas of __consumer_offsets, the internal topic where consumer groups keep their committed offsets. Moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
-        );
       }
       component = (state.brokers.get(id) as { config: Component }).config;
       state.brokers.delete(id);
@@ -178,6 +184,7 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
       break;
     }
     case 'topic':
+      if (isInternalTopic(id)) return reject(`The internal topic ${id} can't be deleted.`);
       component = (state.topics.get(id) as { config: Component }).config;
       state.topics.delete(id);
       onTopicRemoved(ctx, id);
@@ -224,6 +231,12 @@ function connect(ctx: EngineContext, from: string, to: string): ApplyResult {
   if (toKind === undefined) return reject(`There is no component with id "${to}".`);
   const check = canConnect(fromKind, toKind);
   if (!check.ok) return reject(check.reason);
+  // Clients can't produce to or subscribe to an internal topic here (Kafka refuses appends to
+  // internal topics from producers; the coordinator owns it).
+  for (const id of [from, to]) {
+    if (isInternalTopic(id))
+      return reject(`${id} is an internal topic: only the group coordinator writes to it.`);
+  }
   if (ctx.state.connections.some((c) => c.from === from && c.to === to)) {
     return reject(`${from} → ${to} is already connected.`);
   }

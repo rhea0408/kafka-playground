@@ -63,7 +63,10 @@ describe('snapshot + diff benchmark', () => {
       totalMs.push(t2 - t0);
       prev = next;
     }
-    const partitions = prev.topics.reduce((n, t) => n + t.partitions.length, 0);
+    // 1,000 user partitions; __consumer_offsets (50, M4-T8) comes on top.
+    const partitions = prev.topics
+      .filter((t) => t.config.id !== '__consumer_offsets')
+      .reduce((n, t) => n + t.partitions.length, 0);
     expect(partitions).toBe(1000);
     const records = prev.topics.reduce(
       (n, t) => n + t.partitions.reduce((m, p) => m + p.records.length, 0),

@@ -9,7 +9,12 @@ import { Tip } from '../properties/FieldFrame.tsx';
 import { useSimStore } from '../stores/sim-store.ts';
 import { setLogGroup, setLogTarget, useUiStore } from '../stores/ui-store.ts';
 import { buildLogRows, type LogRow } from './log-rows.ts';
-import { groupOffsets, resolveTarget, type GroupOffsets } from './partition-info.ts';
+import {
+  groupOffsets,
+  isInternalTopicName,
+  resolveTarget,
+  type GroupOffsets,
+} from './partition-info.ts';
 
 /** Records shown at first, and how many more each "Show older" adds (M2-decisions T11). */
 export const LOG_PAGE = 50;
@@ -62,7 +67,7 @@ export function PartitionLog() {
       <PartitionLogView
         key={`${String(topic.topicId)}:${String(partition.index)}`}
         topicId={topic.config.id}
-        topicIds={snapshot.topics.map((t) => t.config.id)}
+        topicIds={snapshot.topics.map((t) => t.config.id).filter((id) => !isInternalTopicName(id))}
         partitionCount={topic.partitions.length}
         partition={partition.index}
         leader={partition.leader}

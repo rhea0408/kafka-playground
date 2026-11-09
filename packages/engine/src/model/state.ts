@@ -14,6 +14,7 @@ import type { TopicPartition } from '../protocols/assignors/index.ts';
 import type { GroupState, JoinReason } from './group.ts';
 import type { FetchRequestTask, ParkedProduce, ReplicaFetchRequestTask } from './tasks.ts';
 import type { PartitionSender, PendingRecord } from '../protocols/producer-client.ts';
+import type { PendingCommit } from '../protocols/offsets-store.ts';
 
 export type { GroupState } from './group.ts';
 
@@ -197,6 +198,15 @@ export interface ClientGroupState {
   pollTimeoutToken: number;
   /** Only the join-prepare timeout task carrying the current token runs. */
   joinPrepareToken: number;
+  /**
+   * The group's coordinator as this client last found it (FindCoordinator, M4-T8); null while
+   * unknown ("coordinator dead": a lookup is needed).
+   */
+  coordinator: string | null;
+  /** A FindCoordinator request is in flight. */
+  findInFlight: boolean;
+  /** OffsetCommit requests in flight: commit id → the broker it was sent to. */
+  readonly commitsInFlight: Map<number, string>;
 }
 
 export function createClientGroupState(): ClientGroupState {
@@ -221,6 +231,9 @@ export function createClientGroupState(): ClientGroupState {
     heartbeatToken: 0,
     pollTimeoutToken: 0,
     joinPrepareToken: 0,
+    coordinator: null,
+    findInFlight: false,
+    commitsInFlight: new Map(),
   };
 }
 
@@ -294,11 +307,6 @@ export interface EngineState {
   readonly groups: Map<string, GroupState>;
   /** The KRaft controller's state (M4-T5). */
   readonly controller: ControllerState;
-  /**
-   * Leader broker of each __consumer_offsets partition (offsets.topic.num.partitions = 50), or
-   * null until the first FindCoordinator creates the internal topic (protocols/coordinator.ts).
-   */
-  offsetsTopicLeaders: readonly string[] | null;
   /** In the order they were made. */
   readonly connections: Connection[];
   /**
@@ -318,6 +326,8 @@ export interface EngineState {
    * count acknowledged records lost to truncation (RecordsTruncated.acked, M4-T6).
    */
   readonly ackedTraceIds: Set<string>;
+  /** Offset commits written to __consumer_offsets and waiting for its HW (M4-T8), by commit id. */
+  readonly pendingCommits: Map<number, PendingCommit>;
   /** acks=all produces waiting for the HW (DelayedProduce purgatory), by produce id. */
   readonly parkedProduces: Map<number, ParkedProduce>;
   /**
@@ -348,12 +358,12 @@ export function createState(): EngineState {
       preferredCheckScheduled: false,
       nextSessionToken: 0,
     },
-    offsetsTopicLeaders: null,
     connections: [],
     parkedFetches: new Map(),
     parkedReplicaFetches: new Map(),
     replicaFetchers: new Map(),
     parkedProduces: new Map(),
+    pendingCommits: new Map(),
     ackedTraceIds: new Set(),
     counters: {
       incarnation: 0,

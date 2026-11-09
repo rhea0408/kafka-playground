@@ -72,9 +72,10 @@ class Held {
  * it); there is no default, so a scenario with a slower network cannot silently use a wrong one.
  */
 export function commitViolations(events: readonly EngineEvent[], networkDelayMs: number): string[] {
-  type Gen = { generation: number; owner: Map<string, string> };
-  const current = new Map<string, Gen>();
-  const previous = new Map<string, Gen>();
+  type Gen = { t: number; generation: number; owner: Map<string, string> };
+  // Every completed generation per group, in order: a commit is judged against the generation
+  // that was current when the coordinator accepted it (M4-T8: it is stored later, once replicated).
+  const history = new Map<string, Gen[]>();
   const held = new Held();
   const committer = new Map<string, string>();
   const out: string[] = [];
@@ -83,24 +84,33 @@ export function commitViolations(events: readonly EngineEvent[], networkDelayMs:
     if (e.type === 'RebalanceCompleted') {
       const owner = new Map<string, string>();
       for (const m of e.members) for (const p of m.partitions) owner.set(tp(p), m.memberId);
-      const last = current.get(e.groupId);
-      if (last !== undefined) previous.set(e.groupId, last);
-      current.set(e.groupId, { generation: e.generation, owner });
+      const list = history.get(e.groupId) ?? [];
+      list.push({ t: e.t, generation: e.generation, owner });
+      history.set(e.groupId, list);
     } else if (e.type === 'OffsetCommitted') {
-      const at = `t=${String(e.t)} ${e.consumerId} ${tp(e)} gen ${String(e.generation)}`;
-      const g = current.get(e.groupId);
+      const at = `t=${String(e.acceptedAt)} ${e.consumerId} ${tp(e)} gen ${String(e.generation)}`;
       if (e.memberId === null) {
         out.push(`${at}: accepted without a member id`);
         continue;
       }
-      if (e.generation !== g?.generation) {
-        out.push(`${at}: not the last completed generation (${String(g?.generation)})`);
+      const list = (history.get(e.groupId) ?? []).filter((g) => g.t <= e.acceptedAt);
+      // Generations current at acceptance: the last one before it, or one completed in the same
+      // millisecond (order within a millisecond is not visible here).
+      const before = list.filter((g) => g.t < e.acceptedAt).at(-1);
+      const candidates = [
+        ...(before === undefined ? [] : [before]),
+        ...list.filter((g) => g.t === e.acceptedAt),
+      ];
+      const index = list.findIndex((g) => g.generation === e.generation && candidates.includes(g));
+      const g = list[index];
+      if (g === undefined) {
+        out.push(`${at}: not the last completed generation (${String(before?.generation)})`);
         continue;
       }
       const ownsNow = g.owner.get(tp(e)) === e.memberId;
       const stillHolds =
-        previous.get(e.groupId)?.owner.get(tp(e)) === e.memberId &&
-        held.heldSince(e.consumerId, tp(e), e.t - networkDelayMs);
+        list[index - 1]?.owner.get(tp(e)) === e.memberId &&
+        held.heldSince(e.consumerId, tp(e), e.acceptedAt - networkDelayMs);
       if (!ownsNow && !stillHolds) out.push(`${at}: neither owns nor still holds it`);
       const key = `${e.groupId}|${String(e.generation)}|${tp(e)}`;
       const first = committer.get(key);
