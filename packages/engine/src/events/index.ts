@@ -349,6 +349,11 @@ export type EngineEventPayload =
       readonly from: number;
       readonly to: number;
       readonly acked: number;
+      /**
+       * How many of them had been committed (below a leader's HW). Only an unclean election can
+       * make this non-zero (M4-T9 invariant 3).
+       */
+      readonly committed: number;
       readonly traceIds: readonly string[];
     }
   /** UpdateConfig changed a component's config. Not emitted for a patch that changes nothing. */

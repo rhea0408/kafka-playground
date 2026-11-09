@@ -118,7 +118,8 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     shared: fc.record(groupFields),
     initialDelay: fc.constantFrom(0, 0, 3000),
     // M4-T2: mostly one broker as before; sometimes two or three with replicated topics.
-    brokerCount: fc.constantFrom(1, 1, 2, 3),
+    // M4-T9: up to 5 brokers.
+    brokerCount: fc.constantFrom(1, 1, 2, 3, 3, 5),
   })
   .map(({ topics, producers, consumers, shared, initialDelay, brokerCount }) => {
     const topicIds = topics.map((_, i) => `t${String(i)}`);
@@ -159,7 +160,7 @@ export const topologyArb: fc.Arbitrary<TopologyInput> = fc
     };
   });
 
-const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 'c2', 't0', 't1', 'b1', 'b2', 'ghost');
+const ids = fc.constantFrom('p0', 'p1', 'c0', 'c1', 'c2', 't0', 't1', 'b1', 'b2', 'b5', 'ghost');
 
 const commandArb: fc.Arbitrary<Command> = fc.oneof(
   ids.map((id): Command => ({ type: 'KillConsumer', id })),
@@ -257,7 +258,7 @@ const commandArb: fc.Arbitrary<Command> = fc.oneof(
   fc
     .record({
       type: fc.constantFrom('KillBroker' as const, 'StopBroker' as const, 'RestartBroker' as const),
-      id: fc.constantFrom('b1', 'b2', 'b3', 'ghost'),
+      id: fc.constantFrom('b1', 'b2', 'b3', 'b4', 'b5', 'ghost'),
     })
     .map(({ type, id }): Command => ({ type, id })),
   // Re-adding a removed producer or topic with the same id (a new life / a re-created topic).

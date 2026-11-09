@@ -186,6 +186,10 @@ export function maybeIncrementHighWatermark(
     hw = Math.min(hw, f?.logEndOffset ?? -1);
   }
   if (hw <= leader.highWatermark) return false;
+  for (let o = Math.max(leader.highWatermark, leader.logStartOffset); o < hw; o++) {
+    const record = leader.log[o - leader.logStartOffset];
+    if (record !== undefined) ctx.state.committedRecords.add(record);
+  }
   leader.highWatermark = hw;
   return true;
 }
@@ -573,6 +577,7 @@ function truncateFollower(
     from: offset,
     to,
     acked: removed.filter((r) => ctx.state.ackedTraceIds.has(r.traceId)).length,
+    committed: removed.filter((r) => ctx.state.committedRecords.has(r)).length,
     traceIds: removed.map((r) => r.traceId),
   });
 }

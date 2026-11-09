@@ -11,6 +11,7 @@ import { replayCommandLog } from './engine.ts';
 import type { EngineEvent } from './events/index.ts';
 import { stepsArb, topologyArb, type Step } from './testing/arbitraries.ts';
 import { hashEvents, runScenario } from './testing/run.ts';
+import { clusterSteps, clusterTopology } from './testing/scenes.ts';
 
 const topology: TopologyInput = {
   brokers: [{ kind: 'broker', id: 'b1' }],
@@ -92,7 +93,8 @@ const steps: Step[] = [
   advance(5000),
 ];
 
-describe('determinism', { timeout: 30_000 }, () => {
+// Generous: the random-topology property takes ~12 s under coverage (PR CI), more on slow runners.
+describe('determinism', { timeout: 90_000 }, () => {
   it('two runs with the same seed and commands give byte-identical event logs', () => {
     const a = runScenario(42, topology, steps);
     const b = runScenario(42, topology, steps);
@@ -137,5 +139,30 @@ describe('determinism', { timeout: 30_000 }, () => {
       ),
       { numRuns: 100 },
     );
+  });
+});
+
+describe('determinism with broker failures (M4-T9)', { timeout: 90_000 }, () => {
+  it('same seed and commands give the same event log, with elections, truncation and moves', () => {
+    const a = runScenario(7, clusterTopology, clusterSteps);
+    const b = runScenario(7, clusterTopology, clusterSteps);
+    const types = new Set(a.events.map((e) => e.type));
+    for (const t of [
+      'BrokerFenced',
+      'BrokerUnfenced',
+      'LeaderElected',
+      'IsrShrunk',
+      'IsrExpanded',
+      'ProduceRetried',
+      'ReplicaFetched',
+    ]) {
+      expect(types.has(t as EngineEvent['type'])).toBe(true);
+    }
+    expect(hashEvents(b.events)).toBe(hashEvents(a.events));
+    const replayed: EngineEvent[] = [];
+    replayCommandLog({ seed: 7, topology: clusterTopology }, a.engine.commandLog, (e) =>
+      replayed.push(e),
+    ).runUntil(a.endTime);
+    expect(hashEvents(replayed)).toBe(hashEvents(a.events));
   });
 });

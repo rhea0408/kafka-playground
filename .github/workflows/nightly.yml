@@ -33,3 +33,7 @@ jobs:
       - run: pnpm --filter @kp/engine exec vitest run src/replication.prop.test.ts
         env:
           KP_INVARIANT_RUNS: '1000'
+      # Liveness with broker failures (M4-T9): 300 cases (each simulates over a minute).
+      - run: pnpm --filter @kp/engine exec vitest run src/brokers-liveness.prop.test.ts
+        env:
+          KP_INVARIANT_RUNS: '300'
