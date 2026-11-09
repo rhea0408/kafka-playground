@@ -141,6 +141,8 @@ export function fixtureSnapshot(overrides: Partial<EngineSnapshot> = {}): Engine
         config: parse({ kind: 'broker', id: 'b1' }) as Broker,
         status: 'running',
         fenced: false,
+        state: 'running',
+        coordinatorFor: [],
         partitionsLed: 2,
         partitionsFollowed: 0,
       },
@@ -159,6 +161,13 @@ export function fixtureSnapshot(overrides: Partial<EngineSnapshot> = {}): Engine
       { from: 'p1', to: 't1' },
       { from: 't1', to: 'c1' },
     ],
+    controller: {
+      brokerSessionTimeoutMs: 9000,
+      brokerHeartbeatIntervalMs: 2000,
+      fencedBrokers: [],
+      offlinePartitions: 0,
+      underReplicatedPartitions: 0,
+    },
     ...overrides,
   };
 }

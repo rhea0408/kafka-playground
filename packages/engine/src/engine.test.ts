@@ -31,6 +31,8 @@ describe('createEngine', () => {
         config: BrokerSchema.parse({ kind: 'broker', id: 'b1' }),
         status: 'running',
         fenced: false,
+        state: 'running',
+        coordinatorFor: [],
         partitionsLed: 3,
         partitionsFollowed: 0,
       },

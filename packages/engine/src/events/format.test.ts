@@ -149,4 +149,86 @@ describe('formatEvent', () => {
       '00:09.500  BrokerStarted    b2',
     );
   });
+
+  it('formats replication, election and coordinator events (M4-T10)', () => {
+    const at = { t: 13_001, seq: 1 };
+    expect(
+      formatEvent({
+        ...at,
+        type: 'LeaderElected',
+        topic: 'orders',
+        partition: 0,
+        leader: 'b3',
+        previousLeader: 'b1',
+        leaderEpoch: 1,
+        reason: 'failover',
+      }),
+    ).toBe('00:13.001  LeaderElected    orders-0  leader b1 → b3  epoch=1  failover');
+    expect(
+      formatEvent({
+        ...at,
+        type: 'IsrShrunk',
+        topic: 'orders',
+        partition: 0,
+        removed: ['b1'],
+        isr: ['b3'],
+        elr: ['b1'],
+        partitionEpoch: 2,
+      }),
+    ).toBe('00:13.001  IsrShrunk        orders-0  removed b1  isr=[b3]  elr=[b1]');
+    expect(
+      formatEvent({
+        ...at,
+        type: 'PartitionOffline',
+        topic: 'orders',
+        partition: 0,
+        previousLeader: 'b1',
+        isr: [],
+        elr: ['b1'],
+      }),
+    ).toBe('00:13.001  PartitionOffline orders-0  no leader (was b1)  isr=[]  elr=[b1]');
+    expect(
+      formatEvent({
+        ...at,
+        type: 'RecordsTruncated',
+        broker: 'b1',
+        topic: 'orders',
+        partition: 0,
+        from: 7,
+        to: 9,
+        acked: 2,
+        committed: 0,
+        traceIds: ['a', 'b'],
+      }),
+    ).toBe(
+      '00:13.001  RecordsTruncated b1  orders-0  offsets 7–8 deleted  2 acknowledged record(s) lost',
+    );
+    expect(
+      formatEvent({ ...at, type: 'BrokerFenced', brokerId: 'b1', reason: 'session-timeout' }),
+    ).toBe('00:13.001  BrokerFenced     b1  session-timeout');
+    expect(
+      formatEvent({
+        ...at,
+        type: 'CoordinatorMoved',
+        groupId: 'orders-app',
+        from: 'b1',
+        to: 'b2',
+        state: 'Stable',
+        generation: 3,
+      }),
+    ).toBe('00:13.001  CoordinatorMoved orders-app  coordinator b1 → b2  Stable gen=3');
+    expect(
+      formatEvent({
+        ...at,
+        type: 'ProduceRetried',
+        producerId: 'p1',
+        topic: 'orders',
+        partition: 0,
+        traceId: 'x',
+        attempt: 2,
+        error: 'NETWORK_EXCEPTION',
+        backoffMs: 0,
+      }),
+    ).toBe('00:13.001  ProduceRetried   p1  orders-0  NETWORK_EXCEPTION  retry 2 in 0 ms');
+  });
 });

@@ -19,6 +19,11 @@ import type {
   ProducerStats,
 } from '../model/state.ts';
 import { replicaView } from '../model/state.ts';
+import {
+  BROKER_HEARTBEAT_INTERVAL_MS,
+  BROKER_SESSION_TIMEOUT_MS,
+} from '../protocols/controller.ts';
+import { OFFSETS_TOPIC, partitionFor } from '../protocols/coordinator.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 
 /** One replica of a partition: its broker and its own log end and high watermark (M4). */
@@ -197,6 +202,14 @@ export interface BrokerSnapshot {
   readonly status: BrokerProcessStatus;
   /** The KRaft controller has fenced it: it can't lead or be in an ISR (M4-T5). */
   readonly fenced: boolean;
+  /**
+   * One word for the UI (M4-T10): `running` (up and unfenced), `fenced` (up but fenced, e.g.
+   * restarting before it is unfenced, or crashed but not noticed yet: see `status`),
+   * `shutting-down`, `stopped` or `crashed`.
+   */
+  readonly state: 'running' | 'fenced' | 'shutting-down' | 'stopped' | 'crashed';
+  /** Groups it coordinates: it leads their __consumer_offsets partition. */
+  readonly coordinatorFor: readonly string[];
   /** Its replica manager's view: partitions it leads, and partitions it holds as a follower. */
   readonly partitionsLed: number;
   readonly partitionsFollowed: number;
@@ -210,6 +223,21 @@ export interface EngineSnapshot {
   readonly consumers: readonly ConsumerSnapshot[];
   readonly groups: readonly GroupSnapshot[];
   readonly connections: readonly Connection[];
+  /** The KRaft controller chip (M4-T10). */
+  readonly controller: ControllerSnapshot;
+}
+
+/** The abstract KRaft controller quorum, as the chip on the cluster frame shows it. */
+export interface ControllerSnapshot {
+  /** broker.session.timeout.ms and broker.heartbeat.interval.ms (read-only, real defaults). */
+  readonly brokerSessionTimeoutMs: number;
+  readonly brokerHeartbeatIntervalMs: number;
+  /** Registered brokers it has fenced, by id. */
+  readonly fencedBrokers: readonly string[];
+  /** Partitions without a leader, over every topic (internal ones included). */
+  readonly offlinePartitions: number;
+  /** Partitions whose ISR is smaller than their replica list. */
+  readonly underReplicatedPartitions: number;
 }
 
 export interface SnapshotOptions {
@@ -244,6 +272,8 @@ export function buildSnapshot(
         config: copyPlain(b.config),
         status: b.status,
         fenced: state.controller.brokers.get(b.config.id)?.fenced ?? true,
+        state: brokerState(state, b.config.id),
+        coordinatorFor: coordinatedGroups(state, b.config.id),
         partitionsLed: view.led,
         partitionsFollowed: view.followed,
       };
@@ -282,6 +312,42 @@ export function buildSnapshot(
     consumers: [...state.consumers.values()].map((c) => consumerSnapshot(state, c)),
     groups: [...state.groups.values()].map((g) => groupSnapshot(state, g)),
     connections: state.connections.map(copyPlain),
+    controller: controllerSnapshot(state),
+  };
+}
+
+function brokerState(state: EngineState, id: string): BrokerSnapshot['state'] {
+  const broker = state.brokers.get(id);
+  if (broker === undefined) return 'stopped';
+  if (broker.status !== 'running') return broker.status;
+  return (state.controller.brokers.get(id)?.fenced ?? true) ? 'fenced' : 'running';
+}
+
+function coordinatedGroups(state: EngineState, id: string): string[] {
+  const offsets = state.topics.get(OFFSETS_TOPIC);
+  if (offsets === undefined) return [];
+  return [...state.groups.keys()].filter(
+    (groupId) => offsets.partitions[partitionFor(groupId)]?.leader === id,
+  );
+}
+
+function controllerSnapshot(state: EngineState): ControllerSnapshot {
+  let offline = 0;
+  let underReplicated = 0;
+  for (const topic of state.topics.values()) {
+    for (const p of topic.partitions) {
+      if (p.leader === null) offline++;
+      if (p.isr.length < p.replicas.length) underReplicated++;
+    }
+  }
+  return {
+    brokerSessionTimeoutMs: BROKER_SESSION_TIMEOUT_MS,
+    brokerHeartbeatIntervalMs: BROKER_HEARTBEAT_INTERVAL_MS,
+    fencedBrokers: [...state.controller.brokers]
+      .filter(([, entry]) => entry.fenced)
+      .map(([id]) => id),
+    offlinePartitions: offline,
+    underReplicatedPartitions: underReplicated,
   };
 }
 
