@@ -93,7 +93,8 @@ const steps: Step[] = [
   advance(5000),
 ];
 
-describe('determinism', { timeout: 30_000 }, () => {
+// Generous: the random-topology property takes ~12 s under coverage (PR CI), more on slow runners.
+describe('determinism', { timeout: 90_000 }, () => {
   it('two runs with the same seed and commands give byte-identical event logs', () => {
     const a = runScenario(42, topology, steps);
     const b = runScenario(42, topology, steps);
@@ -141,7 +142,7 @@ describe('determinism', { timeout: 30_000 }, () => {
   });
 });
 
-describe('determinism with broker failures (M4-T9)', { timeout: 30_000 }, () => {
+describe('determinism with broker failures (M4-T9)', { timeout: 90_000 }, () => {
   it('same seed and commands give the same event log, with elections, truncation and moves', () => {
     const a = runScenario(7, clusterTopology, clusterSteps);
     const b = runScenario(7, clusterTopology, clusterSteps);

@@ -18,7 +18,7 @@ const runArb = fc.record({
 
 type Run = typeof runArb extends fc.Arbitrary<infer R> ? R : never;
 
-function snapshotsOf(run: Run): EngineSnapshot[] {
+function snapshotsOf(run: Run): { snapshots: EngineSnapshot[]; frozen: string[] } {
   const engine = createEngine({
     seed: run.seed,
     topology: run.topology,
@@ -35,23 +35,26 @@ function snapshotsOf(run: Run): EngineSnapshot[] {
   }
   // Old snapshots never change while the engine keeps running (no aliasing of engine state).
   expect(snapshots.map((s) => JSON.stringify(s))).toEqual(frozen);
-  return snapshots;
+  return { snapshots, frozen };
 }
 
-describe('snapshot diff properties', { timeout: 30_000 }, () => {
+// Every pair of snapshots of a run is diffed, so a case costs O(steps²) diffs; since M4-T8 most
+// snapshots also carry __consumer_offsets (50 partitions). Coverage instrumentation makes this
+// about 3× slower, hence the budget (PR CI runs with coverage).
+describe('snapshot diff properties', { timeout: 120_000 }, () => {
   it('applyDiff(prev, diffSnapshot(prev, next)) equals next for any two snapshots of a run', () => {
     fc.assert(
       fc.property(runArb, (run) => {
-        const snapshots = snapshotsOf(run);
+        const { snapshots, frozen } = snapshotsOf(run);
         // Every pair, so prev/next span any number of steps (and also go backwards in time).
-        for (const prev of snapshots) {
+        for (const [i, prev] of snapshots.entries()) {
           for (const next of snapshots) {
-            const before = JSON.stringify(prev);
             const diff = diffSnapshot(prev, next);
             expect(applyDiff(prev, diff)).toEqual(next);
-            expect(JSON.stringify(prev)).toBe(before); // prev untouched
             expect(JSON.parse(JSON.stringify(diff))).toEqual(diff); // plain data
           }
+          // prev untouched by any of the diffs taken from it
+          expect(JSON.stringify(prev)).toBe(frozen[i]);
         }
       }),
       { numRuns: 60 },
@@ -61,7 +64,7 @@ describe('snapshot diff properties', { timeout: 30_000 }, () => {
   it('a chain of frame diffs rebuilds the final snapshot (what the UI does)', () => {
     fc.assert(
       fc.property(runArb, (run) => {
-        const snapshots = snapshotsOf(run);
+        const { snapshots } = snapshotsOf(run);
         let ui = snapshots[0] as EngineSnapshot;
         for (let i = 1; i < snapshots.length; i++) {
           const next = snapshots[i] as EngineSnapshot;
