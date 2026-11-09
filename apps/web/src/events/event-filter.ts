@@ -42,6 +42,7 @@ const GROUPS = [
       'PartitionsRevoked',
       'PartitionsLost',
       'ConsumerIdle',
+      'CoordinatorMoved',
     ],
   },
   { label: 'Consumers', types: ['ConsumerStarted', 'ConsumerStopped'] },

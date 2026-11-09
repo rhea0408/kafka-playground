@@ -40,8 +40,10 @@ export function resolveTarget(
   snapshot: EngineSnapshot | null,
   target: LogTarget | null,
 ): ResolvedTarget | null {
-  const topics = snapshot?.topics ?? [];
-  const topic = topics.find((t) => t.config.id === target?.topicId) ?? topics[0];
+  // Internal topics (__consumer_offsets, M4-T8) stay hidden unless named explicitly.
+  const all = snapshot?.topics ?? [];
+  const topics = all.filter((t) => !isInternalTopicName(t.config.id));
+  const topic = all.find((t) => t.config.id === target?.topicId) ?? topics[0];
   if (topic === undefined) return null;
   const wanted = topic.config.id === target?.topicId ? target.partition : 0;
   const partition = topic.partitions[wanted] ?? topic.partitions[0];
@@ -90,3 +92,6 @@ export function groupOffsets(
     };
   });
 }
+
+/** Topics Kafka creates for itself (Topic#isInternal): hidden on the canvas and in pickers. */
+export const isInternalTopicName = (id: string): boolean => id === '__consumer_offsets';

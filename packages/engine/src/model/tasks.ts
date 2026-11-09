@@ -284,6 +284,8 @@ export type EngineTask =
       readonly key: string;
       readonly token: number;
     }
+  /** offsets.commit.timeout.ms passed for a commit not yet replicated (M4-T8). */
+  | { readonly type: 'OffsetCommitTimeout'; readonly commitId: number }
   /** A parked acks=all produce reached its request timeout. */
   | { readonly type: 'DelayedProduceExpire'; readonly produceId: number }
   /** fetch.max.wait.ms has passed for a parked fetch; answer with whatever is there. */

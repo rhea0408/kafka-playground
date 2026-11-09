@@ -6,6 +6,7 @@
 import { assertNever } from '../core/assert-never.ts';
 import type { EngineContext } from '../model/context.ts';
 import type { EngineTask } from '../model/tasks.ts';
+import { handleOffsetCommitTimeout } from './offsets-store.ts';
 import {
   handleConsumerCoordinatorResponse,
   handleConsumerPoll,
@@ -125,6 +126,9 @@ export function runTask(ctx: EngineContext, task: EngineTask): void {
     case 'ProduceRequestTimeout':
     case 'ProduceDeliveryTimeout':
       handleProducerTask(ctx, task);
+      return;
+    case 'OffsetCommitTimeout':
+      handleOffsetCommitTimeout(ctx, task);
       return;
     case 'DelayedProduceExpire':
       handleDelayedProduceExpire(ctx, task);

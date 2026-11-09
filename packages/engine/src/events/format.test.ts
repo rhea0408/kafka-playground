@@ -58,6 +58,7 @@ describe('formatEvent', () => {
         topic: 'orders',
         partition: 2,
         offset: 4,
+        acceptedAt: 5000,
       }),
     ).toBe('00:05.000  OffsetCommitted  g  orders-2  offset=4');
   });

@@ -22,6 +22,7 @@ import {
   sendBrokerHeartbeat,
 } from '../protocols/controller.ts';
 import { onBrokerStoppedForConsumers } from '../protocols/fetch.ts';
+import { onBrokerStoppedForCommits } from '../protocols/offsets-store.ts';
 import { onBrokerDisconnected } from '../protocols/producer-client.ts';
 import {
   ensureReplicaFetcher,
@@ -86,7 +87,8 @@ function stopProcess(ctx: EngineContext, broker: BrokerState, status: 'crashed' 
   onBrokerStoppedForConsumers(ctx, id);
   // Producers with requests in flight to it see the connection drop: NETWORK_EXCEPTION, retry.
   onBrokerDisconnected(ctx, id);
-  // So do consumers whose group coordinator it was.
+  // So do consumers whose group coordinator it was; its pending commits vanish.
+  onBrokerStoppedForCommits(ctx, id);
   onBrokerGoneForGroups(ctx, id);
   // Consumers with a fetch in flight to it see the connection drop: they ask for fresh
   // metadata and fetch again (NetworkClient#handleDisconnections).

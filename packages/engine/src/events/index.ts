@@ -6,7 +6,7 @@
 
 import type { Acks, Assignor, Component } from '@kp/schema';
 import type { Stamped } from '../core/kernel.ts';
-import type { MemberRemovedReason, RebalanceReason } from '../model/group.ts';
+import type { GroupStateName, MemberRemovedReason, RebalanceReason } from '../model/group.ts';
 import type { GroupError, ProduceError } from '../model/tasks.ts';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 
@@ -104,6 +104,11 @@ export type EngineEventPayload =
       readonly topic: string;
       readonly partition: number;
       readonly offset: number;
+      /**
+       * When the coordinator accepted (validated and wrote) the commit. The event itself comes
+       * when the commit is replicated to the HW of its __consumer_offsets partition (M4-T8).
+       */
+      readonly acceptedAt: number;
     }
   /** The coordinator added a new member to the group (its first JoinGroup). */
   | {
@@ -228,6 +233,19 @@ export type EngineEventPayload =
       readonly partition: number;
       readonly from: number;
       readonly to: number;
+    }
+  /**
+   * A group's coordinator moved: the leader of its __consumer_offsets partition changed and the
+   * new leader loaded the group from its replica (M4-T8). `state` and `generation` are what it
+   * loaded; a Stable group stays Stable (no rebalance). `to` is '' while no broker leads it.
+   */
+  | {
+      readonly type: 'CoordinatorMoved';
+      readonly groupId: string;
+      readonly from: string | null;
+      readonly to: string;
+      readonly state: GroupStateName;
+      readonly generation: number;
     }
   /** The consumer process started again (RestartConsumer); it resumes from committed offsets. */
   | { readonly type: 'ConsumerStarted'; readonly consumerId: string }

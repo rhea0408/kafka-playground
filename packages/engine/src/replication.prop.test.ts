@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { createEngineInternal } from './engine.ts';
 import type { EngineEvent } from './events/index.ts';
 import type { EngineContext } from './model/context.ts';
+import { canServe } from './protocols/controller.ts';
 import { stepsArb, topologyArb, type Step } from './testing/arbitraries.ts';
 import { runsFromEnv } from './testing/runs.ts';
 
@@ -28,7 +29,8 @@ function run(seed: number, topology: TopologyInput, steps: readonly Step[]) {
   return { engine, context, events };
 }
 
-const alive = (ctx: EngineContext, id: string) => ctx.state.brokers.get(id)?.status === 'running';
+/** Running, registered and unfenced in this life: a broker that serves and fetches. */
+const alive = (ctx: EngineContext, id: string) => canServe(ctx, id);
 
 describe(
   'replication invariants (fast-check)',
@@ -100,7 +102,8 @@ describe(
         fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
           const { engine, context } = run(seed, topology, steps);
           // Stop new records, then give fetchers time: a backoff (1 s) plus a long poll (500 ms).
-          for (const id of context.state.producers.keys()) {
+          // (and consumers: their commits keep writing to __consumer_offsets)
+          for (const id of [...context.state.producers.keys(), ...context.state.consumers.keys()]) {
             engine.dispatch({ type: 'RemoveComponent', id });
           }
           engine.runUntil(engine.now() + 2000);

@@ -41,7 +41,6 @@ import {
   type MemberRemovedReason,
   type RebalanceReason,
 } from '../model/group.ts';
-import { partitionName } from '../model/partition.ts';
 import type {
   CoordinatorRequest,
   CoordinatorResponse,
@@ -52,6 +51,7 @@ import { isAlive } from '../model/state.ts';
 import { comparePartitions, type AssignorMember } from './assignors/index.ts';
 import { canServe } from './controller.ts';
 import { coordinatorFor } from './coordinator.ts';
+import { writeCommit, writeGroupMetadata } from './offsets-store.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 type Request<A extends CoordinatorRequest['api']> = Extract<CoordinatorRequest, { api: A }>;
@@ -97,14 +97,24 @@ export function handleCoordinatorRequest(
     case 'LeaveGroup':
       leaveGroup(ctx, task.groupId, request);
       return;
-    case 'OffsetCommit':
-      respond(ctx, task, {
-        api: 'OffsetCommit',
-        commitId: request.commitId,
-        error: offsetCommit(ctx, task, request),
-      });
+    case 'OffsetCommit': {
+      // Validated now; stored and answered once replicated (offsets-store.ts, K10).
+      const error = offsetCommit(ctx, task, request);
+      if (error !== null) {
+        respond(ctx, task, { api: 'OffsetCommit', commitId: request.commitId, error });
+      }
       return;
+    }
   }
+}
+
+/**
+ * Whether the group's coordinator process is up: its timers (join, sync, session) run in that
+ * process and die with it; the next coordinator reschedules them when it loads the group.
+ */
+function coordinatorUp(ctx: EngineContext, groupId: string): boolean {
+  const coordinator = coordinatorFor(ctx, groupId);
+  return coordinator !== null && canServe(ctx, coordinator);
 }
 
 /** NOT_COORDINATOR for every request that expects an answer (LeaveGroup gets none here). */
@@ -352,6 +362,7 @@ function initialRebalanceDelayMs(ctx: EngineContext): number {
 
 /** The join phase timer fired: tryCompleteInitialRebalanceElseSchedule, or the rebalance timeout. */
 export function handleGroupJoinTimer(ctx: EngineContext, task: Task<'GroupJoinTimer'>): void {
+  if (!coordinatorUp(ctx, task.groupId)) return; // lost with the coordinator's process
   const group = ctx.state.groups.get(task.groupId);
   if (group?.timerToken !== task.token || group.state !== 'PreparingRebalance') return;
   const { initial } = task;
@@ -397,6 +408,7 @@ function completeJoin(ctx: EngineContext, group: GroupState): void {
       leader: null,
       members: [],
     });
+    writeGroupMetadata(ctx, group);
     return;
   }
   group.protocol = selectProtocol(group);
@@ -540,10 +552,12 @@ function sendSyncResponse(ctx: EngineContext, group: GroupState, member: GroupMe
     generation: group.generation,
     assignment: member.assignment,
   });
+  writeGroupMetadata(ctx, group);
 }
 
 /** Members that got a JoinGroup response but never sent SyncGroup are removed (K8). */
 export function handleGroupSyncTimer(ctx: EngineContext, task: Task<'GroupSyncTimer'>): void {
+  if (!coordinatorUp(ctx, task.groupId)) return; // lost with the coordinator's process
   const group = ctx.state.groups.get(task.groupId);
   if (group?.timerToken !== task.token) return;
   if (group.state !== 'CompletingRebalance' && group.state !== 'Stable') return;
@@ -592,6 +606,7 @@ export function handleMemberSessionExpire(
   ctx: EngineContext,
   task: Task<'MemberSessionExpire'>,
 ): void {
+  if (!coordinatorUp(ctx, task.groupId)) return; // lost with the coordinator's process
   const group = ctx.state.groups.get(task.groupId);
   const member = group?.members.get(task.memberId);
   if (group === undefined || member?.heartbeatToken !== task.token) return;
@@ -671,24 +686,25 @@ function offsetCommit(
   const group = coordinatorGroup(ctx, from.groupId);
   const error = validateOffsetCommit(group, request.memberId, request.generation);
   if (error !== null) return error;
-  for (const o of request.offsets) {
+  // UNKNOWN_TOPIC_OR_PARTITION for a partition only (KafkaApis#handleOffsetCommitRequest); a
+  // topic re-created since the client read it counts as unknown (simplifications).
+  const offsets = request.offsets.filter((o) => {
     const topic = ctx.state.topics.get(o.topic);
-    // UNKNOWN_TOPIC_OR_PARTITION for this partition only (KafkaApis#handleOffsetCommitRequest);
-    // a topic re-created since the client read it counts as unknown (simplifications).
-    if (topic?.partitions[o.partition] === undefined || topic.topicId !== o.topicId) continue;
-    const key = partitionName(o.topic, o.partition);
-    group.committed.set(key, o.offset);
-    ctx.emit({
-      type: 'OffsetCommitted',
-      groupId: group.groupId,
-      consumerId: from.consumerId,
-      memberId: request.memberId === '' ? null : request.memberId,
-      generation: request.generation,
-      topic: o.topic,
-      partition: o.partition,
-      offset: o.offset,
-    });
+    return topic?.partitions[o.partition] !== undefined && topic.topicId === o.topicId;
+  });
+  if (offsets.length === 0) {
+    respond(ctx, from, { api: 'OffsetCommit', commitId: request.commitId, error: null });
+    return null;
   }
+  writeCommit(ctx, {
+    commitId: request.commitId,
+    groupId: group.groupId,
+    consumerId: from.consumerId,
+    incarnation: from.incarnation,
+    memberId: request.memberId,
+    generation: request.generation,
+    offsets,
+  });
   return null;
 }
 
