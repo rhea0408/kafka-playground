@@ -326,6 +326,12 @@ export interface EngineState {
    * count acknowledged records lost to truncation (RecordsTruncated.acked, M4-T6).
    */
   readonly ackedTraceIds: Set<string>;
+  /**
+   * Records that were ever below a leader's high watermark (committed), by identity: records are
+   * shared, frozen objects, so a reused offset holds a different object. A WeakSet: membership
+   * only, never iterated (determinism). Used for RecordsTruncated.committed (M4-T9).
+   */
+  readonly committedRecords: WeakSet<LogRecord>;
   /** Offset commits written to __consumer_offsets and waiting for its HW (M4-T8), by commit id. */
   readonly pendingCommits: Map<number, PendingCommit>;
   /** acks=all produces waiting for the HW (DelayedProduce purgatory), by produce id. */
@@ -365,6 +371,7 @@ export function createState(): EngineState {
     parkedProduces: new Map(),
     pendingCommits: new Map(),
     ackedTraceIds: new Set(),
+    committedRecords: new WeakSet(),
     counters: {
       incarnation: 0,
       brokerIncarnation: 0,

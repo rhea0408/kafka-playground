@@ -180,6 +180,31 @@ describe(
       );
     });
 
+    it('a committed record is never truncated unless an unclean election happened in its partition', () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { events } = run(seed, topology, steps);
+          const unclean = new Set<string>();
+          for (const e of events) {
+            if (e.type === 'ComponentRemoved' && e.component.kind === 'topic') {
+              for (const k of [...unclean])
+                if (k.startsWith(`${e.component.id}#`)) unclean.delete(k);
+            }
+            if (e.type === 'LeaderElected' && e.reason === 'unclean') {
+              unclean.add(`${e.topic}#${String(e.partition)}`);
+            }
+            if (
+              e.type === 'RecordsTruncated' &&
+              !unclean.has(`${e.topic}#${String(e.partition)}`)
+            ) {
+              expect({ at: e.t, committed: e.committed }).toEqual({ at: e.t, committed: 0 });
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
     it('acks=all with effective minISR ≥ 2 and no unclean election never loses an acknowledged record', () => {
       fc.assert(
         fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
