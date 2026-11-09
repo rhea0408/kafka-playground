@@ -18,6 +18,7 @@ import {
   type RefObject,
 } from 'react';
 import { useActions } from '../../actions/actions-context.tsx';
+import { useSimStore } from '../../stores/sim-store.ts';
 import { useUiStore } from '../../stores/ui-store.ts';
 import {
   compactCount,
@@ -79,6 +80,26 @@ export function ProducerCounters({ producerId }: { producerId: string }) {
       <Stat label="acked" value={acked} />
       <Stat label="failed" value={failed} danger={failed > 0} />
     </div>
+  );
+}
+
+/**
+ * While records are waiting to be retried (M4-T7/T12): "⟳ retrying · NOT_ENOUGH_REPLICAS", below
+ * the producer node. Retries are not failures: they end in an ack, or in DELIVERY_TIMEOUT.
+ */
+export function ProducerRetrying({ producerId }: { producerId: string }) {
+  const producer = useSimStore((s) =>
+    s.snapshot?.producers.find((p) => p.config.id === producerId),
+  );
+  if (producer?.retrying === null || producer?.retrying === undefined) return null;
+  return (
+    <span
+      className="absolute left-0 top-full mt-1 whitespace-nowrap rounded-sm border border-dashed border-danger bg-danger-bg px-1 font-mono text-[10px] text-danger-text"
+      data-slot="retrying"
+      title={`${String(producer.pending)} record(s) waiting: the last attempt failed with ${producer.retrying}. The producer retries until delivery.timeout.ms.`}
+    >
+      ⟳ retrying · {producer.retrying}
+    </span>
   );
 }
 

@@ -12,7 +12,12 @@ import type { LogRecord, PartitionState } from './partition.ts';
 import type { Assignor } from '@kp/schema';
 import type { TopicPartition } from '../protocols/assignors/index.ts';
 import type { GroupState, JoinReason } from './group.ts';
-import type { FetchRequestTask, ParkedProduce, ReplicaFetchRequestTask } from './tasks.ts';
+import type {
+  FetchRequestTask,
+  ParkedProduce,
+  ProduceError,
+  ReplicaFetchRequestTask,
+} from './tasks.ts';
 import type { PartitionSender, PendingRecord } from '../protocols/producer-client.ts';
 import type { PendingCommit } from '../protocols/offsets-store.ts';
 
@@ -112,6 +117,8 @@ export interface ProducerState {
   readonly pending: Map<string, PendingRecord>;
   /** Seeded stream for the retry backoff jitter (KIP-580). */
   readonly retryRng: Rng;
+  /** The error of the last retry, cleared by the next acknowledgement (for the UI, M4-T12). */
+  lastRetryError: ProduceError | null;
   stats: ProducerStats;
 }
 

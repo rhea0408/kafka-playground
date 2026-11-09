@@ -131,7 +131,12 @@ export function groupWithCommits(
 }
 
 export function producer(id: string, sent: number, acked: number, failed: number) {
-  return { config: parse({ kind: 'producer', id }) as Producer, stats: { sent, acked, failed } };
+  return {
+    config: parse({ kind: 'producer', id }) as Producer,
+    stats: { sent, acked, failed },
+    pending: 0,
+    retrying: null,
+  };
 }
 
 /** b1; producers p1, p2; topic t1 with two partitions; consumer c1 reading t1. */

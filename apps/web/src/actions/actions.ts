@@ -134,7 +134,16 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
   const pendingIds = new Set<string>();
 
   const init = async (): Promise<DispatchResult> =>
-    report(await call(() => sim.init({ seed, topology: toTopologyInput(topology()) })));
+    report(
+      await call(() => {
+        const state = topology();
+        return sim.init({
+          seed,
+          topology: toTopologyInput(state),
+          ...(state.networkDelayMs === undefined ? {} : { networkDelayMs: state.networkDelayMs }),
+        });
+      }),
+    );
 
   return {
     init,

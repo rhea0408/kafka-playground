@@ -104,6 +104,7 @@ export class SimHost implements SimApi {
         seed: initial.seed,
         topology: initial.topology,
         snapshotRecordsPerPartition: SNAPSHOT_RECORDS_PER_PARTITION,
+        ...(initial.networkDelayMs === undefined ? {} : { networkDelayMs: initial.networkDelayMs }),
       });
     } catch (error) {
       return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -121,6 +122,7 @@ export class SimHost implements SimApi {
         seed: initial.seed,
         topology: initial.topology,
         snapshotRecordsPerPartition: SNAPSHOT_RECORDS_PER_PARTITION,
+        ...(initial.networkDelayMs === undefined ? {} : { networkDelayMs: initial.networkDelayMs }),
       }),
     );
   }

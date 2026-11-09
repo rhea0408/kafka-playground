@@ -297,6 +297,7 @@ export function onAttemptResult(
   const { config } = producer;
   if (result.ok) {
     producer.pending.delete(traceId);
+    producer.lastRetryError = null;
     producer.stats.acked += 1;
     ctx.state.ackedTraceIds.add(traceId);
     ctx.emit({
@@ -318,6 +319,7 @@ export function onAttemptResult(
     return;
   }
   if (error === 'OUT_OF_ORDER_SEQUENCE_NUMBER') sender.bumpEpoch = true;
+  producer.lastRetryError = error;
   // Back in the queue, in send order; the partition waits for its in-flight requests.
   sender.queue.push(pending);
   sender.queue.sort((a, b) => a.order - b.order);
