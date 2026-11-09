@@ -32,6 +32,7 @@ import {
   assignEpoch,
   endOffsetForEpoch,
   leaderLog,
+  TRUNCATED_KEPT,
   truncateReplica,
   type ReplicaLog,
   type FollowerState,
@@ -569,6 +570,19 @@ function truncateFollower(
   const to = own.logEndOffset;
   const removed = truncateReplica(own, offset);
   if (removed.length === 0) return;
+  for (const r of removed) {
+    const acked = ctx.state.ackedTraceIds.has(r.traceId);
+    if (acked) partition.lostAcked += 1;
+    partition.truncated.push({
+      broker: own.broker,
+      offset: r.offset,
+      key: r.key,
+      value: r.value,
+      traceId: r.traceId,
+      acked,
+    });
+  }
+  partition.truncated.splice(0, Math.max(0, partition.truncated.length - TRUNCATED_KEPT));
   ctx.emit({
     type: 'RecordsTruncated',
     broker: own.broker,

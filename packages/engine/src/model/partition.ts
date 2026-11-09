@@ -146,12 +146,32 @@ export interface PartitionState {
   readonly followers: Map<string, FollowerState>;
   /** The replica whose log `log` / offsets below read: the leader, or the last one. */
   view: string;
+  /**
+   * Records followers deleted by truncation (M4-T11), newest last, at most TRUNCATED_KEPT, and how
+   * many acknowledged records were lost in total: for the partition log and the A8 animation.
+   */
+  readonly truncated: TruncatedRecord[];
+  lostAcked: number;
   /** The view replica's log and offsets (see the file comment). */
   readonly log: LogRecord[];
   readonly logStartOffset: number;
   logEndOffset: number;
   highWatermark: number;
 }
+
+/** A record a follower deleted by truncation (the data-loss view). */
+export interface TruncatedRecord {
+  readonly broker: string;
+  readonly offset: number;
+  readonly key: string | null;
+  readonly value: string;
+  readonly traceId: string;
+  /** The producer had been told it was delivered. */
+  readonly acked: boolean;
+}
+
+/** How many truncated records a partition keeps for display. */
+export const TRUNCATED_KEPT = 20;
 
 function createReplicaLog(broker: string): ReplicaLog {
   return {
@@ -194,6 +214,8 @@ export function createPartition(
     replicaLogs,
     followers: new Map(),
     view: first,
+    truncated: [],
+    lostAcked: 0,
     get log() {
       return viewLog().log;
     },

@@ -85,7 +85,12 @@ export function toInputText(value: unknown): string {
  * Zod and get its message ("… must be a whole number."); only an empty box is caught here.
  */
 export function fromInputText(text: string, control: Control): FieldCheck {
-  if (control.type === 'int' || control.type === 'number' || control.type === 'partitions') {
+  if (
+    control.type === 'int' ||
+    control.type === 'number' ||
+    control.type === 'partitions' ||
+    control.type === 'replicationFactor'
+  ) {
     const trimmed = text.trim();
     if (trimmed === '') return { ok: false, error: 'Enter a number.' };
     const n = Number(trimmed);

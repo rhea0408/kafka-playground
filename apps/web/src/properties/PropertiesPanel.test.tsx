@@ -98,8 +98,12 @@ describe('<PropertiesPanel>', () => {
     expect(screen.getByRole('note').textContent).toContain('metadata.max.age.ms');
 
     // Not simulated yet: disabled, real default, the milestone that brings it.
-    const rf = screen.getByLabelText('Replication factor');
-    expect(rf).toHaveProperty('disabled', true);
+    // M4-T11: the replication factor is changed by re-creating the topic.
+    expect(screen.getByLabelText('Replication factor')).toHaveProperty('disabled', false);
+    expect(screen.getByRole('button', { name: /Re-create topic with RF/ })).toHaveProperty(
+      'disabled',
+      true,
+    );
     const retention = screen.getByLabelText('Retention');
     expect(retention).toHaveProperty('disabled', true);
     expect(retention).toHaveProperty('value', '604800000 ms (7 days)');
@@ -107,7 +111,7 @@ describe('<PropertiesPanel>', () => {
       'coming in v0.4',
     );
     expect(document.querySelector('[data-field="replicationFactor"]')?.textContent).toContain(
-      'coming in M4',
+      'records and committed offsets are deleted',
     );
     // The real Kafka config name is shown.
     expect(document.querySelector('[data-field="retentionMs"] code')?.textContent).toBe(

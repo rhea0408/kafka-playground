@@ -28,6 +28,7 @@ import { describeDefault, describeValue, toInputText } from './field-value.ts';
 import { KeyStrategyField } from './KeyStrategyField.tsx';
 import { ManualProduce } from './ManualProduce.tsx';
 import { PartitionsStepper } from './PartitionsStepper.tsx';
+import { ReplicationFactorField } from './ReplicationFactorField.tsx';
 import { GroupPanel } from './GroupPanel.tsx';
 import { ConsumedBy, TopicStats } from './TopicSummary.tsx';
 
@@ -259,7 +260,8 @@ function ConfigRow(props: { component: Component; field: string; meta: FieldMeta
     setState({ draft: state.draft, error });
   };
 
-  const isPartitions = meta.control.type === 'partitions';
+  const isPartitions =
+    meta.control.type === 'partitions' || meta.control.type === 'replicationFactor';
   return (
     <FieldFrame
       inputId={inputId}
@@ -298,6 +300,16 @@ function ConfigRow(props: { component: Component; field: string; meta: FieldMeta
                 current={component.partitions}
                 describedBy={describedBy}
                 commit={commit}
+              />
+            ) : null;
+          case 'replicationFactor':
+            return component.kind === 'topic' ? (
+              <ReplicationFactorField
+                inputId={inputId}
+                topicId={component.id}
+                current={component.replicationFactor}
+                minInsyncReplicas={component.minInsyncReplicas}
+                describedBy={describedBy}
               />
             ) : null;
           case 'keyStrategy':
