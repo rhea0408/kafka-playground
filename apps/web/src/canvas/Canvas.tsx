@@ -205,7 +205,7 @@ export function Canvas() {
       />
       <MessageOverlay />
       {/* The KRaft controller is not a broker: a chip in the canvas corner (M4 Q2, T11). */}
-      <Panel position="top-right" className="!m-3">
+      <Panel position="top-right" className="pointer-events-none !m-3 [&>*]:pointer-events-auto">
         <ControllerChip />
       </Panel>
       <ConnectionHint />

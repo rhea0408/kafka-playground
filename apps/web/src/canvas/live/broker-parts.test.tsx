@@ -85,9 +85,20 @@ describe('<BrokerLive>', () => {
 });
 
 describe('<ControllerChip>', () => {
+  it('is hidden in a single-broker Sandbox', () => {
+    show(base);
+    render(<ControllerChip />, { wrapper: Providers });
+    expect(screen.queryByTestId('controller-chip')).toBeNull();
+  });
+
   it('shows fenced brokers, offline and under-replicated counts', () => {
+    const b1 = base.brokers[0] as BrokerSnapshot;
     show({
       ...base,
+      brokers: [
+        b1,
+        { ...b1, config: { ...b1.config, id: 'b2' }, state: 'crashed', status: 'crashed' },
+      ],
       controller: {
         ...base.controller,
         fencedBrokers: ['b2'],

@@ -7,6 +7,7 @@
 import type { BrokerSnapshot } from '@kp/engine';
 import { NodeToolbar, Position } from '@xyflow/react';
 import { useActions } from '../../actions/actions-context.tsx';
+import { useSimStore } from '../../stores/sim-store.ts';
 import { useUiStore } from '../../stores/ui-store.ts';
 import type { HoverToolbar } from './live-parts.tsx';
 import { useBroker, useController } from './use-live.ts';
@@ -164,7 +165,9 @@ export function BrokerToolbar({ brokerId, toolbar }: { brokerId: string; toolbar
  */
 export function ControllerChip() {
   const controller = useController();
-  if (controller === undefined) return null;
+  const brokers = useSimStore((s) => s.snapshot?.brokers.length ?? 0);
+  // A single-broker Sandbox has nothing to fail over to: the chip would only cover the canvas.
+  if (controller === undefined || brokers < 2) return null;
   const { fencedBrokers, offlinePartitions, underReplicatedPartitions } = controller;
   const trouble = offlinePartitions > 0 || fencedBrokers.length > 0;
   return (
