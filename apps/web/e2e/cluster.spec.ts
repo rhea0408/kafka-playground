@@ -196,3 +196,47 @@ test('worker determinism with broker kills: the same hash as Node', async ({ pag
   expect(ofType(replayed, 'LeaderElected').length).toBeGreaterThan(0);
   expect(workerHash).toBe(hashEvents(replayed));
 });
+
+test('internal topics: a 1-broker restart shows no __consumer_offsets rows until the toggle is on (G-1)', async ({
+  page,
+}) => {
+  await page.goto('/?debug&scene=default');
+  await expect(node(page, 'b1')).toBeVisible();
+  await play10(page);
+  await runPast(page, 3000);
+  await brokerAction(page, 'b1', 'Kill');
+  // About broker.session.timeout.ms later the controller fences b1: every partition goes offline.
+  await expect
+    .poll(async () => ofType(await events(page), 'PartitionOffline').length, { timeout: 20_000 })
+    .toBeGreaterThan(3);
+  // Read before the click: at 10× the election can land before a read after it.
+  const restartedAt = await simTime(page);
+  await brokerAction(page, 'b1', 'Restart');
+  await expect
+    .poll(
+      async () =>
+        ofType(await events(page), 'LeaderElected').filter(
+          (e) => e.topic === 'orders' && e.t > restartedAt,
+        ).length,
+      { timeout: 20_000 },
+    )
+    .toBe(3);
+  await page.getByRole('button', { name: 'Pause' }).click();
+
+  // Only the leader changes, so every row fits in the windowed list.
+  const list = page.getByTestId('event-list');
+  await list.getByRole('button', { name: /^Filter: / }).click();
+  const panel = page.getByRole('group', { name: 'Event types to show' });
+  await panel.getByRole('button', { name: 'Hide all' }).click();
+  await panel.getByRole('checkbox', { name: 'LeaderElected' }).check();
+  await panel.getByRole('checkbox', { name: 'PartitionOffline' }).check();
+  const rows = page.getByRole('region', { name: 'Event list' });
+  await expect(rows).toContainText('orders-0');
+  await expect(rows).not.toContainText('__consumer_offsets');
+  await expect(list.getByRole('button', { name: /^Filter: / })).toContainText(
+    'internal topics hidden',
+  );
+
+  await panel.getByRole('checkbox', { name: /Show internal topics/ }).check();
+  await expect(rows).toContainText('__consumer_offsets');
+});

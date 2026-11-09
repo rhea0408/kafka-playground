@@ -15,14 +15,19 @@ const SMALL_BUTTON =
 
 /**
  * Event-type filter (B7): a disclosure button that opens a panel of labelled checkboxes, one per
- * engine event type, in groups. Escape or the button closes it; focus goes back to the button.
+ * engine event type, in groups, and a "Show internal topics" toggle (M4 follow-up G-1). Escape or
+ * the button closes it; focus goes back to the button.
  */
 export function EventFilter({
   hidden,
   onChange,
+  showInternal,
+  onShowInternalChange,
 }: {
   hidden: HiddenTypes;
   onChange: (hidden: HiddenTypes) => void;
+  showInternal: boolean;
+  onShowInternalChange: (show: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -50,7 +55,7 @@ export function EventFilter({
           setOpen(!open);
         }}
       >
-        Filter: {filterSummary(hidden)}
+        Filter: {filterSummary(hidden, showInternal)}
       </button>
       {open && (
         <div
@@ -101,6 +106,9 @@ export function EventFilter({
               );
             })}
           </div>
+          <div className="flex items-center gap-2 border-t border-divider pt-2">
+            <InternalTopicsToggle checked={showInternal} onChange={onShowInternalChange} />
+          </div>
           <div className="flex gap-2 border-t border-divider pt-2">
             <button
               type="button"
@@ -128,5 +136,34 @@ export function EventFilter({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * "Show internal topics": events about __consumer_offsets (M4-T8). Shared by the event filter and
+ * the partition log's topic picker; both read one setting in the UI store.
+ */
+export function InternalTopicsToggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (show: boolean) => void;
+}) {
+  return (
+    <label
+      className="flex h-5 items-center gap-2 text-[12px]"
+      title="__consumer_offsets is the topic where Kafka stores consumer groups and their committed offsets. Its 50 partitions get leaders and replicas like any topic."
+    >
+      <input
+        type="checkbox"
+        className="size-3.5 accent-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+        checked={checked}
+        onChange={(event) => {
+          onChange(event.target.checked);
+        }}
+      />
+      Show internal topics <span className="font-mono text-status/70">(__consumer_offsets)</span>
+    </label>
   );
 }

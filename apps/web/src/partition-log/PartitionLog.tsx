@@ -13,7 +13,13 @@ import { useFollow } from '../events/use-follow.ts';
 import { INPUT } from '../properties/controls.tsx';
 import { Tip } from '../properties/FieldFrame.tsx';
 import { useSimStore } from '../stores/sim-store.ts';
-import { setLogGroup, setLogTarget, useUiStore } from '../stores/ui-store.ts';
+import {
+  setLogGroup,
+  setLogTarget,
+  setShowInternalTopics,
+  useUiStore,
+} from '../stores/ui-store.ts';
+import { InternalTopicsToggle } from '../events/EventFilter.tsx';
 import { buildLogRows, type LogRow } from './log-rows.ts';
 import {
   groupOffsets,
@@ -53,7 +59,8 @@ export function PartitionLog() {
   const snapshot = useSimStore((s) => s.snapshot);
   const target = useUiStore((s) => s.logTarget);
   const logGroup = useUiStore((s) => s.logGroup);
-  const resolved = resolveTarget(snapshot, target);
+  const showInternal = useUiStore((s) => s.showInternalTopics);
+  const resolved = resolveTarget(snapshot, target, showInternal);
 
   if (snapshot === null || resolved === null) {
     return (
@@ -73,7 +80,10 @@ export function PartitionLog() {
       <PartitionLogView
         key={`${String(topic.topicId)}:${String(partition.index)}`}
         topicId={topic.config.id}
-        topicIds={snapshot.topics.map((t) => t.config.id).filter((id) => !isInternalTopicName(id))}
+        topicIds={snapshot.topics
+          .map((t) => t.config.id)
+          .filter((id) => showInternal || !isInternalTopicName(id))}
+        showInternal={showInternal}
         partitionCount={topic.partitions.length}
         partition={partition.index}
         leader={partition.leader}
@@ -97,6 +107,8 @@ export function PartitionLog() {
 interface ViewProps {
   readonly topicId: string;
   readonly topicIds: readonly string[];
+  /** The "Show internal topics" setting (shared with the event filter, M4 follow-up G-1). */
+  readonly showInternal: boolean;
   readonly partitionCount: number;
   readonly partition: number;
   /** Null while the partition is offline (no leader). */
@@ -159,7 +171,10 @@ function PartitionLogView(props: ViewProps) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="partition-log">
       <div className="flex shrink-0 flex-col gap-3 px-4 pt-4 pb-2">
-        <Picker {...props} />
+        <div className="flex flex-col gap-1">
+          <Picker {...props} />
+          <InternalTopicsToggle checked={props.showInternal} onChange={setShowInternalTopics} />
+        </div>
         <Summary {...props} />
         <div className="flex h-8 w-[328px] items-center gap-2">
           <label htmlFor="pl-key" className="shrink-0 text-[12px]">
