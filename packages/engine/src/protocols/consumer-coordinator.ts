@@ -41,6 +41,7 @@ import type { EngineContext } from '../model/context.ts';
 import type { JoinReason, MemberMetadata } from '../model/group.ts';
 import { partitionName } from '../model/partition.ts';
 import { createClientGroupState, isAlive, type ConsumerState } from '../model/state.ts';
+import { canServe } from './controller.ts';
 import type {
   CommitOffset,
   CoordinatorRequest,
@@ -93,8 +94,10 @@ export function coordinatorReady(ctx: EngineContext, consumer: ConsumerState): b
     markCoordinatorUnknown(consumer);
   }
   if (group.findInFlight) return false;
-  // leastLoadedNode: any broker the client can connect to (here the first live one).
-  const target = [...ctx.state.brokers.values()].find((b) => isAlive(b.status));
+  // leastLoadedNode: a broker in the client's metadata (registered and unfenced) it can reach.
+  const brokers = [...ctx.state.brokers.values()];
+  const target =
+    brokers.find((b) => canServe(ctx, b.config.id)) ?? brokers.find((b) => isAlive(b.status));
   if (target === undefined) return false;
   group.findInFlight = true;
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
@@ -120,7 +123,8 @@ export function onFindCoordinatorResponse(
 ): void {
   consumer.group.findInFlight = false;
   consumer.group.coordinator = coordinator;
-  hooks.wake(consumer);
+  // COORDINATOR_NOT_AVAILABLE: the scheduled retry (retry.backoff.ms) asks again, not a wake-up.
+  if (coordinator !== null) hooks.wake(consumer);
 }
 
 /**
@@ -132,13 +136,17 @@ export function onCoordinatorDisconnected(
   ctx: EngineContext,
   consumer: ConsumerState,
   hooks: PollHooks,
+  brokerId: string,
 ): void {
   const { group } = consumer;
-  markCoordinatorUnknown(consumer);
-  if ((group.state === 'preparing' || group.state === 'completing') && !group.joinRetry) {
-    retryJoin(consumer, 'rejoin-after-error');
+  if (group.coordinator === brokerId) {
+    markCoordinatorUnknown(consumer);
+    if ((group.state === 'preparing' || group.state === 'completing') && !group.joinRetry) {
+      retryJoin(consumer, 'rejoin-after-error');
+    }
   }
-  for (const commitId of [...group.commitsInFlight]) {
+  for (const [commitId, target] of [...group.commitsInFlight]) {
+    if (target !== brokerId) continue;
     onCommitResponse(
       ctx,
       consumer,
@@ -153,7 +161,7 @@ export function onCoordinatorDisconnected(
 function send(ctx: EngineContext, consumer: ConsumerState, request: CoordinatorRequest): boolean {
   const broker = consumer.group.coordinator;
   if (broker === null) return false;
-  if (request.api === 'OffsetCommit') consumer.group.commitsInFlight.add(request.commitId);
+  if (request.api === 'OffsetCommit') consumer.group.commitsInFlight.set(request.commitId, broker);
   ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
     type: 'CoordinatorRequest',
     broker,
@@ -720,7 +728,13 @@ export function commitPositions(
     generation: group.generation,
     offsets,
   });
-  return sent ? commitId : null;
+  if (!sent) {
+    // No known coordinator: the commit fails as retriable (COORDINATOR_NOT_AVAILABLE).
+    emitCommitFailed(ctx, consumer, 'COORDINATOR_NOT_AVAILABLE', offsets);
+    coordinatorReady(ctx, consumer);
+    return null;
+  }
+  return commitId;
 }
 
 function emitCommitFailed(

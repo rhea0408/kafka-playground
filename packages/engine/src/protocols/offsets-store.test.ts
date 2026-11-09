@@ -143,3 +143,69 @@ describe('coordinator failover (M4-T8)', () => {
     expect(ofType(events, 'RebalanceStarted').filter((e) => e.t > 8000)).toEqual([]);
   });
 });
+
+describe('review of M4-T8: regressions', () => {
+  it('members parked in JoinGroup are answered NOT_COORDINATOR when leadership moves to the preferred replica', () => {
+    const { engine, context } = start();
+    engine.runUntil(8000);
+    const original = coordinatorFor(context, 'orders-app') ?? '';
+    engine.dispatch({ type: 'StopBroker', id: original });
+    engine.runUntil(10_000);
+    engine.dispatch({ type: 'RestartBroker', id: original });
+    engine.runUntil(29_990);
+    // A third member joins just before the preferred-leader check (every 30 s) moves the group's
+    // partition back to its preferred replica: the JoinGroups are parked at the old coordinator.
+    engine.dispatch({
+      type: 'AddComponent',
+      component: { kind: 'consumer', id: 'c3', groupId: 'orders-app', autoOffsetReset: 'earliest' },
+    });
+    engine.dispatch({ type: 'Connect', from: 'orders', to: 'c3' });
+    engine.runUntil(90_000);
+    expect(coordinatorFor(context, 'orders-app')).toBe(original);
+    const group = context.state.groups.get('orders-app');
+    expect(group?.state).toBe('Stable');
+    expect(group?.members.size).toBe(3);
+    for (const c of context.state.consumers.values()) expect(c.group.state).toBe('stable');
+  });
+
+  it('clients cannot produce to, read or reconfigure __consumer_offsets', () => {
+    const { engine } = start();
+    engine.runUntil(1000);
+    expect(engine.dispatch({ type: 'Connect', from: 'p1', to: OFFSETS_TOPIC })).toMatchObject({
+      ok: false,
+    });
+    expect(engine.dispatch({ type: 'Connect', from: OFFSETS_TOPIC, to: 'c1' })).toMatchObject({
+      ok: false,
+    });
+    expect(
+      engine.dispatch({ type: 'UpdateConfig', id: OFFSETS_TOPIC, patch: { partitions: 60 } }),
+    ).toMatchObject({ ok: false });
+  });
+
+  it('while the coordinator is down, consumers keep consuming and look it up only every retry.backoff.ms', () => {
+    // RF 1 partitions on the surviving brokers have nothing to wait for; with RF 3 every ISR
+    // would still hold the dead broker (and freeze the HW) until it is fenced.
+    const topology = scene();
+    const { engine, context } = createEngineInternal({
+      seed: 1,
+      topology: {
+        ...topology,
+        topics: [{ kind: 'topic', id: 'orders', partitions: 6, replicationFactor: 1 }],
+      },
+    });
+    const events: EngineEvent[] = [];
+    engine.on((e) => events.push(e));
+    engine.runUntil(8000);
+    const coordinator = coordinatorFor(context, 'orders-app') ?? '';
+    engine.dispatch({ type: 'KillBroker', id: coordinator });
+    const before = engine.stepsProcessed();
+    engine.runUntil(16_000);
+    // Two consumers retrying every 100 ms for 8 s, plus the normal work: not one lookup per ms.
+    expect(engine.stepsProcessed() - before).toBeLessThan(8000);
+    const consumedFromLive = ofType(events, 'RecordConsumed').filter((e) => {
+      const leader = context.state.topics.get('orders')?.partitions[e.partition]?.leader;
+      return e.t > 9000 && e.t < 16_000 && leader !== coordinator;
+    });
+    expect(consumedFromLive.length).toBeGreaterThan(0);
+  });
+});

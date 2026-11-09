@@ -58,6 +58,28 @@ describe(
       );
     });
 
+    it("an idempotent producer's records keep their order in every log (sequences increase per epoch)", () => {
+      fc.assert(
+        fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
+          const { context } = run(seed, topology, steps);
+          for (const topic of context.state.topics.values()) {
+            for (const p of topic.partitions) {
+              for (const replica of p.replicaLogs.values()) {
+                const last = new Map<string, number>();
+                for (const r of replica.log) {
+                  if (r.pid < 0) continue;
+                  const k = `${String(r.pid)}/${String(r.producerEpoch)}`;
+                  expect(r.sequence).toBeGreaterThan(last.get(k) ?? -1);
+                  last.set(k, r.sequence);
+                }
+              }
+            }
+          }
+        }),
+        { numRuns: NUM_RUNS },
+      );
+    });
+
     it('an idempotent (acks=all) producer never writes a record twice into one log', () => {
       fc.assert(
         fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {

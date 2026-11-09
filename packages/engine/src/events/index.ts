@@ -237,7 +237,8 @@ export type EngineEventPayload =
   /**
    * A group's coordinator moved: the leader of its __consumer_offsets partition changed and the
    * new leader loaded the group from its replica (M4-T8). `state` and `generation` are what it
-   * loaded; a Stable group stays Stable (no rebalance). `to` is '' while no broker leads it.
+   * loaded; a Stable group stays Stable (no rebalance). While the partition has no leader nothing
+   * is emitted: the group is unavailable until a leader loads it.
    */
   | {
       readonly type: 'CoordinatorMoved';

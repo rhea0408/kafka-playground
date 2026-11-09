@@ -35,6 +35,9 @@ import { onLeaderAppended, onLeaderStateChanged } from './replication.ts';
 
 type Task<T extends EngineTask['type']> = Extract<EngineTask, { type: T }>;
 
+/** The writer id of the coordinator's records. */
+const COORDINATOR_WRITER = '__group_coordinator';
+
 /** offsets.commit.timeout.ms default (GroupCoordinatorConfig). */
 export const OFFSETS_COMMIT_TIMEOUT_MS = 5000;
 
@@ -99,7 +102,7 @@ function appendInternal(
     key,
     value,
     timestamp: ctx.kernel.now(),
-    producerId: '__group_coordinator',
+    producerId: COORDINATOR_WRITER,
     traceId,
     sizeBytes: INTERNAL_RECORD_BYTES,
   });
@@ -240,7 +243,7 @@ export function onBrokerStoppedForCommits(ctx: EngineContext, brokerId: string):
  */
 export function onOffsetsLeaderChanged(
   ctx: EngineContext,
-  topic: TopicState,
+  _topic: TopicState,
   partition: PartitionState,
   previousLeader: string | null,
 ): void {
@@ -249,10 +252,28 @@ export function onOffsetsLeaderChanged(
     ctx.state.pendingCommits.delete(id);
     answerCommit(ctx, pending, 'NOT_COORDINATOR');
   }
+  // GroupMetadataManager#onUnloaded: the old coordinator answers every parked JoinGroup and
+  // SyncGroup with NOT_COORDINATOR (a broker that stays up, e.g. after a preferred election).
+  for (const [groupId, old] of ctx.state.groups) {
+    if (partitionFor(groupId) !== partition.index) continue;
+    for (const m of old.members.values()) {
+      const api = m.awaitingJoin ? 'JoinGroup' : m.awaitingSync ? 'SyncGroup' : null;
+      if (api === null) continue;
+      m.awaitingJoin = false;
+      m.awaitingSync = false;
+      ctx.kernel.scheduleIn(ctx.config.networkDelayMs, {
+        type: 'CoordinatorResponse',
+        groupId,
+        consumerId: m.consumerId,
+        incarnation: m.incarnation,
+        response: { api, error: 'NOT_COORDINATOR' },
+      });
+    }
+  }
   const leader = leaderLog(partition);
   if (leader === undefined) return;
   for (const [groupId, old] of [...ctx.state.groups]) {
-    if (partitionFor(groupId, topic.partitions.length) !== partition.index) continue;
+    if (partitionFor(groupId) !== partition.index) continue;
     const loaded = loadGroup(ctx, groupId, leader.log, old);
     ctx.state.groups.set(groupId, loaded);
     ctx.emit({
@@ -279,6 +300,7 @@ function loadGroup(
   const prefix = `offset/${groupId}/`;
   let metadata: GroupRecord | null = null;
   for (const record of log) {
+    if (record.producerId !== COORDINATOR_WRITER) continue; // only the coordinator's own records
     const key = record.key ?? '';
     if (key === groupKey(groupId)) {
       metadata = JSON.parse(record.value) as GroupRecord;

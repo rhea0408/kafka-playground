@@ -526,6 +526,8 @@ function syncGroup(ctx: EngineContext, from: Sender, request: Request<'SyncGroup
           partitions: m.assignment,
         })),
       });
+      // The leader's SyncGroup stores the group's new state (one group metadata record).
+      writeGroupMetadata(ctx, group);
       for (const m of group.members.values()) {
         if (!m.awaitingSync) continue;
         m.awaitingSync = false;
@@ -552,7 +554,6 @@ function sendSyncResponse(ctx: EngineContext, group: GroupState, member: GroupMe
     generation: group.generation,
     assignment: member.assignment,
   });
-  writeGroupMetadata(ctx, group);
 }
 
 /** Members that got a JoinGroup response but never sent SyncGroup are removed (K8). */

@@ -164,6 +164,14 @@ function removeComponent(ctx: EngineContext, id: string): ApplyResult {
   switch (kind) {
     case 'broker': {
       for (const topic of state.topics.values()) {
+        if (
+          isInternalTopic(topic.config.id) &&
+          topic.partitions.some((p) => p.replicas.includes(id))
+        ) {
+          return reject(
+            `Broker ${id} holds replicas of __consumer_offsets, the internal topic where consumer groups keep their committed offsets. Moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
+          );
+        }
         if (topic.partitions.some((p) => p.replicas.includes(id))) {
           return reject(
             `Broker ${id} holds replicas of topic "${topic.config.id}". Remove the topic first: moving replicas to other brokers (partition reassignment) arrives in v0.2.`,
@@ -223,6 +231,12 @@ function connect(ctx: EngineContext, from: string, to: string): ApplyResult {
   if (toKind === undefined) return reject(`There is no component with id "${to}".`);
   const check = canConnect(fromKind, toKind);
   if (!check.ok) return reject(check.reason);
+  // Clients can't produce to or subscribe to an internal topic here (Kafka refuses appends to
+  // internal topics from producers; the coordinator owns it).
+  for (const id of [from, to]) {
+    if (isInternalTopic(id))
+      return reject(`${id} is an internal topic: only the group coordinator writes to it.`);
+  }
   if (ctx.state.connections.some((c) => c.from === from && c.to === to)) {
     return reject(`${from} → ${to} is already connected.`);
   }

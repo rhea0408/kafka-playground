@@ -205,8 +205,8 @@ export interface ClientGroupState {
   coordinator: string | null;
   /** A FindCoordinator request is in flight. */
   findInFlight: boolean;
-  /** OffsetCommit requests in flight to the coordinator, by commit id. */
-  readonly commitsInFlight: Set<number>;
+  /** OffsetCommit requests in flight: commit id → the broker it was sent to. */
+  readonly commitsInFlight: Map<number, string>;
 }
 
 export function createClientGroupState(): ClientGroupState {
@@ -233,7 +233,7 @@ export function createClientGroupState(): ClientGroupState {
     joinPrepareToken: 0,
     coordinator: null,
     findInFlight: false,
-    commitsInFlight: new Set(),
+    commitsInFlight: new Map(),
   };
 }
 

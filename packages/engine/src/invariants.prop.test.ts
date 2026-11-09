@@ -65,9 +65,18 @@ describe('engine invariants (fast-check)', { timeout: Math.max(30_000, NUM_RUNS 
         const { events } = runScenario(seed, topology, steps);
         const producedSeq = new Map<string, number>();
         const last = new Map<string, number>();
+        // A retried record may land after later ones (M4-T7: without idempotence Kafka can
+        // reorder on retries; idempotent order is checked in replication.prop.test.ts), and a
+        // partition's log restarts after a leader change. Those records are left out.
+        const retried = new Set(
+          events.flatMap((e) => (e.type === 'ProduceRetried' ? [e.traceId] : [])),
+        );
         for (const e of events) {
           if (e.type === 'RecordProduced') producedSeq.set(e.traceId, e.seq);
-          if (e.type !== 'RecordAppended' || e.key === null) continue;
+          if (e.type === 'LeaderElected') {
+            for (const k of [...last.keys()]) if (k.startsWith(`${tp(e)}|`)) last.delete(k);
+          }
+          if (e.type !== 'RecordAppended' || e.key === null || retried.has(e.traceId)) continue;
           const sentAt = producedSeq.get(e.traceId);
           expect(sentAt).toBeDefined();
           const k = `${tp(e)}|${e.producerId}|${e.key}`;
