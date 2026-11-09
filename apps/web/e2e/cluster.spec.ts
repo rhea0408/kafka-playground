@@ -233,6 +233,10 @@ test('internal topics: a 1-broker restart shows no __consumer_offsets rows until
   const rows = page.getByRole('region', { name: 'Event list' });
   await expect(rows).toContainText('orders-0');
   await expect(rows).not.toContainText('__consumer_offsets');
+  // G-2: b1 held the only copy, so the election reads as a last-known-leader one, not data loss.
+  await expect(rows).toContainText('unclean (last known leader: it held the only copy');
+  await expect(rows).not.toContainText('records may be lost');
+  await expect(node(page, 'orders').locator('[data-slot="lost"]')).toHaveCount(0);
   await expect(list.getByRole('button', { name: /^Filter: / })).toContainText(
     'internal topics hidden',
   );

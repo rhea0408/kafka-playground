@@ -94,6 +94,7 @@ const restart: EngineEvent[] = [
     previousLeader: null,
     leaderEpoch: 2,
     reason: 'unclean',
+    lastKnownLeader: true,
   },
   {
     t: 3,
