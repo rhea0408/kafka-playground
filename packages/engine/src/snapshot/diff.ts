@@ -28,6 +28,7 @@ import type {
   ConsumerSnapshot,
   EngineSnapshot,
   GroupSnapshot,
+  ControllerSnapshot,
   PartitionSnapshot,
   ProducerSnapshot,
   TopicSnapshot,
@@ -86,6 +87,8 @@ interface FieldDiffs {
   readonly groups: KeyedDiff<GroupSnapshot>;
   /** Sent whole when anything about the connections changed (they are few and small). */
   readonly connections: readonly Connection[];
+  /** Sent whole when it changed (a few numbers). */
+  readonly controller: ControllerSnapshot;
 }
 
 /** What changed from one snapshot to the next. `{}` when nothing changed. */
@@ -158,6 +161,7 @@ const DIFFERS: Differs = {
   consumers: (prev, next) => diffKeyed(prev, next, consumerId, wholeEntry),
   groups: (prev, next) => diffKeyed(prev, next, groupId, wholeEntry),
   connections: (prev, next) => (deepEqual(prev, next) ? undefined : next),
+  controller: (prev, next) => (deepEqual(prev, next) ? undefined : next),
 };
 
 const APPLIERS: Appliers = {
@@ -168,6 +172,7 @@ const APPLIERS: Appliers = {
   consumers: (prev, d) => applyKeyed(prev, d, consumerId, consumerId, takeEntry),
   groups: (prev, d) => applyKeyed(prev, d, groupId, groupId, takeEntry),
   connections: (_prev, next) => next,
+  controller: (_prev, next) => next,
 };
 
 const FIELDS = Object.keys(DIFFERS) as (keyof EngineSnapshot)[];

@@ -229,3 +229,11 @@ Checked against the **Apache Kafka 4.4.0** tag (commit 1156b27, `MetadataVersion
 | T9-5 | Determinism: a three-broker scenario with crashes, a controlled shutdown, restarts, elections, truncation and retries replays to the same hash (`determinism.test.ts`, scene in `testing/scenes.ts`). The browser-worker hash with broker kills is in T12's Playwright (it needs the T11 broker toolbar). | — | — |
 | T9-6 | **Performance baseline (NFR-2.4):** 60 sim-seconds of the three-broker scene (RF 3, 20 + 5 msg/s, two-member group) take a median **69 ms** of engine time headless on the dev machine (~900× real time, 8,500 events); `scripts/cluster.perf.test.ts` prints it. | — | Recorded for the v0.2 load work. |
 | T9-7 | Nightly: `replication.prop.test.ts` at 1000 cases, `brokers-liveness.prop.test.ts` at 300. | — | Each liveness case simulates over a minute. |
+
+## T10 – Snapshot, events and formatting
+
+| # | Decision | Alternatives | Why |
+|---|---|---|---|
+| T10-1 | Broker snapshots gain `state` (`running`, `fenced`, `shutting-down`, `stopped`, `crashed`) next to the process `status` and `fenced`, and `coordinatorFor` (groups whose `__consumer_offsets` partition it leads). A broker that crashed shows `crashed` at once, although the controller only fences it 9 s later (`fenced` tells the two apart). | Show `running` until fenced. | The canvas shows what the player did; the controller chip shows what the cluster knows. |
+| T10-2 | `EngineSnapshot.controller`: `brokerSessionTimeoutMs`, `brokerHeartbeatIntervalMs`, `fencedBrokers`, `offlinePartitions`, `underReplicatedPartitions` (internal topic included); diffed whole. | — | The controller chip (T11). |
+| T10-3 | Every new event has a `formatEvent` line and a filter group: "Broker" (BrokerStarted/Stopped/Fenced/Unfenced), "Replication" (ReplicaFetched, IsrShrunk/Expanded, LeaderElected, PartitionOffline, RecordsTruncated), `ProduceRetried` under "Records", `CoordinatorMoved` under "Group". | — | Plan T10. |

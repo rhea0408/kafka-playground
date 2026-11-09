@@ -229,3 +229,37 @@ describe('member status and session (M4-T0, review F-6 / F-7)', () => {
     expect(c2?.sessionExpiresAt).toBeGreaterThan(10_000);
   });
 });
+
+describe('broker and controller snapshots (M4-T10)', () => {
+  it('report broker state, coordinated groups and the controller summary', () => {
+    const engine = createEngine({
+      seed: 1,
+      topology: {
+        brokers: ['b1', 'b2', 'b3'].map((id) => ({ kind: 'broker' as const, id })),
+        topics: [{ kind: 'topic', id: 'orders', partitions: 3, replicationFactor: 3 }],
+        consumers: [{ kind: 'consumer', id: 'c1', groupId: 'g' }],
+        connections: [{ from: 'orders', to: 'c1' }],
+      },
+    });
+    engine.runUntil(5000);
+    const before = engine.getSnapshot();
+    const coordinators = before.brokers.filter((b) => b.coordinatorFor.includes('g'));
+    expect(coordinators).toHaveLength(1);
+    expect(before.controller).toMatchObject({
+      brokerSessionTimeoutMs: 9000,
+      brokerHeartbeatIntervalMs: 2000,
+      fencedBrokers: [],
+      offlinePartitions: 0,
+      underReplicatedPartitions: 0,
+    });
+    engine.dispatch({ type: 'KillBroker', id: 'b2' });
+    engine.runUntil(5100);
+    expect(engine.getSnapshot().brokers.find((b) => b.config.id === 'b2')?.state).toBe('crashed');
+    engine.runUntil(20_000);
+    const after = engine.getSnapshot();
+    expect(after.controller.fencedBrokers).toEqual(['b2']);
+    expect(after.controller.underReplicatedPartitions).toBeGreaterThan(0);
+    engine.dispatch({ type: 'RestartBroker', id: 'b2' });
+    expect(engine.getSnapshot().brokers.find((b) => b.config.id === 'b2')?.state).toBe('fenced');
+  });
+});
