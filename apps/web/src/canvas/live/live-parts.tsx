@@ -6,7 +6,7 @@
  * snapshots and never waits for message dots (animations.md, ADR 0008).
  */
 
-import type { ConsumerSnapshot, GroupSnapshot, LogRecord } from '@kp/engine';
+import type { ConsumerSnapshot, GroupSnapshot, LogRecord, PartitionSnapshot } from '@kp/engine';
 import { NodeToolbar, Position } from '@xyflow/react';
 import {
   useCallback,
@@ -151,23 +151,81 @@ export function PartitionLive({ topicId, index }: { topicId: string; index: numb
           LEO {formatCount(leo)} · HW {formatCount(hw)}
         </span>
       </div>
-      {partition !== undefined && (
-        <span
-          className="shrink-0 rounded-sm bg-muted px-1 py-0.5 font-mono text-[10px] font-semibold"
-          data-slot="leader"
-          title={
-            partition.leader === null
-              ? 'Offline: no leader. Producers and consumers wait until a replica can lead again.'
-              : `Leader: broker ${partition.leader}. Producers write to and consumers read from the leader.`
-          }
-          aria-label={
-            partition.leader === null ? 'Offline: no leader' : `Leader: broker ${partition.leader}`
-          }
-        >
-          {partition.leader === null ? 'offline' : `L ${partition.leader}`}
+      {partition !== undefined && <ReplicaColumn partition={partition} />}
+    </>
+  );
+}
+
+/**
+ * The right column of a partition row (M4-T11): the leader badge (A7 flip on change) and, with
+ * RF > 1, one chip per replica: solid while in sync, dashed and marked "out" when not (A9), never
+ * color alone. Under-replicated, offline and lost-records chips sit with them (A8).
+ */
+function ReplicaColumn({ partition }: { partition: PartitionSnapshot }) {
+  const reduced = useReducedMotion();
+  const leaderRef = useRef<string | null | undefined>(undefined);
+  const lostRef = useRef<number | undefined>(undefined);
+  const flip = leaderRef.current !== undefined && leaderRef.current !== partition.leader;
+  const lostNow = lostRef.current !== undefined && partition.lostAcked > lostRef.current;
+  useEffect(() => {
+    leaderRef.current = partition.leader;
+    lostRef.current = partition.lostAcked;
+  }, [partition.leader, partition.lostAcked]);
+  const offline = partition.leader === null;
+  const replicated = partition.replicas.length > 1;
+  return (
+    <div className="flex shrink-0 flex-col items-end gap-0.5">
+      <span
+        key={partition.leader ?? 'offline'}
+        className={`rounded-sm px-1 py-0.5 font-mono text-[10px] font-semibold ${
+          offline ? 'bg-danger-bg text-danger-text' : 'bg-muted'
+        } ${flip && !reduced ? 'kp-flip' : ''}`}
+        data-slot="leader"
+        title={
+          offline
+            ? 'Offline: no leader. Producers and consumers wait until a replica can lead again.'
+            : `Leader: broker ${partition.leader} (epoch ${String(partition.leaderEpoch)}). Producers write to and consumers read from the leader.`
+        }
+        aria-label={offline ? 'Offline: no leader' : `Leader: broker ${partition.leader}`}
+      >
+        {offline ? '⚠ offline' : `L ${partition.leader}`}
+      </span>
+      {replicated && (
+        <span className="flex gap-[2px]" data-slot="replicas">
+          {partition.replicas.map((r) => {
+            const inSync = partition.isr.includes(r.broker);
+            const eligible = partition.elr.includes(r.broker);
+            return (
+              <span
+                key={r.broker}
+                className={`rounded-sm border px-[3px] font-mono text-[9px] leading-[12px] ${
+                  inSync ? 'border-status/60' : 'kp-out-of-isr border-danger text-danger-text'
+                }`}
+                data-in-sync={inSync}
+                title={`${r.broker}: ${
+                  inSync ? 'in sync' : eligible ? 'out of ISR (eligible leader, ELR)' : 'out of ISR'
+                } · LEO ${formatCount(r.logEndOffset)} · HW ${formatCount(r.highWatermark)}`}
+                aria-label={`Replica ${r.broker} ${inSync ? 'in sync' : 'out of ISR'}`}
+              >
+                {r.broker}
+                {!inSync && <span aria-hidden="true">·out</span>}
+              </span>
+            );
+          })}
         </span>
       )}
-    </>
+      {partition.lostAcked > 0 && (
+        <span
+          className={`rounded-sm border border-dashed border-danger bg-danger-bg px-1 text-[9px] text-danger-text ${
+            lostNow && !reduced ? 'kp-lost' : ''
+          }`}
+          data-slot="lost"
+          title="Acknowledged records deleted by truncation when an old leader came back (see the partition log)."
+        >
+          ⚠ {formatCount(partition.lostAcked)} lost
+        </span>
+      )}
+    </div>
   );
 }
 

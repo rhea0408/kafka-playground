@@ -87,9 +87,6 @@ describe('field metadata', () => {
         'broker.offsetsTopicReplicationFactor',
         'broker.autoLeaderRebalanceEnable',
         'broker.leaderImbalanceCheckIntervalSeconds',
-        'topic.minInsyncReplicas',
-        'topic.replicationFactor',
-        'topic.uncleanLeaderElectionEnable',
         'producer.enableIdempotence',
       ].sort(),
     );

@@ -165,6 +165,8 @@ describe('UpdateConfig: topic partitions', () => {
       replicas: [{ broker: 'b1', logEndOffset: 0, highWatermark: 0 }],
       isr: ['b1'],
       elr: [],
+      truncated: [],
+      lostAcked: 0,
       underReplicated: false,
       underMinIsr: false,
       leaderEpoch: 0,

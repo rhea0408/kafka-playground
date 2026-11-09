@@ -59,6 +59,8 @@ export type Control =
   | { readonly type: 'text' }
   /** Topic partitions: a stepper that can only grow, applied with an explicit button. */
   | { readonly type: 'partitions' }
+  /** Topic replication factor: changed by re-creating the topic (M4-T11). */
+  | { readonly type: 'replicationFactor' }
   /** Producer key strategy: a strategy picker plus its keys. */
   | { readonly type: 'keyStrategy' }
   /** An ordered list chosen from presets (partition.assignment.strategy). */
@@ -195,27 +197,24 @@ export const FIELD_META = {
     replicationFactor: {
       label: 'Replication factor',
       kafkaName: '--replication-factor',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: 1 },
-      arrives: 'M4',
-      control: { type: 'int', unit: 'replicas' },
-      help: 'How many brokers keep a copy of each partition (broker default default.replication.factor = 1). Replication needs several brokers, which arrive in M4.',
+      control: { type: 'replicationFactor' },
+      help: 'How many brokers keep a copy of each partition (broker default default.replication.factor = 1). Kafka can’t change it in place (that takes a partition reassignment), so here it is changed by re-creating the topic.',
     },
     minInsyncReplicas: {
       label: 'Min in-sync replicas',
       kafkaName: 'min.insync.replicas',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: 1 },
-      arrives: 'M4',
       control: { type: 'int', unit: 'replicas' },
-      help: 'With acks=all, a write fails (NotEnoughReplicas) unless at least this many replicas are in sync. It only has an effect once replication arrives in M4.',
+      help: 'With acks=all, a write fails (NOT_ENOUGH_REPLICAS) unless at least this many replicas are in sync, and the high watermark stops while fewer are. Kafka applies at most the replication factor.',
     },
     uncleanLeaderElectionEnable: {
       label: 'Unclean leader election',
       kafkaName: 'unclean.leader.election.enable',
-      kind: 'not-modelled',
+      kind: 'kafka',
       kafkaDefault: { value: false },
-      arrives: 'M4',
       control: { type: 'boolean' },
       help: 'Lets a replica that is not in sync become leader when no in-sync replica is left. The partition comes back sooner, but records only the old leader had are lost.',
     },

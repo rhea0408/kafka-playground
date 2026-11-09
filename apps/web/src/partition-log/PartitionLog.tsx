@@ -1,4 +1,10 @@
-import { formatSimTime, partitionName, type LogRecord } from '@kp/engine';
+import {
+  formatSimTime,
+  partitionName,
+  type LogRecord,
+  type ReplicaSnapshot,
+  type TruncatedRecord,
+} from '@kp/engine';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatCount } from '../canvas/live/format.ts';
@@ -73,6 +79,10 @@ export function PartitionLog() {
         leader={partition.leader}
         replicas={partition.replicas.map((r) => r.broker)}
         isr={partition.isr}
+        replicaInfo={partition.replicas}
+        elr={partition.elr}
+        leaderEpoch={partition.leaderEpoch}
+        truncated={partition.truncated}
         logStartOffset={partition.logStartOffset}
         highWatermark={partition.highWatermark}
         logEndOffset={partition.logEndOffset}
@@ -93,6 +103,12 @@ interface ViewProps {
   readonly leader: string | null;
   readonly replicas: readonly string[];
   readonly isr: readonly string[];
+  /** Each replica's own LEO and HW (M4-T11). */
+  readonly replicaInfo: readonly ReplicaSnapshot[];
+  readonly elr: readonly string[];
+  readonly leaderEpoch: number;
+  /** Records followers deleted by truncation, newest last (M4-T11). */
+  readonly truncated: readonly TruncatedRecord[];
   readonly logStartOffset: number;
   readonly highWatermark: number;
   readonly logEndOffset: number;
@@ -375,6 +391,8 @@ function Summary(props: ViewProps) {
         <Offset label="High watermark" value={highWatermark} tip={EXPLAIN.hw(highWatermark)} />
         <Offset label="Log start" value={logStartOffset} tip={EXPLAIN.start(logStartOffset)} />
       </div>
+      {props.replicaInfo.length > 1 && <ReplicaTable {...props} />}
+      {props.truncated.length > 0 && <TruncatedList truncated={props.truncated} />}
       <div className="flex flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <h4 className={SECTION_TITLE}>CONSUMER GROUPS</h4>
@@ -560,3 +578,64 @@ const LogRowView = memo(
   },
   (prev, next) => sameRow(prev.row, next.row),
 );
+
+/** One row per replica: role, ISR state, its own LEO and HW (05c summary, M4-T11). */
+function ReplicaTable(props: ViewProps) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <h4 className={SECTION_TITLE}>REPLICAS · leader epoch {props.leaderEpoch}</h4>
+      <table className="w-full text-[12px]" data-testid="pl-replicas">
+        <thead>
+          <tr className="text-left text-[11px] text-status/70">
+            <th className="font-normal">Broker</th>
+            <th className="font-normal">Role</th>
+            <th className="font-normal">ISR</th>
+            <th className="font-normal">LEO</th>
+            <th className="font-normal">HW</th>
+          </tr>
+        </thead>
+        <tbody>
+          {props.replicaInfo.map((r) => {
+            const inSync = props.isr.includes(r.broker);
+            return (
+              <tr key={r.broker} data-replica={r.broker} data-in-sync={inSync}>
+                <td className="font-mono">{r.broker}</td>
+                <td>{r.broker === props.leader ? 'leader' : 'follower'}</td>
+                <td className={inSync ? '' : 'text-danger-text'}>
+                  {inSync ? '✓ in sync' : props.elr.includes(r.broker) ? '— out (ELR)' : '— out'}
+                </td>
+                <td className="font-mono">{formatCount(r.logEndOffset)}</td>
+                <td className="font-mono">{formatCount(r.highWatermark)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Records deleted by truncation (A8 in the log): struck through, acked ones marked lost. */
+function TruncatedList({ truncated }: { truncated: readonly TruncatedRecord[] }) {
+  const lost = truncated.filter((r) => r.acked).length;
+  return (
+    <div className="flex flex-col gap-0.5" data-testid="pl-truncated">
+      <h4 className={SECTION_TITLE}>
+        TRUNCATED · {truncated.length} record{truncated.length === 1 ? '' : 's'}
+        {lost > 0 ? ` · ${String(lost)} acknowledged lost` : ''}
+      </h4>
+      <ul className="flex flex-col gap-0.5 text-[12px]">
+        {truncated.map((r) => (
+          <li
+            key={`${r.broker}:${String(r.offset)}:${r.traceId}`}
+            className="rounded border border-dashed border-danger bg-danger-bg px-1.5 font-mono text-danger-text line-through"
+            title={`Deleted from ${r.broker}: the new leader never had it.${r.acked ? ' The producer had been told it was delivered: data loss.' : ''}`}
+          >
+            {r.broker} · offset {r.offset} · {r.key ?? '∅'} · {r.value}
+            {r.acked ? ' · acked' : ''}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

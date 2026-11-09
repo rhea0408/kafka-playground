@@ -4,6 +4,7 @@ import {
   Background,
   BackgroundVariant,
   MarkerType,
+  Panel,
   ReactFlow,
   useReactFlow,
   useStoreApi,
@@ -32,6 +33,7 @@ import { checkConnection, orientConnection } from './connection-check.ts';
 import { ConnectionHint, nodeRects } from './ConnectionHint.tsx';
 import { groupIdOfNode, toFlowEdges, toFlowNodes, type FlowNode } from './flow-mapping.ts';
 import { centredTopLeft, GRID_SIZE, nodeAtPoint, nodeSize } from './geometry.ts';
+import { ControllerChip } from './live/broker-parts.tsx';
 import { NODE_TYPES } from './nodes.tsx';
 import { MessageOverlay } from './overlay/MessageOverlay.tsx';
 
@@ -202,6 +204,10 @@ export function Canvas() {
         color="var(--color-grid)"
       />
       <MessageOverlay />
+      {/* The KRaft controller is not a broker: a chip in the canvas corner (M4 Q2, T11). */}
+      <Panel position="top-right" className="!m-3">
+        <ControllerChip />
+      </Panel>
       <ConnectionHint />
       <CanvasNavigation />
     </ReactFlow>

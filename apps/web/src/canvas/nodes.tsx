@@ -18,6 +18,7 @@ import {
   ProducerCounters,
   useHoverToolbar,
 } from './live/live-parts.tsx';
+import { BrokerLive, BrokerToolbar, useBrokerFrameClass } from './live/broker-parts.tsx';
 import type {
   BrokerFlowNode,
   ConsumerGroupFlowNode,
@@ -187,20 +188,29 @@ function PartitionAnchors({ index }: { index: number }) {
   );
 }
 
+/**
+ * A broker (M4-T11): its state (icon + word), how many partitions it leads and follows, the groups
+ * it coordinates; hatched while down (A6). Hovering shows Kill / Stop / Restart.
+ */
 export function BrokerNode({ data, selected }: NodeProps<BrokerFlowNode>) {
   const b = data.component;
+  const toolbar = useHoverToolbar(selected);
+  const down = useBrokerFrameClass(b.id);
   return (
     <div
-      className={`${frameClass(selected)} rounded-md px-2.5 py-2 text-xs`}
+      ref={toolbar.rootRef}
+      className={`${frameClass(selected)} ${down} rounded-md px-2.5 py-1.5 text-xs`}
       style={{ width: BROKER_SIZE.width, height: BROKER_SIZE.height }}
       data-kind="broker"
+      onPointerEnter={toolbar.onPointerEnter}
+      onPointerLeave={toolbar.onPointerLeave}
     >
-      <div>
+      <div className="flex items-baseline gap-1.5">
         <strong>Broker {b.id}</strong>
+        <Muted>KRaft{b.rack === null ? '' : ` · rack ${b.rack}`}</Muted>
       </div>
-      {/* Up / down state (icon + label) arrives with broker failures in M4; the snapshot has none yet. */}
-      <Muted>KRaft · rack {b.rack ?? 'not set'}</Muted>
-      <Muted>Partitions placed automatically</Muted>
+      <BrokerLive brokerId={b.id} />
+      <BrokerToolbar brokerId={b.id} toolbar={toolbar} />
     </div>
   );
 }

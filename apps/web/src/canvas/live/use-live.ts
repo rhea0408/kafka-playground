@@ -6,7 +6,15 @@
  * when its own producer / partition / consumer changed, and the canvas itself never subscribes.
  */
 
-import type { ConsumerSnapshot, GroupSnapshot, PartitionSnapshot, ProducerStats } from '@kp/engine';
+import type {
+  BrokerSnapshot,
+  ConsumerSnapshot,
+  ControllerSnapshot,
+  EngineSnapshot,
+  GroupSnapshot,
+  PartitionSnapshot,
+  ProducerStats,
+} from '@kp/engine';
 import { useEffect, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSimStore, type SimState } from '../../stores/sim-store.ts';
@@ -137,4 +145,19 @@ export function useCountUp(target: number, durationMs: number, instant: boolean)
   }, [target, durationMs, instant]);
 
   return shown;
+}
+
+/** One broker's snapshot (M4-T11). */
+export const selectBroker =
+  (id: string) =>
+  (s: { snapshot: EngineSnapshot | null }): BrokerSnapshot | undefined =>
+    s.snapshot?.brokers.find((b) => b.config.id === id);
+
+export function useBroker(id: string): BrokerSnapshot | undefined {
+  return useSimStore(selectBroker(id));
+}
+
+/** The controller chip's numbers (M4-T11). */
+export function useController(): ControllerSnapshot | undefined {
+  return useSimStore((s) => s.snapshot?.controller);
 }

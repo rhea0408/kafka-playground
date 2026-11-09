@@ -60,6 +60,12 @@ export interface Actions {
   readonly connect: (from: string, to: string) => Promise<DispatchResult>;
   readonly disconnect: (from: string, to: string) => Promise<DispatchResult>;
   readonly updateConfig: (id: string, patch: ConfigPatch) => Promise<DispatchResult>;
+  /**
+   * Kafka can't change a topic's replication factor in place (that takes a partition
+   * reassignment, v0.2): this deletes the topic and creates it again with `replicationFactor`,
+   * keeping its config, position and connections. Its records and committed offsets are gone.
+   */
+  readonly recreateTopic: (id: string, replicationFactor: number) => Promise<DispatchResult>;
   /** UI only: positions never reach the engine. */
   readonly moveNode: (id: string, position: XYPosition) => void;
   readonly produceManual: (
@@ -72,6 +78,11 @@ export interface Actions {
   /** Graceful close(): finish the batch, commit, LeaveGroup (M3 Q8). */
   readonly stopConsumer: (id: string) => Promise<DispatchResult>;
   readonly restartConsumer: (id: string) => Promise<DispatchResult>;
+  /** Crash a broker: the controller fences it after broker.session.timeout.ms (M4). */
+  readonly killBroker: (id: string) => Promise<DispatchResult>;
+  /** Controlled shutdown: leaders move first, then the broker stops (M4). */
+  readonly stopBroker: (id: string) => Promise<DispatchResult>;
+  readonly restartBroker: (id: string) => Promise<DispatchResult>;
   readonly play: () => Promise<void>;
   readonly pause: () => Promise<void>;
   readonly step: () => Promise<StepResult | null>;
@@ -168,6 +179,36 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     disconnect: (from, to) =>
       send({ type: 'Disconnect', from, to }, (s) => withoutConnection(s, { from, to })),
 
+    recreateTopic: async (id, replicationFactor) => {
+      const state = topology();
+      const current = findComponent(state, id);
+      if (current?.kind !== 'topic') return report({ ok: false, reason: `${id} is not a topic.` });
+      const position = state.positions[id] ?? { x: 0, y: 0 };
+      const links = state.connections.filter((c) => c.from === id || c.to === id);
+      const { kind: _kind, ...config } = current;
+      const removed = await send({ type: 'RemoveComponent', id }, (s) =>
+        withComponentRemoved(s, id),
+      );
+      if (!removed.ok) return removed;
+      const input = { ...config, replicationFactor, kind: 'topic' as const, id };
+      const added = await send({ type: 'AddComponent', component: input });
+      if (!added.ok) {
+        // Put the old topic back (empty), so the canvas doesn't lose the node.
+        await send({ type: 'AddComponent', component: current });
+        setTopology(withComponentAdded(topology(), current, position));
+        for (const c of links) await send({ type: 'Connect', from: c.from, to: c.to });
+        setTopology(links.reduce((s, c) => withConnection(s, c), topology()));
+        return added;
+      }
+      const parsed = parseComponent(input);
+      if (!parsed.ok) throw new Error(`Accepted topic failed to parse: ${parsed.errors.join(' ')}`);
+      setTopology(withComponentAdded(topology(), parsed.value, position));
+      for (const c of links) {
+        await send({ type: 'Connect', from: c.from, to: c.to }, (s) => withConnection(s, c));
+      }
+      return { ok: true };
+    },
+
     updateConfig: async (id, patch) => {
       const result = await send({ type: 'UpdateConfig', id, patch });
       if (!result.ok) return result;
@@ -191,6 +232,9 @@ export function createActions({ sim, seed }: ActionsOptions): Actions {
     killConsumer: (id) => send({ type: 'KillConsumer', id }),
     stopConsumer: (id) => send({ type: 'StopConsumer', id }),
     restartConsumer: (id) => send({ type: 'RestartConsumer', id }),
+    killBroker: (id) => send({ type: 'KillBroker', id }),
+    stopBroker: (id) => send({ type: 'StopBroker', id }),
+    restartBroker: (id) => send({ type: 'RestartBroker', id }),
 
     play: async () => {
       report(

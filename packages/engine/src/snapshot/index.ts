@@ -10,7 +10,7 @@
 import type { Assignor, Broker, Connection, Consumer, Producer, Topic } from '@kp/schema';
 import type { SimTime } from '../core/clock.ts';
 import type { GroupStateName } from '../model/group.ts';
-import { partitionName, type LogRecord } from '../model/partition.ts';
+import { partitionName, type LogRecord, type TruncatedRecord } from '../model/partition.ts';
 import type {
   BrokerProcessStatus,
   ConsumerState,
@@ -43,6 +43,10 @@ export interface PartitionSnapshot {
   readonly isr: readonly string[];
   /** Eligible Leader Replicas (KIP-966). */
   readonly elr: readonly string[];
+  /** The last records followers deleted by truncation, newest last (M4-T11). */
+  readonly truncated: readonly TruncatedRecord[];
+  /** Acknowledged records lost to truncation in this partition so far. */
+  readonly lostAcked: number;
   /** Fewer in-sync replicas than assigned ones (kafka-topics --under-replicated-partitions). */
   readonly underReplicated: boolean;
   /**
@@ -294,6 +298,8 @@ export function buildSnapshot(
         }),
         isr: [...p.isr],
         elr: [...p.elr],
+        truncated: p.truncated.map((r) => ({ ...r })),
+        lostAcked: p.lostAcked,
         underReplicated: p.isr.length < p.replicas.length,
         underMinIsr: p.isr.length < Math.min(topic.config.minInsyncReplicas, p.replicas.length),
         leaderEpoch: p.leaderEpoch,

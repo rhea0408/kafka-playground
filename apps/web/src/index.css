@@ -221,3 +221,75 @@
 .kp-canvas .kp-consumer-row:has([data-status='crashed']) {
   border-style: dashed;
 }
+
+/* A6: a failed broker (crashed or stopped): hatched fill, plus a danger pulse ring while crashed. */
+.kp-broker-down {
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--color-muted) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+@keyframes kp-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-danger) 55%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.kp-broker-pulse {
+  animation: kp-pulse-ring 1.4s ease-out infinite;
+}
+
+/* A7: the leader badge flips (rotateX) when the leader changes (400 ms). */
+@keyframes kp-flip {
+  from {
+    transform: rotateX(90deg);
+  }
+  to {
+    transform: none;
+  }
+}
+
+.kp-flip {
+  animation: kp-flip 400ms ease-out both;
+}
+
+/* A8: lost records shake twice, then stay struck through with a dashed danger border (600 ms). */
+@keyframes kp-shake {
+  0%,
+  100% {
+    transform: none;
+  }
+  25%,
+  75% {
+    transform: translateX(-2px);
+  }
+  50% {
+    transform: translateX(2px);
+  }
+}
+
+.kp-lost {
+  animation: kp-shake 300ms ease-in-out 2;
+}
+
+/* A9: a replica that left the ISR: its chip's border fades from solid to dashed (300 ms). */
+.kp-out-of-isr {
+  border-style: dashed;
+  transition: border-color 300ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kp-broker-pulse,
+  .kp-flip,
+  .kp-lost {
+    animation: none;
+  }
+}
