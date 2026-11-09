@@ -46,19 +46,24 @@ const snapshot = engine.getSnapshot(); // plain JSON for the UI
 | `replayCommandLog(options, log)`                                                  | Rebuilds the exact same run on a fresh engine                                                        |
 
 Commands: `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig`,
-`ProduceManual`, `KillConsumer` (crash), `StopConsumer` (graceful close), `RestartConsumer`.
+`ProduceManual`, `KillConsumer` (crash), `StopConsumer` (graceful close), `RestartConsumer`;
+brokers (M4): `KillBroker` (crash), `StopBroker` (controlled shutdown), `RestartBroker`.
 Events: `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated`,
 `RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`,
 `OffsetCommitted`, `ConsumerStopped`, `ConsumerStarted`; consumer groups (M3): `MemberJoined`,
 `MemberRemoved`, `RebalanceStarted`, `RebalanceCompleted`, `PartitionsAssigned`,
 `PartitionsRevoked`, `PartitionsLost`, `ConsumerIdle`, `CommitFailed`, `DuplicateProcessed`,
-`RecordsSkipped`.
+`RecordsSkipped`; replication and failures (M4): `BrokerStarted`, `BrokerStopped`,
+`BrokerFenced`, `BrokerUnfenced`, `ReplicaFetched`, `IsrShrunk`, `IsrExpanded`, `LeaderElected`,
+`PartitionOffline`, `RecordsTruncated` (the data-loss signal), `ProduceRetried`,
+`CoordinatorMoved`.
 
 `UpdateConfig { id, patch }` merges `patch` into the component's config and validates it with
 `@kp/schema`. Topics can only grow (a decrease is rejected with Kafka's `InvalidPartitionsException`
 wording); a producer rate change restarts its schedule from now; consumer changes apply from the
 next `poll()` (a `group.id` change closes the consumer and joins the other group); ids, the
-replication factor and the broker configs are rejected. A patch that changes nothing is accepted without an event and is not logged. Full rules
+replication factor and the broker configs are rejected (min.insync.replicas and
+unclean.leader.election.enable are dynamic topic configs, M4). A patch that changes nothing is accepted without an event and is not logged. Full rules
 in `src/commands/update-config.ts`.
 
 Snapshots are fresh copies, except log records, which are frozen when appended and shared. A
@@ -93,33 +98,45 @@ src/
 │  ├─ queue.ts      binary heap ordered by (time, seq)
 │  └─ kernel.ts     the loop: clock + queue + RNG + ordered event stream
 ├─ model/         data and pure functions
-│  ├─ partition.ts  append-only log with logStartOffset / LEO / HW, record sizes
-│  ├─ placement.ts  partition leaders across brokers
-│  ├─ state.ts      engine state (brokers, topics, producers, consumers, groups, parked fetches)
+│  ├─ partition.ts  one log per replica (LEO / HW / leader-epoch cache / producer state),
+│  │                  ISR / ELR, truncation (M4)
+│  ├─ placement.ts  replica placement (port of StripedReplicaPlacer, M4)
+│  ├─ state.ts      engine state (brokers, KRaft controller, topics, producers, consumers,
+│  │                  groups, parked fetches / produces / commits)
 │  ├─ group.ts      a consumer group as its coordinator holds it (classic protocol, M3)
 │  ├─ tasks.ts      scheduled work as plain data (ProducerTick, LeaderAppend, FetchRequest, …)
 │  └─ context.ts    what handlers get: kernel, state, emit, config
 ├─ protocols/     Kafka behaviour, each with Kafka doc / source citations
 │  ├─ partitioner.ts  murmur2 (ported from the Java client) + sticky partitioner
-│  ├─ produce.ts      send → leader append → ack, acks 0 / 1 / all
+│  ├─ produce.ts      leader append, acks 0 / 1 / all, idempotent sequence checks (M4)
+│  ├─ producer-client.ts  per-partition send queue, in-flight limit, retries with backoff,
+│  │                  delivery / request timeouts, idempotent PID / epoch / sequence (M4)
+│  ├─ replication.ts  follower fetchers, HW, ISR shrink / expand, DelayedProduce, KIP-320
+│  │                  truncation (M4)
+│  ├─ controller.ts   KRaft controller: registration, heartbeats, fencing, elections (ISR → ELR
+│  │                  → unclean), AlterPartition, controlled shutdown, preferred leaders (M4)
 │  ├─ consume.ts      poll(), fetch buffer, auto.offset.reset, commit modes, close vs crash,
 │  │                  duplicate / skip detector (M3)
 │  ├─ consumer-coordinator.ts  client side of the group protocol: join from poll(), heartbeats,
 │  │                  poll timeout, eager / cooperative revocation, commits (M3)
 │  ├─ group-coordinator.ts     broker side: group state machine, generations, timeouts,
 │  │                  OffsetCommit validation (M3)
-│  ├─ coordinator.ts  which broker coordinates a group (__consumer_offsets partition)
+│  ├─ coordinator.ts  __consumer_offsets (50 partitions) and which broker coordinates a group
+│  ├─ offsets-store.ts  commits and group metadata as records, answered at the HW; loading a
+│  │                  group on coordinator failover (M4)
 │  ├─ assignors/      range, roundrobin, sticky, cooperative-sticky (pure, ported from the client)
 │  ├─ fetch.ts        broker side of the long poll (fetch.min.bytes / fetch.max.wait.ms)
 │  ├─ metadata.ts     client metadata cache (metadata.max.age.ms): when clients see new partitions
 │  └─ index.ts        runTask: the single task switch
-├─ commands/      Command union (index.ts), handlers (apply.ts), UpdateConfig (update-config.ts)
+├─ commands/      Command union (index.ts), handlers (apply.ts), UpdateConfig (update-config.ts),
+│                 broker kill / stop / restart (broker-lifecycle.ts, M4)
 ├─ events/        Event union (index.ts) and one-line formatting (format.ts)
 ├─ snapshot/      getSnapshot() builder (consumer lag) and diff.ts (diffSnapshot / applyDiff)
 ├─ testing/       fast-check generators and scenario runner (tests only)
 └─ engine.ts      createEngine / replayCommandLog: wires the above together
 scripts/demo.ts   headless demo (Node runs the TypeScript directly)
 scripts/snapshot-diff.perf.test.ts   snapshot + diff benchmark (1,000 partitions, < one 33 ms frame)
+scripts/cluster.perf.test.ts         3-broker RF 3 cluster throughput benchmark (M4)
 ```
 
 ## How an event flows through the engine

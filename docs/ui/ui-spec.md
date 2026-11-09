@@ -26,12 +26,15 @@ Sandbox (screen 05): same, minus the objectives strip; palette and right panel a
 | Producer | 150 × 72 |
 | Topic | 230 wide × (36 header + 48 per partition) |
 | Consumer group | 240 wide (220–240); header 36 with group id, state chip, generation and group lag ("group lag ≥ N · K uncommitted" while K partitions have no committed offset, "-" when none has one; M4-T0 F-5); one 216 × 40 row per member (8 px gap): line 1 consumer id, status (icon + word, including "⚠ left group" for a member that is out of the group but still processing, F-7) and lag badge ("lag ≥ N" likewise); line 2 partition chips (`P0 P2`, or "◇ Idle: no partition") and position / committed. While the coordinator still holds a member from an earlier life of the consumer (crashed, or killed and restarted), the row shows that member's partitions as dashed grey chips with "held · timeout in 6.2 s" (session countdown), or "held · waiting for rebalance" while its parked JoinGroup has no deadline yet (F-6), next to the new process's own chips; a member out of the group shows "still processing · pos N". Height 36 + 48 × members + 8 |
-| Cluster frame | ≈ 778 × 150; broker 226 × 92 (84 in sandbox) |
+| Cluster frame | ≈ 778 × 150 (**not built in M4**: brokers stay separate nodes, M4 decisions T11-1) |
+| Broker (M4-T11) | 226 wide; header with broker id; state chip (icon + word: ● Running, ⊘ Fenced, ◐ Shutting down, ■ Stopped, ✕ Crashed; danger colors when not running, tooltip explains the state); "Leads N · follows M"; "Coordinator: group…" while it leads a group's `__consumer_offsets` partition. Down: hatched fill (A6) |
+| Topic partition row, replicas (M4-T11) | right column: leader badge `L b2` (or "⚠ offline"), one replica chip per replica (9 px mono, solid border in sync, dashed danger border + "·out" when out of the ISR, tooltip with LEO / HW / ELR), "⚠ N lost" chip after acked records were truncated. Shown only for RF > 1 |
+| Controller chip (M4-T11) | top-right canvas panel, ≈ 170 wide, only with ≥ 2 brokers, pointer events pass through to the canvas: "KRaft controller", the read-only timers ("session 9 s · heartbeat 2 s"), "Fenced: …", "⚠ N offline", "N under-replicated"; danger border while any broker is fenced or a partition offline |
 | Message dot | 16 px circle with key letter (A/B/C); replication dot 10 px |
 | Log cell | 18 × 18 |
 | Zoom controls | 160 × 40 (−, fit, +, map toggle) |
 | Minimap | 160 × 84, bottom-right; **auto-shows only when content is off-screen**, 200 ms fade |
-| Hover toolbar (broker) | 200 × 36 |
+| Hover toolbar (broker) | 200 × 36: "✕ Kill (crash)" and "■ Stop (shutdown)" while up, "▶ Restart" while down; tooltips explain crash vs controlled shutdown (M4 Q3) |
 | Warning toast | 340 × 40 |
 
 ## Overlays
@@ -46,7 +49,7 @@ Sandbox (screen 05): same, minus the objectives strip; palette and right panel a
 ## Right panel contents
 - **Properties**: field rows 328 × 56. Topic shows stat tiles (104 × 48), partitions stepper with warning, RF, min.insync.replicas, retention, cleanup.policy, consumers, Delete. See 05b.
 - **Code**: language tabs Java · Go · CLI (328 × 32); code block scrolls horizontally; changed line highlighted; per-line explanation tooltip. See 05.
-- **Partition log**: partition picker (328 × 32), summary (leader/replicas/ISR/LEO/HW/committed), key filter + Follow toggle, rows 328 × 28, marker rows 328 × 22 (group committed offset, high-watermark). See 05c.
+- **Partition log**: partition picker (328 × 32), summary (leader/replicas/ISR/LEO/HW/committed), replica table (broker, role, in sync / ELR, LEO, HW; M4), truncated-records list (struck through, "acknowledged lost"; M4), key filter + Follow toggle, rows 328 × 28, marker rows 328 × 22 (group committed offset, high-watermark). See 05c.
 
 ## Color tokens
 | Token | Value | Used for |

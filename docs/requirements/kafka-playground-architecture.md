@@ -91,24 +91,30 @@ kafka-playground/
 ### 4.2 Core model (MVP)
 
 ```ts
-Cluster      { brokers: Broker[], controllerId, topics: Map<name, Topic> }
-Broker       { id, rack, status: 'up'|'down' }
-Topic        { name, partitions: Partition[], rf, minIsr, retention }
-Partition    { id, leader: BrokerId|null, replicas: BrokerId[], isr: BrokerId[],
-               leaderEpoch, log: Record[], hw, replicaLeo: Map<BrokerId, offset> }
-Record       { offset, key, value, ts, producerId, traceId }
-Producer     { id, config: { acks, retries, idempotence, partitioner, linger, rate, keyStrategy },
-               inflight, stats }
+Controller   { brokers: Map<id, { brokerEpoch, fenced, inControlledShutdown, session }> }  // M4, always up
+Broker       { id, rack, status: 'running'|'shutting-down'|'stopped'|'crashed', incarnation,
+               brokerEpoch, config: { replicaLagTimeMaxMs, replicaFetchWaitMaxMs, ... } }
+Topic        { name, topicId, partitions: Partition[], rf, minIsr, uncleanLeaderElection }
+Partition    { replicas: BrokerId[] (preferred first), isr, elr, lastKnownElr, leader: BrokerId|null,
+               leaderEpoch, partitionEpoch, pendingIsr (maximal ISR during AlterPartition),
+               replicaLogs: Map<BrokerId, { log, leo, hw, epochCache, producerState }>,
+               followers: Map<BrokerId, { leo, lastCaughtUpTime, ... }> (leader's view),
+               truncated, lostAcked }                                                         // M4
+Record       { offset, key, value, ts, producerId, traceId, leaderEpoch, pid, producerEpoch, sequence }
+Producer     { id, config: { acks, retries, deliveryTimeout, requestTimeout, retryBackoff(Max),
+               idempotence, rate, keyStrategy }, senders: per partition { queue, inFlight (≤5),
+               epoch, nextSeq }, pending, metadata (partition counts, leaders), stats }
 ConsumerGroup{ id, state: 'Empty'|'PreparingRebalance'|'CompletingRebalance'|'Stable'|'Dead',
                generation, protocol (assignor), leader (member id), members (join order),
-               committed: Map<partition, offset>, timers }            // coordinator side, M3
+               committed: Map<partition, offset>, timers }   // coordinator side; stored in __consumer_offsets (M4)
 GroupMember  { memberId, consumerId, metadata: { protocols, subscription, ownedPartitions,
-               sessionTimeoutMs, rebalanceTimeoutMs }, awaitingJoin, awaitingSync, assignment }
+               stickyUserData, sessionTimeoutMs, rebalanceTimeoutMs }, awaitingJoin, awaitingSync, assignment }
 Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map<partition, offset>,
                group: { memberId, generation, state: 'unjoined'|'preparing'|'completing'|'stable',
-                        owned, rejoinNeeded }, batch, config: { autoCommit, commitInterval,
-               commitMode, maxPollRecords, processingTimeMs, sessionTimeout, heartbeatInterval,
-               maxPollInterval, partitionAssignmentStrategy } }
+                        owned, rejoinNeeded, coordinator (FindCoordinator), commitsInFlight },
+               batch, config: { autoCommit, commitInterval, commitMode, maxPollRecords,
+               processingTimeMs, sessionTimeout, heartbeatInterval, maxPollInterval,
+               partitionAssignmentStrategy } }
 ```
 
 ### 4.3 Protocols modelled in MVP (simplified, documented)
@@ -116,10 +122,12 @@ Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map
 | Protocol | Behavior | Simplification |
 |---|---|---|
 | Partitioning | Key → `toPositive(murmur2(key)) mod partitions` (matches Java default); null key → sticky | Batching not modelled in MVP |
-| Produce & acks | acks=0: no wait; acks=1: leader append; acks=all: every **current ISR** member has it (HW ≥ offset). NotEnoughReplicas if ISR < minIsr | No request queueing until the v0.2 resource model |
-| Replication | Followers fetch from the leader on an interval; the leader tracks replica LEO; HW = min LEO over the ISR | Fixed fetch interval |
-| ISR | Follower removed if it hasn't caught up within `replica.lag.time.max.ms`; re-added once caught up | |
-| Controller & election | On broker down, the controller picks the new leader from the ISR (clean election by default; unclean election from any live replica when the topic enables it); leader epoch++ | One abstract KRaft controller quorum, always up (ADR 0005); it fences a broker after `broker.session.timeout.ms` without heartbeats |
+| Produce & acks | acks=0: no wait; acks=1: leader append; acks=all: parked (DelayedProduce) until the HW passes the record or `request.timeout.ms`; `NOT_ENOUGH_REPLICAS` if ISR < min(minIsr, RF) (M4) | One record per request; ≤ 5 in flight per partition |
+| Producer retries & idempotence | Retriable errors are retried with KIP-580 backoff (none on a leader change, KIP-951) until `delivery.timeout.ms`; metadata refresh on InvalidMetadata errors and disconnects; idempotence (PID, epoch, sequence; 5-batch dedup; epoch bump on a gap) with acks=all (M4-T7) | No batching / `linger.ms`; epoch bump per partition |
+| Replication | Followers long-poll the leader (`replica.fetch.wait.max.ms`), one fetcher per (follower, leader); the leader tracks each follower's LEO and last-caught-up time; HW = min LEO over the maximal ISR (+ caught-up joiners), frozen while ISR < minIsr (strict min ISR) (M4-T3, ADR 0005) | No byte limits; no per-record events (`ReplicaFetched` per fetch) |
+| ISR | The leader removes followers not caught up within `replica.lag.time.max.ms` (checked every half of it) and re-adds caught-up ones, through AlterPartition to the controller, which bumps the partition epoch; ELR (KIP-966) on shrinks below minIsr (M4-T4) | |
+| `__consumer_offsets` & coordinator failover | A real replicated internal topic (50 partitions, RF min(3, brokers)); the coordinator is its partition's leader; commits are answered at the HW; a new leader loads groups (Stable stays Stable, no rebalance); clients use FindCoordinator and handle `NOT_COORDINATOR` (M4-T8) | Loading is instant; SyncGroup doesn't wait for its record; no compaction |
+| Controller & election | Brokers register and heartbeat; the controller fences one silent for `broker.session.timeout.ms`, removes it from every ISR and elects from the ISR, then the ELR, then the last known leader, then (unclean election on) any replica; controlled shutdown moves leaders first; preferred leader election; a restarted broker registers (clean/unclean), is unfenced by its first heartbeat and truncates by leader epoch (KIP-320) (M4-T5/T6) | One abstract KRaft controller quorum, always up (ADR 0005); exact session deadlines |
 | Data loss | Records that exist only on a failed leader are truncated when it rejoins as a follower. Happens with acks=0/1. With acks=all it needs an **unclean election** (`unclean.leader.election.enable=true`, default false): with clean elections only ISR members (or, with Eligible Leader Replicas on as in 4.4, ELR members and the last known leader) can lead, so a partition that loses its last in-sync replica goes offline (no leader) until that broker returns with its data (M4 Q6, K1) | Truncation by leader epoch (KIP-101 / KIP-320) |
 | Group coordinator | Classic protocol (ADR 0004): FindCoordinator via `__consumer_offsets` partition, JoinGroup / SyncGroup / Heartbeat / LeaveGroup, initial rebalance delay, rebalance and session timeouts, generations, the client leader running range / round-robin / sticky / cooperative-sticky; eager vs cooperative rebalancing; the poll timeout (zombies) | KIP-848 later; no static membership or rack-aware assignment; MEMBER_ID_REQUIRED round trip not modelled (simplifications) |
 | Commits | Auto (interval) or the `commitMode` game setting (commitSync / commitAsync after processing, commitSync before processing); OffsetCommit validated by member and generation; on crash the new owner resumes from the last committed offset → `DuplicateProcessed` / `RecordsSkipped` (teaching aid) | Commits stored in coordinator memory, not a replicated `__consumer_offsets` |
@@ -127,7 +135,7 @@ Consumer     { id, groupId, status: 'running'|'stopped'|'crashed', position: Map
 **Game-time defaults:** real defaults (e.g. `session.timeout.ms` = 45 s) are too slow for gameplay. Levels can use shortened values, always shown as "game-tuned" with the real default beside them (NFR-3.3).
 
 ### 4.4 Commands (UI → engine)
-Built (M1–M3): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer` (a crash, M3), `StopConsumer` (graceful close, M3), `RestartConsumer` (a new member, M3), `ProduceManual`. Planned: `KillBroker`, `RestartBroker` (M4).
+Built (M1–M4): `AddComponent`, `RemoveComponent`, `Connect`, `Disconnect`, `UpdateConfig` (M2), `KillConsumer` (a crash, M3), `StopConsumer` (graceful close, M3), `RestartConsumer` (a new member, M3), `ProduceManual`, `KillBroker` (a crash), `StopBroker` (controlled shutdown) and `RestartBroker` (the process comes back with its log) (M4).
 **Not commands:** `SetSpeed`, `Step`, `Pause` / `Play` and `Reset` are calls on the worker host (`setSpeed`, `step` / `stepBy`, `pause` / `play`, `init`); Reset re-initialises the engine from the current canvas. They never change what happens in the simulation, so they stay out of the command log. Rewind (`RewindTo`, scrubber / "Try again", §4.7, M4b) replays the command log and so is expected to be a host operation too.
 `UpdateConfig { id, patch }` is validated with `@kp/schema` on the merged config: topic partitions can only grow (the KRaft controller's `InvalidPartitionsException` text otherwise), producer changes apply to the next record (a rate change restarts the send schedule), consumer changes apply from the next `poll()` (a `group.id` change closes the consumer and joins the other group, M3); ids, the replication factor and the broker configs can't change (see `docs/simplifications.md`, "Config changes at run time"). A patch that changes nothing is accepted without an event or log entry.
 Each accepted command is appended to the **command log** as `{ t, afterStep, command }` (sim time plus the number of tasks already processed, so a command dispatched between two tasks of the same millisecond replays at the same place). The log is used for replay, save files, the failure replay in Fix, and CI playback.
@@ -135,19 +143,21 @@ Each accepted command is appended to the **command log** as `{ t, afterStep, com
 ### 4.5 Domain events (engine → UI and level runtime)
 Built (M1–M2): `ComponentAdded`, `ComponentRemoved`, `Connected`, `Disconnected`, `ConfigUpdated` (M2, `{ id, before, after }`), `RecordProduced`, `RecordAppended`, `ProduceAcked`, `ProduceFailed`, `RecordConsumed`, `OffsetCommitted` (with `memberId`, `generation` since M3), `ConsumerStopped` (with `reason: crash | close | error` since M3), `ConsumerStarted`.
 Built (M3, groups): `MemberJoined`, `MemberRemoved {reason}`, `RebalanceStarted {generation, reason}`, `RebalanceCompleted {generation, protocol, leader, members}`, `PartitionsAssigned`, `PartitionsRevoked`, `PartitionsLost` (named after `ConsumerRebalanceListener`), `ConsumerIdle`, `CommitFailed {error}`, and the teaching-aid events `DuplicateProcessed` and `RecordsSkipped {from, to}`.
-Planned: `RecordReplicated`, `HighWatermarkAdvanced`, `BrokerDown`, `BrokerUp`, `LeaderElected`, `IsrShrunk`, `IsrExpanded`, `RecordsTruncated` (data loss).
+Built (M4, replication and failures, Q11): `BrokerStarted`, `BrokerStopped {reason: crash | shutdown}`, `BrokerFenced {reason}`, `BrokerUnfenced`, `ReplicaFetched {broker, leader, fromOffset, toOffset}` (one per follower fetch with records; no per-record or HW events), `IsrShrunk {removed, isr, elr}`, `IsrExpanded`, `LeaderElected {leader, previousLeader, leaderEpoch, reason: initial | failover | controlled-shutdown | preferred | unclean}`, `PartitionOffline`, `RecordsTruncated {broker, from, to, acked, committed}` (the data-loss signal), `ProduceRetried {attempt, error, backoffMs}`, `CoordinatorMoved {from, to, state, generation}`; `OffsetCommitted` gained `acceptedAt`.
 **No `LagChanged` event** (decided in M2, Q2): lag moves on almost every append, so one event per change would roughly double the event stream. The UI derives lag from snapshots (sum of HW − committed offset per partition, as `kafka-consumer-groups.sh` reports it) and drives the lag badge (A5) from that. When the level runtime (M6) needs a trigger, add a threshold event such as `LagThresholdCrossed`, emitted only when lag crosses a level-defined value.
 Typed as a discriminated union in `packages/engine/events`. This single stream feeds the UI, animations (`docs/ui/animations.md`), tips, objectives, alerts, and later the AI tutor (NFR-8.4).
 
 ### 4.6 Invariants (property tests with fast-check)
-- For every partition: `hw ≤ leo(leader)` and `hw ≤ leo(r)` for every r in the ISR
-- The leader is always in the ISR; the ISR is a subset of the replicas
+- For every partition and replica: `hw ≤ leo`; the leader is in the ISR (or there is none), the ISR is a subset of the replicas, the ELR is disjoint from the ISR (M4)
+- Log matching: every replica agrees with the leader below its own HW; leader and partition epochs only increase (M4)
+- Idempotent producers never write a record twice into a log and keep their order (M4)
 - Within one group generation, each partition is assigned to at most one consumer (M3)
 - An eager assignment covers every partition of an assigned topic from 0 without gaps (M3; the leader's metadata may not know the newest partitions yet, and cooperative rounds leave moving partitions unowned on purpose)
 - An accepted commit comes from a member of the current generation that owns the partition; generations never go backwards; a member only reads partitions the rebalance listener gave it (M3). Deliberately not an invariant: "two consumers never read one partition at the same time" (zombies can)
-- With `acks=all` and `ISR ≥ minIsr ≥ 2` at ack time, an acknowledged record is never truncated after a single broker failure
+- With `acks=all`, effective `minIsr ≥ 2` and no unclean election, an acknowledged record is never truncated, under any number of broker failures (M4, stronger than "one failure")
 - Without an unclean election, a record that was ever below a leader's HW is never truncated (any acks). With `minIsr = 1` an acks=all record is still safe under clean elections: the partition goes offline instead (M4 Q6)
-- Per partition, offsets are contiguous and records with the same key keep produce order
+- Per partition, offsets are contiguous (a new leader may reuse offsets the old one gave out, which get truncated) and records with the same key keep produce order (retried non-idempotent records excepted)
+- Liveness (M4): a killed broker is fenced within `broker.session.timeout.ms`; with every broker back, every partition has a leader and a full ISR and every producer record settles within `delivery.timeout.ms`; groups that keep up end Stable through coordinator moves
 
 ### 4.7 Rewind (scrubber and "Try again")
 Rewind = rebuild state by replaying the command log from the start (or from the nearest periodic checkpoint) up to the target sim time. Checkpoints are serialised engine state taken every N sim-seconds, so rewinds stay fast. Replay is valid because the engine is deterministic.
