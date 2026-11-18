@@ -3,11 +3,12 @@
  * per consumer group, its committed offset and each member's position. Pure: unit-tested in Node.
  */
 
-import type {
-  ConsumerSnapshot,
-  EngineSnapshot,
-  PartitionSnapshot,
-  TopicSnapshot,
+import {
+  isInternalTopic,
+  type ConsumerSnapshot,
+  type EngineSnapshot,
+  type PartitionSnapshot,
+  type TopicSnapshot,
 } from '@kp/engine';
 import type { LogTarget } from '../stores/ui-store.ts';
 
@@ -35,15 +36,19 @@ export interface ResolvedTarget {
 /**
  * The partition to show: the chosen one if it still exists, else the chosen topic's partition 0,
  * else the first topic's partition 0. Null when there are no topics.
+ *
+ * Internal topics (__consumer_offsets, M4-T8) can be chosen only while `showInternal` is on
+ * (M4 follow-up G-1), and are never the default.
  */
 export function resolveTarget(
   snapshot: EngineSnapshot | null,
   target: LogTarget | null,
+  showInternal = false,
 ): ResolvedTarget | null {
-  // Internal topics (__consumer_offsets, M4-T8) stay hidden unless named explicitly.
   const all = snapshot?.topics ?? [];
   const topics = all.filter((t) => !isInternalTopicName(t.config.id));
-  const topic = all.find((t) => t.config.id === target?.topicId) ?? topics[0];
+  const choosable = showInternal ? all : topics;
+  const topic = choosable.find((t) => t.config.id === target?.topicId) ?? topics[0];
   if (topic === undefined) return null;
   const wanted = topic.config.id === target?.topicId ? target.partition : 0;
   const partition = topic.partitions[wanted] ?? topic.partitions[0];
@@ -94,4 +99,4 @@ export function groupOffsets(
 }
 
 /** Topics Kafka creates for itself (Topic#isInternal): hidden on the canvas and in pickers. */
-export const isInternalTopicName = (id: string): boolean => id === '__consumer_offsets';
+export const isInternalTopicName = isInternalTopic;

@@ -105,7 +105,9 @@ test('manual record with key D lands in partition 0 of a 3-partition topic', asy
   // Filter: hide topology events; the list still shows record events.
   await events.getByRole('button', { name: /^Filter:/ }).click();
   await page.getByRole('checkbox', { name: 'RecordAppended' }).uncheck();
-  await expect(events.getByRole('button', { name: /^Filter: \d+ of \d+ types$/ })).toBeVisible();
+  await expect(
+    events.getByRole('button', { name: /^Filter: \d+ of \d+ types · internal topics hidden$/ }),
+  ).toBeVisible();
   await page.screenshot({ path: `${SHOTS}panels-event-filter.png` });
   await page.keyboard.press('Escape');
   await expect(events.locator('li', { hasText: 'RecordAppended' })).toHaveCount(0);

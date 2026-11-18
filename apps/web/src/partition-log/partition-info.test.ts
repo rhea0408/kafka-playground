@@ -21,6 +21,18 @@ describe('resolveTarget', () => {
     expect(resolveTarget(snapshot, { topicId: 'gone', partition: 1 })?.partition.index).toBe(0);
   });
 
+  it('picks __consumer_offsets only while internal topics are shown, never by default (G-1)', () => {
+    const [first] = snapshot.topics;
+    if (first === undefined) throw new Error('fixture has a topic');
+    const internal = { ...first, config: { ...first.config, id: '__consumer_offsets' } };
+    const withOffsets = fixtureSnapshot({ topics: [internal, ...snapshot.topics] });
+    const target = { topicId: '__consumer_offsets', partition: 1 };
+    expect(resolveTarget(withOffsets, null, true)?.topic.config.id).toBe('t1');
+    expect(resolveTarget(withOffsets, target, true)?.topic.config.id).toBe('__consumer_offsets');
+    expect(resolveTarget(withOffsets, target, false)?.topic.config.id).toBe('t1');
+    expect(resolveTarget(withOffsets, target)?.partition.index).toBe(0);
+  });
+
   it('is null without topics or a snapshot', () => {
     expect(resolveTarget(null, null)).toBeNull();
     expect(resolveTarget(fixtureSnapshot({ topics: [] }), null)).toBeNull();

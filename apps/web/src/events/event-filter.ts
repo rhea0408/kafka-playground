@@ -3,9 +3,14 @@
  *
  * The filter stores the *hidden* types, so an event type added to the engine later shows up by
  * default instead of being silently filtered out.
+ *
+ * Separately, events about internal topics (__consumer_offsets, M4-T8) are hidden unless the
+ * "Show internal topics" toggle is on (M4 follow-up G-1): a single broker restart elects a leader
+ * for each of its 50 partitions, which would bury the player's own topic. Events without a topic
+ * (CoordinatorMoved, Broker*) always pass this check.
  */
 
-import type { EngineEvent, EngineEventType } from '@kp/engine';
+import { isInternalTopic, type EngineEvent, type EngineEventType } from '@kp/engine';
 
 export interface EventTypeGroup {
   readonly label: string;
@@ -80,13 +85,25 @@ export type HiddenTypes = ReadonlySet<EngineEventType>;
 
 export const NO_HIDDEN_TYPES: HiddenTypes = new Set();
 
-/** The events to show, oldest first. Returns `events` itself when nothing is hidden. */
+/** Whether an event is about an internal topic (it has a `topic` field naming one). */
+export const isInternalTopicEvent = (event: EngineEvent): boolean =>
+  'topic' in event && isInternalTopic(event.topic);
+
+/**
+ * The events to show, oldest first. Returns `events` itself when nothing is hidden: at once when
+ * no type is hidden and internal topics are shown, else after a pass that removed nothing (so a
+ * memoised consumer sees the same array).
+ */
 export function filterEvents(
   events: readonly EngineEvent[],
   hidden: HiddenTypes,
+  showInternal: boolean,
 ): readonly EngineEvent[] {
-  if (hidden.size === 0) return events;
-  return events.filter((e) => !hidden.has(e.type));
+  if (hidden.size === 0 && showInternal) return events;
+  const shown = events.filter(
+    (e) => !hidden.has(e.type) && (showInternal || !isInternalTopicEvent(e)),
+  );
+  return shown.length === events.length ? events : shown;
 }
 
 /** Shows or hides one type. */
@@ -111,10 +128,17 @@ export function setGroup(
   return next;
 }
 
-/** "All types", "12 of 13 types", "No types" for the filter button. */
-export function filterSummary(hidden: HiddenTypes): string {
-  const shown = ALL_EVENT_TYPES.filter((t) => !hidden.has(t)).length;
-  if (shown === ALL_EVENT_TYPES.length) return 'All types';
-  if (shown === 0) return 'No types';
-  return `${String(shown)} of ${String(ALL_EVENT_TYPES.length)} types`;
+/**
+ * "All types", "12 of 13 types", "No types" for the filter button, followed by
+ * " · internal topics hidden" while the internal-topics toggle is off.
+ */
+export function filterSummary(hidden: HiddenTypes, showInternal: boolean): string {
+  const count = ALL_EVENT_TYPES.filter((t) => !hidden.has(t)).length;
+  const types =
+    count === ALL_EVENT_TYPES.length
+      ? 'All types'
+      : count === 0
+        ? 'No types'
+        : `${String(count)} of ${String(ALL_EVENT_TYPES.length)} types`;
+  return showInternal ? types : `${types} · internal topics hidden`;
 }

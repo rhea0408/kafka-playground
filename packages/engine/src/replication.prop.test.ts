@@ -11,6 +11,7 @@ import { createEngineInternal } from './engine.ts';
 import type { EngineEvent } from './events/index.ts';
 import type { EngineContext } from './model/context.ts';
 import { canServe } from './protocols/controller.ts';
+import type { Command } from './commands/index.ts';
 import { stepsArb, topologyArb, type Step } from './testing/arbitraries.ts';
 import { runsFromEnv } from './testing/runs.ts';
 
@@ -180,7 +181,11 @@ describe(
       );
     });
 
-    it('a committed record is never truncated unless an unclean election happened in its partition', () => {
+    // A last-known-leader election (KIP-966, M4 follow-up D1) is flagged unclean like Kafka does,
+    // but it doesn't count here: the leader held the only copy, so it must lose nothing committed.
+    // This pins the UI's "nothing lost" text. (Acked acks=1 records that only an older leader had
+    // can still be truncated in that epoch, as in real Kafka; that loss isn't this election's.)
+    it('a committed record is never truncated unless an unclean election of an out-of-sync replica happened in its partition', () => {
       fc.assert(
         fc.property(seedArb, topologyArb, stepsArb, (seed, topology, steps) => {
           const { events } = run(seed, topology, steps);
@@ -190,7 +195,10 @@ describe(
               for (const k of [...unclean])
                 if (k.startsWith(`${e.component.id}#`)) unclean.delete(k);
             }
-            if (e.type === 'LeaderElected' && e.reason === 'unclean') {
+            if (e.type === 'LeaderElected' && e.lastKnownLeader) {
+              expect({ at: e.t, reason: e.reason }).toEqual({ at: e.t, reason: 'unclean' });
+            }
+            if (e.type === 'LeaderElected' && e.reason === 'unclean' && !e.lastKnownLeader) {
               unclean.add(`${e.topic}#${String(e.partition)}`);
             }
             if (
@@ -203,6 +211,99 @@ describe(
         }),
         { numRuns: NUM_RUNS },
       );
+    });
+
+    // Random scenarios almost never produce a last-known-leader election (0 in 300 samples), so
+    // this one builds it on purpose: crash the followers, then the leader, bring the leader back
+    // (KIP-966 elects it when no ELR member is left), then the followers. Unclean election is off,
+    // so every unclean election must be a last-known-leader one, and none may lose a committed or
+    // acknowledged acks=all record (M4 follow-up D1: the UI says "nothing lost").
+    it('a last-known-leader election loses no committed or acked acks=all record', () => {
+      let withLastKnownLeader = 0;
+      const scenarioArb = fc.record({
+        brokers: fc.integer({ min: 1, max: 3 }),
+        minIsrPick: fc.nat(),
+        acks: fc.constantFrom('0' as const, '1' as const, 'all' as const),
+        rate: fc.integer({ min: 1, max: 20 }),
+        order: fc.shuffledSubarray([0, 1], { minLength: 2, maxLength: 2 }),
+        gaps: fc.array(fc.integer({ min: 0, max: 4000 }), { minLength: 6, maxLength: 6 }),
+      });
+      fc.assert(
+        fc.property(seedArb, scenarioArb, (seed, sc) => {
+          const n = sc.brokers;
+          const topology: TopologyInput = {
+            brokers: Array.from({ length: n }, (_, i) => ({
+              kind: 'broker' as const,
+              id: `b${String(i + 1)}`,
+            })),
+            topics: [
+              {
+                kind: 'topic',
+                id: 'orders',
+                partitions: 1,
+                replicationFactor: n,
+                minInsyncReplicas: 1 + (sc.minIsrPick % n),
+                uncleanLeaderElectionEnable: false,
+              },
+            ],
+            producers: [{ kind: 'producer', id: 'p1', ratePerSec: sc.rate, acks: sc.acks }],
+            connections: [{ from: 'p1', to: 'orders' }],
+          };
+          const { engine, context } = createEngineInternal({ seed, topology });
+          const events: EngineEvent[] = [];
+          engine.on((e) => events.push(e));
+          const gap = (i: number) => {
+            // past broker.session.timeout.ms (9 s) so each crash is fenced before the next step
+            engine.runUntil(engine.now() + 10_000 + (sc.gaps[i] ?? 0));
+          };
+          const send = (command: Command) => engine.dispatch(command);
+          gap(0);
+          const leader = context.state.topics.get('orders')?.partitions[0]?.leader ?? 'b1';
+          const others = Array.from({ length: n }, (_, i) => `b${String(i + 1)}`).filter(
+            (b) => b !== leader,
+          );
+          const followers = sc.order.map((i) => others[i]).filter((b) => b !== undefined);
+          for (const [i, f] of followers.entries()) {
+            send({ type: 'KillBroker', id: f });
+            gap(1 + i);
+          }
+          send({ type: 'KillBroker', id: leader });
+          gap(3);
+          send({ type: 'RestartBroker', id: leader });
+          gap(4);
+          for (const f of followers) send({ type: 'RestartBroker', id: f });
+          gap(5);
+          engine.runUntil(engine.now() + 20_000);
+
+          const acksAll = new Set<string>();
+          const acked = new Set<string>();
+          let hit = false;
+          for (const e of events) {
+            if (e.type === 'RecordProduced' && e.acks === 'all') acksAll.add(e.traceId);
+            if (e.type === 'ProduceAcked') acked.add(e.traceId);
+            if (e.type === 'LeaderElected' && e.reason === 'unclean') {
+              expect({ at: e.t, lastKnownLeader: e.lastKnownLeader }).toEqual({
+                at: e.t,
+                lastKnownLeader: true,
+              });
+            }
+            if (e.type === 'LeaderElected' && e.lastKnownLeader) hit = true;
+            if (e.type === 'RecordsTruncated') {
+              expect({ at: e.t, committed: e.committed }).toEqual({ at: e.t, committed: 0 });
+              for (const t of e.traceIds) {
+                expect({ lost: t, acked: acked.has(t) && acksAll.has(t) }).toEqual({
+                  lost: t,
+                  acked: false,
+                });
+              }
+            }
+          }
+          if (hit) withLastKnownLeader++;
+        }),
+        { numRuns: NUM_RUNS },
+      );
+      // the scenario must actually reach the case it is about
+      expect(withLastKnownLeader).toBeGreaterThan(0);
     });
 
     it('acks=all with effective minISR ≥ 2 and no unclean election never loses an acknowledged record', () => {

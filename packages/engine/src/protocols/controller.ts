@@ -475,6 +475,7 @@ function changePartition(
       previousLeader,
       leaderEpoch: partition.leaderEpoch,
       reason: election?.unclean === true ? 'unclean' : reason,
+      lastKnownLeader: election?.lastKnownLeader === true,
     });
   }
   onLeaderChanged(ctx, topic, partition, previousLeader);
@@ -489,6 +490,11 @@ interface Election {
   readonly isr?: readonly string[];
   readonly dropElr?: boolean;
   readonly unclean?: boolean;
+  /**
+   * The leader is the partition's last known leader, back after an unclean shutdown
+   * (canElectLastKnownLeader). Also `unclean`, but it held the only copy, so nothing is lost.
+   */
+  readonly lastKnownLeader?: boolean;
 }
 
 /** PartitionChangeBuilder#electLeader / electAnyLeader (K1, K12, K14). */
@@ -515,8 +521,11 @@ function electLeader(
       lastKnown !== undefined &&
       active(lastKnown)
     ) {
-      // canElectLastKnownLeader: no ELR, the last leader is back; Kafka flags it unclean.
-      return { leader: lastKnown, isr: [lastKnown], unclean: true };
+      // PartitionChangeBuilder#canElectLastKnownLeader (Kafka 4.4.0, KIP-966): no ELR, the last
+      // leader is back. Kafka builds ElectionResult(lastKnown, true), so the leader recovery state
+      // becomes RECOVERING as for any unclean election. The flag tells the UI it isn't the kind
+      // that can lose records: no other replica had anything newer (M4 follow-up D1).
+      return { leader: lastKnown, isr: [lastKnown], unclean: true, lastKnownLeader: true };
     }
   }
   if (topic.config.uncleanLeaderElectionEnable) {
@@ -566,6 +575,7 @@ export function handlePreferredLeaderCheck(ctx: EngineContext): void {
           previousLeader,
           leaderEpoch: partition.leaderEpoch,
           reason: 'preferred',
+          lastKnownLeader: false,
         });
         onLeaderChanged(ctx, topic, partition, previousLeader);
       }

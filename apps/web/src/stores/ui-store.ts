@@ -44,6 +44,11 @@ export interface UiState {
   readonly reducedMotion: boolean;
   /** Event types the event list hides (B7). Kept here so the filter survives a tab switch. */
   readonly hiddenEventTypes: ReadonlySet<EngineEventType>;
+  /**
+   * Show internal topics (__consumer_offsets) in the event list and the partition log's topic
+   * picker (M4 follow-up G-1). Off by default: they are Kafka's bookkeeping, not the player's.
+   */
+  readonly showInternalTopics: boolean;
   /** Partition log target; null = the first topic's partition 0. */
   readonly logTarget: LogTarget | null;
   /** The group whose committed marker the partition log shows (M3-T11); null = the first. */
@@ -84,6 +89,7 @@ export function initialUiState(): UiState {
     toasts: [],
     reducedMotion: readReducedMotion(),
     hiddenEventTypes: new Set(),
+    showInternalTopics: false,
     logTarget: null,
     logGroup: null,
   };
@@ -133,6 +139,10 @@ export function setBottomTab(bottomTab: BottomTab): void {
 
 export function setHiddenEventTypes(hiddenEventTypes: ReadonlySet<EngineEventType>): void {
   useUiStore.setState({ hiddenEventTypes });
+}
+
+export function setShowInternalTopics(showInternalTopics: boolean): void {
+  useUiStore.setState({ showInternalTopics });
 }
 
 export function setLogTarget(logTarget: LogTarget | null): void {

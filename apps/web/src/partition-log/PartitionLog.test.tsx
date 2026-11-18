@@ -195,4 +195,68 @@ describe('<PartitionLog>', () => {
     fireEvent.click(follow);
     expect(follow.getAttribute('aria-pressed')).toBe('false');
   });
+
+  describe('replica summary (M4 follow-up G-3)', () => {
+    function replicated(patch: Partial<PartitionSnapshot>): EngineSnapshot {
+      const snapshot = snapshotWith({
+        ...partition(0, 3),
+        replicas: ['b1', 'b2', 'b3'].map((broker) => ({
+          broker,
+          logEndOffset: 3,
+          highWatermark: 3,
+        })),
+        isr: ['b1', 'b2', 'b3'],
+        ...patch,
+      });
+      const [topic, ...rest] = snapshot.topics;
+      if (topic === undefined) throw new Error('fixture');
+      const config = { ...topic.config, replicationFactor: 3, minInsyncReplicas: 2 };
+      return { ...snapshot, topics: [{ ...topic, config }, ...rest] };
+    }
+    const summary = () => screen.queryByTestId('pl-isr-state');
+
+    it('says nothing while every replica is in sync', () => {
+      show(replicated({}));
+      render(<PartitionLog />);
+      expect(screen.getByTestId('pl-replicas')).toBeTruthy();
+      expect(summary()).toBeNull();
+    });
+
+    it('under-replicated: how many are in sync', () => {
+      show(replicated({ isr: ['b1', 'b2'], underReplicated: true }));
+      render(<PartitionLog />);
+      expect(summary()?.textContent).toBe(' · under-replicated: 2 of 3 in sync');
+    });
+
+    it('under min ISR: the HW is frozen, with how many replicas it needs', () => {
+      show(replicated({ isr: ['b1'], underReplicated: true, underMinIsr: true }));
+      render(<PartitionLog />);
+      expect(summary()?.textContent).toBe(' · ⚠ under min ISR (1 of 2 needed) · HW frozen');
+      expect(summary()?.getAttribute('title')).toContain('even ones written with acks=1');
+    });
+
+    it('offline: no summary (the leader line says it)', () => {
+      show(replicated({ leader: null, isr: [], underReplicated: true, underMinIsr: true }));
+      render(<PartitionLog />);
+      expect(summary()).toBeNull();
+    });
+  });
+
+  it('lists __consumer_offsets in the topic picker only with "Show internal topics" (G-1)', () => {
+    const base = snapshotWith(partition(0, 3));
+    const [topic] = base.topics;
+    if (topic === undefined) throw new Error('fixture');
+    const offsets = { ...topic, config: { ...topic.config, id: '__consumer_offsets' } };
+    show({ ...base, topics: [...base.topics, offsets] });
+    render(<PartitionLog />);
+    const options = () =>
+      within(screen.getByLabelText('Topic'))
+        .getAllByRole('option')
+        .map((o) => o.textContent);
+    expect(options()).toEqual(['t1']);
+    const toggle = screen.getByRole('checkbox', { name: /Show internal topics/ });
+    fireEvent.click(toggle);
+    expect(useUiStore.getState().showInternalTopics).toBe(true);
+    expect(options()).toEqual(['t1', '__consumer_offsets']);
+  });
 });

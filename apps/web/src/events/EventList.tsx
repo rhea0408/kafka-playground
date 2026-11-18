@@ -2,7 +2,7 @@ import { describeEvent, formatSimTime, type EngineEvent } from '@kp/engine';
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatCount } from '../canvas/live/format.ts';
 import { EVENT_LIST_SIZE, useSimStore } from '../stores/sim-store.ts';
-import { setHiddenEventTypes, useUiStore } from '../stores/ui-store.ts';
+import { setHiddenEventTypes, setShowInternalTopics, useUiStore } from '../stores/ui-store.ts';
 import { EventFilter } from './EventFilter.tsx';
 import { filterEvents } from './event-filter.ts';
 import { FollowToggle } from './FollowToggle.tsx';
@@ -60,8 +60,12 @@ const EventRow = memo(function EventRow(props: {
 export function EventList() {
   const events = useSimStore((s) => s.events);
   const hidden = useUiStore((s) => s.hiddenEventTypes);
+  const showInternal = useUiStore((s) => s.showInternalTopics);
   const reducedMotion = useUiStore((s) => s.reducedMotion);
-  const shown = useMemo(() => filterEvents(events, hidden), [events, hidden]);
+  const shown = useMemo(
+    () => filterEvents(events, hidden, showInternal),
+    [events, hidden, showInternal],
+  );
 
   const scroller = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -128,10 +132,15 @@ export function EventList() {
         <span className="text-status/70" data-testid="event-count">
           {formatCount(events.length)} {events.length === 1 ? 'event' : 'events'}
           {atCap && ` (newest ${formatCount(EVENT_LIST_SIZE)} kept)`}
-          {hidden.size > 0 && ` · ${formatCount(shown.length)} shown`}
+          {shown !== events && ` · ${formatCount(shown.length)} shown`}
         </span>
         <span className="flex-1" />
-        <EventFilter hidden={hidden} onChange={setHiddenEventTypes} />
+        <EventFilter
+          hidden={hidden}
+          onChange={setHiddenEventTypes}
+          showInternal={showInternal}
+          onShowInternalChange={setShowInternalTopics}
+        />
         <FollowToggle
           following={follow.following}
           onChange={follow.setFollowing}
@@ -151,7 +160,9 @@ export function EventList() {
           <p className="px-4 py-2 text-[13px] text-status/70">
             {events.length === 0
               ? 'No events yet. Build something on the canvas and press Play.'
-              : 'No events of the selected types.'}
+              : showInternal
+                ? 'No events of the selected types.'
+                : 'No events of the selected types. Internal topics are hidden (see Filter).'}
           </p>
         ) : (
           // overflow-clip: an entering row starts 6 px low (kp-row-in's translateY). Unclipped,

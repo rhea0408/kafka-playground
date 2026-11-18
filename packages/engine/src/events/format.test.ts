@@ -162,8 +162,26 @@ describe('formatEvent', () => {
         previousLeader: 'b1',
         leaderEpoch: 1,
         reason: 'failover',
+        lastKnownLeader: false,
       }),
     ).toBe('00:13.001  LeaderElected    orders-0  leader b1 → b3  epoch=1  failover');
+    // M4 follow-up G-2: the two kinds of unclean election read differently.
+    const unclean = {
+      ...at,
+      type: 'LeaderElected',
+      topic: 'orders',
+      partition: 0,
+      leader: 'b1',
+      previousLeader: null,
+      leaderEpoch: 2,
+      reason: 'unclean',
+    } as const;
+    expect(formatEvent({ ...unclean, lastKnownLeader: true })).toBe(
+      '00:13.001  LeaderElected    orders-0  leader none → b1  epoch=2  unclean (last known leader: it held the only copy, nothing lost)',
+    );
+    expect(formatEvent({ ...unclean, leader: 'b2', lastKnownLeader: false })).toBe(
+      '00:13.001  LeaderElected    orders-0  leader none → b2  epoch=2  unclean (out-of-sync replica: records may be lost)',
+    );
     expect(
       formatEvent({
         ...at,

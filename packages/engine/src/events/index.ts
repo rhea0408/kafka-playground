@@ -326,6 +326,15 @@ export type EngineEventPayload =
       readonly previousLeader: string | null;
       readonly leaderEpoch: number;
       readonly reason: 'initial' | 'failover' | 'controlled-shutdown' | 'preferred' | 'unclean';
+      /**
+       * True only for an `unclean` election of the partition's last known leader
+       * (PartitionChangeBuilder#canElectLastKnownLeader, KIP-966): the last ISR member came back
+       * after an unclean shutdown and no other replica could lead. Kafka still flags it unclean
+       * (leader recovery state RECOVERING, since a machine crash could have lost unflushed data),
+       * but no replica had newer records, so the engine loses nothing. False for every other
+       * election, including an unclean one of an out-of-sync replica (M4 follow-up D1).
+       */
+      readonly lastKnownLeader: boolean;
     }
   /** A partition lost its leader and no replica may lead: it is offline (M4-T5). */
   | {

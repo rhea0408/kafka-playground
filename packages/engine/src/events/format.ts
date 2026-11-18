@@ -84,7 +84,7 @@ export function describeEvent(e: EngineEvent): string {
     case 'BrokerUnfenced':
       return e.brokerId;
     case 'LeaderElected':
-      return `${partitionName(e.topic, e.partition)}  leader ${e.previousLeader ?? 'none'} → ${e.leader}  epoch=${String(e.leaderEpoch)}  ${e.reason}`;
+      return `${partitionName(e.topic, e.partition)}  leader ${e.previousLeader ?? 'none'} → ${e.leader}  epoch=${String(e.leaderEpoch)}  ${electionReason(e)}`;
     case 'PartitionOffline':
       return `${partitionName(e.topic, e.partition)}  no leader (was ${e.previousLeader})  isr=[${e.isr.join(' ')}]  elr=[${e.elr.join(' ')}]`;
     case 'RecordsTruncated':
@@ -96,6 +96,18 @@ export function describeEvent(e: EngineEvent): string {
     default:
       return assertNever(e);
   }
+}
+
+/**
+ * The election's reason, with the two unclean kinds told apart (M4 follow-up G-2): Kafka flags
+ * both unclean, but only an out-of-sync replica taking over can lose records. The last known
+ * leader held the only copy (KIP-966).
+ */
+function electionReason(e: Extract<EngineEvent, { type: 'LeaderElected' }>): string {
+  if (e.reason !== 'unclean') return e.reason;
+  return e.lastKnownLeader
+    ? 'unclean (last known leader: it held the only copy, nothing lost)'
+    : 'unclean (out-of-sync replica: records may be lost)';
 }
 
 /** "orders-0 orders-2", or "none". */

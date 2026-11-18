@@ -80,6 +80,8 @@ describe('crash and failover (M4-T5)', () => {
     expect(elected).toMatchObject([
       { previousLeader: leader, leaderEpoch: 1, reason: 'failover', t: 13_001 },
     ]);
+    // A clean failover: an in-sync replica took over (M4 follow-up G-2).
+    expect(elected[0]?.lastKnownLeader).toBe(false);
     // The new leader is the first ISR replica in replica order (K12).
     const replicas = p0(engine).replicas.map((r) => r.broker);
     expect(elected[0]?.leader).toBe(replicas.find((b) => b !== leader));
@@ -197,8 +199,11 @@ describe('last replica standing, unclean election (M4-T5)', () => {
     engine.dispatch({ type: 'RestartBroker', id: 'b1' });
     engine.runUntil(15_100);
     // After an unclean shutdown it left the ELR, so it is elected as the last known leader,
-    // which Kafka 4.4 flags as unclean (KIP-966, K1). No other replica: nothing is lost.
-    expect(ofType(events, 'LeaderElected')).toMatchObject([{ leader: 'b1', reason: 'unclean' }]);
+    // which Kafka 4.4 flags as unclean (KIP-966, K1). No other replica: nothing is lost, and the
+    // event says so with lastKnownLeader (M4 follow-up D1).
+    expect(ofType(events, 'LeaderElected')).toEqual([
+      expect.objectContaining({ leader: 'b1', reason: 'unclean', lastKnownLeader: true }),
+    ]);
     expect(p0(engine).logEndOffset).toBe(3);
     expect(ofType(events, 'RecordsTruncated')).toEqual([]);
   });
@@ -232,8 +237,9 @@ describe('last replica standing, unclean election (M4-T5)', () => {
     engine.dispatch({ type: 'KillBroker', id: leader });
     engine.dispatch({ type: 'RestartBroker', id: follower ?? '' });
     engine.runUntil(30_000);
-    expect(ofType(events, 'LeaderElected')).toMatchObject([
-      { leader: follower, reason: 'unclean' },
+    // A real unclean election: an out-of-sync replica, not the last known leader (D1).
+    expect(ofType(events, 'LeaderElected')).toEqual([
+      expect.objectContaining({ leader: follower, reason: 'unclean', lastKnownLeader: false }),
     ]);
     engine.dispatch({ type: 'RestartBroker', id: leader });
     engine.runUntil(32_000);
@@ -276,7 +282,7 @@ describe('preferred leader election (M4-T5, Q10)', () => {
     engine.dispatch({ type: 'RestartBroker', id: preferred });
     engine.runUntil(31_000); // leader.imbalance.check.interval.seconds: 30 (game-tuned)
     const back = ofType(events, 'LeaderElected').filter((e) => e.reason === 'preferred');
-    expect(back).toMatchObject([{ leader: preferred, t: 30_000 }]);
+    expect(back).toMatchObject([{ leader: preferred, t: 30_000, lastKnownLeader: false }]);
     expect(p0(engine).leader).toBe(preferred);
   });
 
